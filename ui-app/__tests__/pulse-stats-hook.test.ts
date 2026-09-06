@@ -62,6 +62,19 @@ describe('installPulseStatsHook', () => {
     expect(fabric).toHaveProperty('topology.staleResends');
     expect(fabric).toHaveProperty('topology.workerFallbacks');
 
+    // What one landed block costs the main thread, task by task: the whole
+    // sustain wave is graded on these three numbers, and none of them can be
+    // read from a scene or a frame rate.
+    expect(typeof window.__blockFrameStats).toBe('function');
+    expect(typeof window.__blockFrameStatsReset).toBe('function');
+    const blockFrame = window.__blockFrameStats!();
+    expect(blockFrame).toHaveProperty('max.landingMs');
+    expect(blockFrame).toHaveProperty('max.bridgeMs');
+    expect(blockFrame).toHaveProperty('max.frameGapMs');
+    expect(Array.isArray(blockFrame.recent)).toBe(true);
+    window.__blockFrameStatsReset!();
+    expect(window.__blockFrameStats!().count).toBe(0);
+
     // The colony's rebuild cadence and the Cell picker's rebuilds: both were
     // "unmeasurable today" in the review that asked, and each answers from
     // the page now, on the same surface with the same reset discipline.

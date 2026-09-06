@@ -14,6 +14,8 @@ import {
   observeGpuFrameLedger,
   observeGpuProbeDrop,
   observePerformanceProbeSample,
+  readDrawingBufferSampleCount,
+  setGpuSampleCount,
   readGpuFrameLedger,
   resetPerformanceProbe,
   retainPerformanceProbe,
@@ -189,6 +191,47 @@ describe('performanceProbeStore', () => {
     } finally {
       release();
     }
+  });
+
+  /** MSAA is why a GL·08 reading can halve without any scope moving, so the
+   *  sample count has to be ON the snapshot the review scripts export — and it
+   *  is a DEVICE fact, not a measurement, so a clean measurement window must
+   *  not erase it (the context cannot change its attributes without a
+   *  remount, which would re-publish it anyway). */
+  it('carries the drawing buffer sample count through the snapshot and its export', () => {
+    resetPerformanceProbe(80);
+    setGpuSampleCount(null);
+    expect(snapshotPerformanceProbe().gpu.state.samples).toBeNull();
+
+    setGpuSampleCount(4);
+    expect(snapshotPerformanceProbe().gpu.state.samples).toBe(4);
+    expect(JSON.parse(exportPerformanceProbeJson(0)).gpu.state.samples).toBe(4);
+
+    // A device fact survives a measurement reset, exactly as `availability`
+    // and `reason` do.
+    resetPerformanceProbe(81);
+    expect(snapshotPerformanceProbe().gpu.state.samples).toBe(4);
+
+    setGpuSampleCount(0);
+    expect(snapshotPerformanceProbe().gpu.state.samples).toBe(0);
+    setGpuSampleCount(null);
+    expect(snapshotPerformanceProbe().gpu.state.samples).toBeNull();
+  });
+
+  it('reads SAMPLES off a live context and answers null for anything else', () => {
+    expect(readDrawingBufferSampleCount(null)).toBeNull();
+    const context = { SAMPLES: 0x80a9, getParameter: (pname: number) => (pname === 0x80a9 ? 4 : -1) };
+    expect(readDrawingBufferSampleCount(context)).toBe(4);
+    expect(readDrawingBufferSampleCount({
+      SAMPLES: 0x80a9,
+      getParameter: () => null,
+    })).toBeNull();
+    // A lost context throws rather than answering; the gauge is not worth a
+    // crash on the boot path.
+    expect(readDrawingBufferSampleCount({
+      SAMPLES: 0x80a9,
+      getParameter: () => { throw new Error('context lost'); },
+    })).toBeNull();
   });
 
   it('mutates the GPU state in place and hands out isolated copies', () => {

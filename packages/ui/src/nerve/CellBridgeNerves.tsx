@@ -98,6 +98,7 @@ import {
   bridgeUploadBytes,
   type BridgeFullWalkReason,
 } from './bridgeStats';
+import { blockFrameNowMs, blockFrameStats } from './blockFrameStats';
 import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
@@ -414,71 +415,81 @@ export default function CellBridgeNerves({
   // fabric does.
   useEffect(() => {
     if (anchorIndex === null) return;
-    const registry = registryRef.current;
-    // Two opt-in CPU spans, one per population: the registry sync runs on
-    // every build, the selection only when the sync says a host moved, and a
-    // mean over both would be a mean of nothing.
-    const hostsProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeHostsSync);
-    const moved = syncBridgeHosts(
-      registry,
-      cellsRef.current,
-      passiveGraphRef.current.edges,
-    );
-    endCpuProbe(hostsProbe);
-    const now = simClock.elapsedSec;
-    // ⭐ The skip. The registry is exact about what the selection reads, so a
-    // build that moved no host against the same anchors would select the
-    // same bridges, reconcile them to zero movement, and leave the layer as
-    // it is — the steady state of a composed stage, and every refill build
-    // on a cold server. None of that work is done. The boot record still
-    // hears from this build: first report wins in the gate, and the answer
-    // is the last selection's, which is what this build's would have been.
-    if (!moved && selectedAgainstRef.current === anchorIndex) {
-      bridgeStats.observeBuild(true, 0);
+    // T1 gauge: the bridge half of a landing is ONE React commit — host
+    // sync, selection, stroke reconcile — and the block frame is only as
+    // short as its longest task, so the span wraps the whole body and
+    // closes on the skip return too (a build that moved no host is the
+    // steady state, and a gauge that only saw the slow path would lie).
+    const bridgeStartedAtMs = blockFrameNowMs();
+    try {
+      const registry = registryRef.current;
+      // Two opt-in CPU spans, one per population: the registry sync runs on
+      // every build, the selection only when the sync says a host moved, and a
+      // mean over both would be a mean of nothing.
+      const hostsProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeHostsSync);
+      const moved = syncBridgeHosts(
+        registry,
+        cellsRef.current,
+        passiveGraphRef.current.edges,
+      );
+      endCpuProbe(hostsProbe);
+      const now = simClock.elapsedSec;
+      // ⭐ The skip. The registry is exact about what the selection reads, so a
+      // build that moved no host against the same anchors would select the
+      // same bridges, reconcile them to zero movement, and leave the layer as
+      // it is — the steady state of a composed stage, and every refill build
+      // on a cold server. None of that work is done. The boot record still
+      // hears from this build: first report wins in the gate, and the answer
+      // is the last selection's, which is what this build's would have been.
+      if (!moved && selectedAgainstRef.current === anchorIndex) {
+        bridgeStats.observeBuild(true, 0);
+        if (version >= 1) {
+          reportBootBridgeSelected(
+            selectedCountRef.current > 0 ? now + GROWTH_MS / 1000 : now,
+          );
+        }
+        return;
+      }
+
+      if (coverageCacheRef.current.size > MEMO_CAP) {
+        coverageCacheRef.current = new Map();
+      }
+      if (planCacheRef.current.size > MEMO_CAP) {
+        planCacheRef.current = new Map();
+      }
+      const selectProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeSelect);
+      const selection = selectBridgeEdges(registry.hosts.values(), anchorIndex, {
+        coverageCache: coverageCacheRef.current,
+        planCache: planCacheRef.current,
+      });
+      selectedAgainstRef.current = anchorIndex;
+      selectedCountRef.current = selection.bridges.length;
+
+      // ⚠️ Only the strokes the selection MOVED reach the layer, through
+      // `pending`: a birth, a revival mid-retract, a death. The next frame
+      // admits them into spans of their own and writes nothing else — a build
+      // that moves six strokes writes six, not the ~1,600 the full walk used
+      // to restate. The knob gate in the frame is the other arm and stays
+      // unconditional: a knob moves every stroke's energy at once.
+      const changed = reconcileBridgeStrokes(
+        strokesRef.current, selection.bridges, now, pendingRef.current,
+      );
+      endCpuProbe(selectProbe);
+      bridgeStats.observeBuild(false, changed);
+      // The boot record's outer-nerve deadline. The first selection against a
+      // real topology build (version 0 is the pre-build mount pass over an
+      // empty host map) is the boot cohort of bridges: born just above, fully
+      // grown one GROWTH_MS later — or nothing to grow, in which case the
+      // deadline is already met. First report wins in the gate, so the refill
+      // churn that keeps re-selecting on a cold server never stretches the
+      // boot readout.
       if (version >= 1) {
         reportBootBridgeSelected(
-          selectedCountRef.current > 0 ? now + GROWTH_MS / 1000 : now,
+          selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
         );
       }
-      return;
-    }
-
-    if (coverageCacheRef.current.size > MEMO_CAP) {
-      coverageCacheRef.current = new Map();
-    }
-    if (planCacheRef.current.size > MEMO_CAP) {
-      planCacheRef.current = new Map();
-    }
-    const selectProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeSelect);
-    const selection = selectBridgeEdges(registry.hosts.values(), anchorIndex, {
-      coverageCache: coverageCacheRef.current,
-      planCache: planCacheRef.current,
-    });
-    selectedAgainstRef.current = anchorIndex;
-    selectedCountRef.current = selection.bridges.length;
-
-    // ⚠️ Only the strokes the selection MOVED reach the layer, through
-    // `pending`: a birth, a revival mid-retract, a death. The next frame
-    // admits them into spans of their own and writes nothing else — a build
-    // that moves six strokes writes six, not the ~1,600 the full walk used
-    // to restate. The knob gate in the frame is the other arm and stays
-    // unconditional: a knob moves every stroke's energy at once.
-    const changed = reconcileBridgeStrokes(
-      strokesRef.current, selection.bridges, now, pendingRef.current,
-    );
-    endCpuProbe(selectProbe);
-    bridgeStats.observeBuild(false, changed);
-    // The boot record's outer-nerve deadline. The first selection against a
-    // real topology build (version 0 is the pre-build mount pass over an
-    // empty host map) is the boot cohort of bridges: born just above, fully
-    // grown one GROWTH_MS later — or nothing to grow, in which case the
-    // deadline is already met. First report wins in the gate, so the refill
-    // churn that keeps re-selecting on a cold server never stretches the
-    // boot readout.
-    if (version >= 1) {
-      reportBootBridgeSelected(
-        selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
-      );
+    } finally {
+      blockFrameStats.observeBridge(blockFrameNowMs() - bridgeStartedAtMs);
     }
   }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
 

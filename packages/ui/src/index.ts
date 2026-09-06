@@ -50,6 +50,8 @@ export {
   beginCpuProbe,
   endCpuProbe,
   measureCpuProbe,
+  readDrawingBufferSampleCount,
+  setGpuSampleCount,
   snapshotPerformanceProbe,
   exportPerformanceProbeJson,
   resetPerformanceProbe,
@@ -260,6 +262,10 @@ export {
 } from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';
 export * from './nerve/fabricStats';
+// What one landed block costs the main thread: the worker landing task, the
+// bridge commit that follows it, and the rAF interval that contained both.
+// Its own module beside the two counter singletons, on the same window surface.
+export * from './nerve/blockFrameStats';
 // Bytes handed to bufferSubData by lane — what the fabric, bridge and Cell
 // commits actually flag, summed where GL·08 and a probe can read it.
 export {

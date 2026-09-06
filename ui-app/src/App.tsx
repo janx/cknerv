@@ -26,6 +26,8 @@ import {
   BootNerveRestSentinel,
   completeBootPhase,
   completeBootSeeding,
+  readDrawingBufferSampleCount,
+  setGpuSampleCount,
   reportBootSeeding,
   CELLS_Y,
   CELL_SELECTION_PREFIX,
@@ -2323,8 +2325,15 @@ export default function App({
           dpr={canvasDpr}
           style={{ background: HUD_COLORS.stageGround }}
           // The context exists — the boot record's GL line closes here, the
-          // one place that knows. Nothing else hangs off this callback.
-          onCreated={() => completeBootPhase('gl')}
+          // one place that knows. And the same callback is the only place that
+          // can ask the DRAWING BUFFER what it actually got: `antialias` above
+          // is a request, the context decides, and `gl.SAMPLES` is the answer.
+          // GL·08 and every timer-query reading depend on knowing it, because
+          // MSAA splits a pass across resolves the per-draw scopes never see.
+          onCreated={({ gl }) => {
+            completeBootPhase('gl');
+            setGpuSampleCount(readDrawingBufferSampleCount(gl.getContext()));
+          }}
           onPointerMissed={() => {
             // The inspection card is a Canvas sibling, so its clicks can no
             // longer surface here as scene misses.

@@ -3,6 +3,10 @@
 // typed array. RenderStatsSampler retains it only while GL·08 is mounted or a
 // review URL explicitly enables `?render-stats=1`.
 
+// Schema rule: the version names the SHAPE a reader must understand. Version
+// 2 added the frame bracket and its ledger, which changed how `gpu` is read.
+// A purely ADDITIVE scalar on an existing record — `gpu.state.samples`, say —
+// leaves every schema-2 reader parsing correctly and does not bump it.
 export const PERFORMANCE_PROBE_SCHEMA_VERSION = 2;
 export const PERFORMANCE_PROBE_SAMPLE_CAPACITY = 512;
 const PERFORMANCE_PROBE_LABEL_CAPACITY = 64;
@@ -130,6 +134,13 @@ export type GpuProbeDropReason =
 export interface GpuProbeStateSnapshot {
   availability: GpuProbeAvailability;
   reason: string | null;
+  /** MSAA samples in the DRAWING BUFFER, read once from the live context at
+   *  Canvas creation; null until it is published (and on a context that
+   *  cannot answer). A device fact, not a measurement: it survives
+   *  `resetPerformanceProbe` exactly as `availability` does. It is the one
+   *  number that says whether the per-draw GPU scopes below can be read at
+   *  face value — MSAA splits a pass across resolves the scopes do not see. */
+  samples: number | null;
   pendingQueries: number;
   disjointEvents: number;
   droppedQueries: number;
@@ -267,6 +278,7 @@ const rejectedLabels: Record<PerformanceProbeDomain, number> = {
 const gpuState: GpuProbeStateSnapshot = {
   availability: 'detached',
   reason: null,
+  samples: null,
   pendingQueries: 0,
   disjointEvents: 0,
   droppedQueries: 0,
@@ -409,6 +421,32 @@ export function setGpuProbeAvailability(
 ): void {
   gpuState.availability = availability;
   gpuState.reason = reason;
+}
+
+/** Publish the drawing buffer's MSAA sample count. Called once, from the
+ *  Canvas `onCreated`: `antialias` is a context attribute that cannot change
+ *  without a remount, so one reading holds for the session. */
+export function setGpuSampleCount(samples: number | null): void {
+  gpuState.samples = samples === null || !Number.isFinite(samples)
+    ? null
+    : Math.max(0, Math.floor(samples));
+}
+
+/** The SAMPLES parameter off a live WebGL context, or null when there is no
+ *  context to ask (a headless mount, a lost context) or it answers with a
+ *  non-number. Kept beside the setter so the App wires one line, not three. */
+export function readDrawingBufferSampleCount(
+  context: { getParameter(pname: number): unknown; SAMPLES: number } | null,
+): number | null {
+  if (!context) return null;
+  try {
+    const samples = context.getParameter(context.SAMPLES);
+    return typeof samples === 'number' && Number.isFinite(samples)
+      ? Math.max(0, Math.floor(samples))
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function setGpuProbePendingQueries(pendingQueries: number): void {

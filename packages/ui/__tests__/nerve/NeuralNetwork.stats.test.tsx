@@ -219,8 +219,18 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     // Opened after the response guards, closed before the invalidate that
     // ends the commit — the handler's whole body, nothing outside it.
     expect(NETWORK_SOURCE.lastIndexOf(') return;', commitAt)).toBeGreaterThan(-1);
+    const invalidateAt = NETWORK_SOURCE.indexOf('invalidate();\n', commitAt);
+    expect(invalidateAt).toBeGreaterThan(-1);
     expect(NETWORK_SOURCE.indexOf('endCpuProbe(commitProbe);', commitAt))
-      .toBeLessThan(NETWORK_SOURCE.indexOf('invalidate();\n    }).catch(', commitAt));
+      .toBeLessThan(invalidateAt);
+    // The then-block now ends one line later, on the always-on landing gauge
+    // (T1): the probe span is still the commit, the gauge is the whole task.
+    expect(invalidateAt).toBeLessThan(
+      NETWORK_SOURCE.indexOf(
+        'blockFrameStats.observeLanding();\n    }).catch(',
+        commitAt,
+      ),
+    );
     const sliceAt = NETWORK_SOURCE.indexOf('beginCpuProbe(PERFORMANCE_PROBE_LABELS.livePlanSlice)');
     expect(sliceAt).toBeGreaterThan(-1);
     // Taken only on frames that plan: the empty-queue return comes first.
@@ -228,6 +238,33 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
       .toBeGreaterThan(-1);
     expect(NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)', sliceAt))
       .toBeLessThan(NETWORK_SOURCE.indexOf('endCpuProbe(sliceProbe);', sliceAt));
+  });
+
+  // The always-on block-frame gauge (T1) is a different instrument from the
+  // opt-in CPU probes above: it measures the TASK, not a span inside it, and
+  // it has to be readable off a release build. Its correctness is entirely a
+  // matter of where the three calls sit, so that is what is pinned.
+  it('closes the worker landing task on the gauge and clears the mark on every other path', () => {
+    // Opened in the worker's message handler (neighborGraphBuilder), closed by
+    // the microtask that ends this build's commit — the same task.
+    expect(NETWORK_SOURCE).toContain('blockFrameStats.observeLanding();\n    }).catch(');
+    // Superseded / stale responses and a rejected build must not leave the
+    // mark open for the NEXT landing to be measured from.
+    expect(NETWORK_SOURCE).toContain(
+      '        blockFrameStats.discardLanding();\n        return;\n      }',
+    );
+    expect(NETWORK_SOURCE).toContain(
+      '}).catch((error: unknown) => {\n      blockFrameStats.discardLanding();',
+    );
+    // The frame reference is taken FIRST in the raw, priority −1 frame, so the
+    // interval that contained a landing is bounded by real frame callbacks.
+    const frameAt = NETWORK_SOURCE.indexOf('blockFrameStats.markFrame();');
+    expect(frameAt).toBeGreaterThan(-1);
+    expect(frameAt).toBeLessThan(
+      NETWORK_SOURCE.indexOf('advanceConsensusMemoryRouteHopPulseClock(', frameAt),
+    );
+    expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', frameAt))
+      .toBeGreaterThan(-1);
   });
 
   // Integration mount-safety test — the level this jsdom harness supports

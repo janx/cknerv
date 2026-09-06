@@ -19,6 +19,7 @@ import {
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
 import { neighborGraphBuilderStats } from './neighborGraphBuilderStats';
+import { blockFrameStats } from '../nerve/blockFrameStats';
 import {
   PERFORMANCE_PROBE_LABELS,
   beginCpuProbe,
@@ -317,6 +318,11 @@ export function createNeighborGraphBuilder(
   const handleResponse = (
     event: MessageEvent<NeighborGraphWorkerResponse>,
   ) => {
+    // The worker landing TASK opens here: everything below, plus the
+    // microtask the resolved promise runs in the consumer, is one task on the
+    // main thread, and its wall time is the block-frame gauge's headline. The
+    // mark is cleared again on every path that applies nothing.
+    blockFrameStats.markLandingStart();
     const response = event.data;
     if (response.requestId === inFlightRequestId) {
       inFlightRequestId = null;
@@ -335,10 +341,12 @@ export function createNeighborGraphBuilder(
       // through applying a delta, leaving a retained baseline no later
       // delta may be trusted against.
       if (response.kind === 'failed') lastAppliedGeneration = 0;
+      blockFrameStats.discardLanding();
       flushPendingSend();
       return;
     }
     if (response.kind === 'failed') {
+      blockFrameStats.discardLanding();
       failWorker(response.message);
       return;
     }
@@ -347,6 +355,7 @@ export function createNeighborGraphBuilder(
       // packed full request under the same requestId (full requests
       // never go stale).
       neighborGraphBuilderStats.staleResends += 1;
+      blockFrameStats.discardLanding();
       try {
         postToWorker(current.fullRequest());
       } catch (error) {
@@ -412,6 +421,7 @@ export function createNeighborGraphBuilder(
       active = null;
       current.resolve(result);
     } catch (error) {
+      blockFrameStats.discardLanding();
       failWorker(error);
     } finally {
       endCpuProbe(commitProbe);

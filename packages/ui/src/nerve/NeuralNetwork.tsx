@@ -62,6 +62,7 @@ import {
   invalidateTopologyJournal,
 } from '../geometry/topologyJournal';
 import { fabricStats } from './fabricStats';
+import { blockFrameStats } from './blockFrameStats';
 import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -688,7 +689,12 @@ function NeuralNetwork({
         || displayRequestedTopologyRef.current !== displaySelectionKey
         || displayRequestedTopologyVersionRef.current
           !== requestedTopologyVersion
-      ) return;
+      ) {
+        // Nothing landed, so the mark the message handler took has no task to
+        // close; leaving it open would measure the NEXT landing from here.
+        blockFrameStats.discardLanding();
+        return;
+      }
       // The fabric's half of a landed build — the graph swap, then the delta
       // grow/kill or the full setFabric reconcile — on the main thread. Off,
       // the probe returns before any clock read.
@@ -778,7 +784,12 @@ function NeuralNetwork({
       }
       endCpuProbe(commitProbe);
       invalidate();
+      // The worker landing task ends here. This `.then` is a microtask of the
+      // very task the worker's message handler opened, so handler entry → here
+      // is that task's wall time — the block frame's longest grain today.
+      blockFrameStats.observeLanding();
     }).catch((error: unknown) => {
+      blockFrameStats.discardLanding();
       if (displayBuildGenerationRef.current !== generation) return;
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
@@ -1446,6 +1457,11 @@ function NeuralNetwork({
   // clearing it cannot overwrite live writes or recalled-route afterimages.
   // Negative priority publishes the clock before default-priority consumers.
   useFrame((_, rawDeltaSeconds) => {
+    // One clock read per frame, taken FIRST (this subscriber runs at priority
+    // −1): it is what lets a landing between two frames be read back as the
+    // rAF interval that contained it, and it finalises the gap of a landing
+    // the previous frame opened. Allocation-free.
+    blockFrameStats.markFrame();
     const pulseClock = advanceConsensusMemoryRouteHopPulseClock(
       routeHopPulseRef.current,
       renderedTraceRouteHopLock,

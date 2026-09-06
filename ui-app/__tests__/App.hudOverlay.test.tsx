@@ -21,6 +21,18 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain("'/api/projections/cells/stream',\n      initialCellsCache,");
   });
 
+  /** `antialias` above the Canvas is a REQUEST; the context decides. Every
+   *  GPU-timer reading in a review depends on knowing what it decided, and
+   *  `onCreated` is the only place a live context exists to be asked. */
+  it('publishes the drawing buffer sample count from the Canvas onCreated', () => {
+    expect(APP_SOURCE).toContain("onCreated={({ gl }) => {");
+    expect(APP_SOURCE).toContain(
+      'setGpuSampleCount(readDrawingBufferSampleCount(gl.getContext()));',
+    );
+    // The boot record's GL line still closes in the same callback.
+    expect(APP_SOURCE).toContain("completeBootPhase('gl');");
+  });
+
   it('owns the SoundCloud Jukebox as a floating app control the registry lists', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
     // SND·06 is in the HUD's module registry (D-14), so the chip mounts on

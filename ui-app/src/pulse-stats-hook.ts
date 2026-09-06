@@ -15,6 +15,16 @@
 //                                    fallbacks)
 //   window.__fabricStatsReset()  → zero the fabric-churn counters (bridge and
 //                                  topology included)
+//   window.__blockFrameStats()   → { count, bridgeCount, recent, max } — per
+//                                  landed topology build, the wall time of the
+//                                  worker LANDING task (`landingMs`), of the
+//                                  BRIDGE commit that followed it
+//                                  (`bridgeMs`), and of the rAF interval that
+//                                  contained the landing (`frameGapMs`), as a
+//                                  ring of the last 32 with running maxima.
+//                                  Reset, wait out 30 blocks, and read `max`:
+//                                  that is the block frame, task by task.
+//   window.__blockFrameStatsReset() → zero the block-frame gauges
 //   window.__uploadStats()       → { lanes: { fabric, bridge, cells }, bytes,
 //                                    commits } — bytes flagged for
 //                                    bufferSubData by lane (Σ, last, max)
@@ -57,6 +67,8 @@ import {
   resetPulseStats,
   snapshotFabricStats,
   resetFabricStats,
+  snapshotBlockFrameStats,
+  resetBlockFrameStats,
   snapshotGpuUploads,
   resetGpuUploads,
   snapshotProducerOriginStats,
@@ -76,6 +88,8 @@ declare global {
     __pulseStatsReset?: typeof resetPulseStats;
     __fabricStats?: typeof snapshotFabricStats;
     __fabricStatsReset?: typeof resetFabricStats;
+    __blockFrameStats?: typeof snapshotBlockFrameStats;
+    __blockFrameStatsReset?: typeof resetBlockFrameStats;
     __uploadStats?: typeof snapshotGpuUploads;
     __uploadStatsReset?: typeof resetGpuUploads;
     __qualityStats?: typeof getQualityRuntimeSnapshot;
@@ -97,6 +111,8 @@ export function installPulseStatsHook(): void {
   window.__pulseStatsReset = resetPulseStats;
   window.__fabricStats = snapshotFabricStats;
   window.__fabricStatsReset = resetFabricStats;
+  window.__blockFrameStats = snapshotBlockFrameStats;
+  window.__blockFrameStatsReset = resetBlockFrameStats;
   window.__uploadStats = snapshotGpuUploads;
   window.__uploadStatsReset = resetGpuUploads;
   window.__qualityStats = getQualityRuntimeSnapshot;

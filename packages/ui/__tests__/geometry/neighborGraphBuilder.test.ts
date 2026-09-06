@@ -29,6 +29,11 @@ import {
 } from '../../src/geometry/neighborGraphBuilderStats';
 import { snapshotFabricStats } from '../../src/nerve/fabricStats';
 import {
+  blockFrameStats,
+  resetBlockFrameStats,
+  snapshotBlockFrameStats,
+} from '../../src/nerve/blockFrameStats';
+import {
   PERFORMANCE_PROBE_LABELS,
   resetPerformanceProbe,
   retainPerformanceProbe,
@@ -900,6 +905,89 @@ describe('builder diagnostics', () => {
       release();
       resetPerformanceProbe(1);
     }
+  });
+
+  /** The block-frame gauge's landing mark opens at this handler's entry and
+   *  is closed by the consumer's `.then` — a microtask of the same task. What
+   *  the builder owes it is the other half: every path that applies NOTHING
+   *  has to clear the mark, or the next landing is measured from a task it
+   *  never belonged to. `observeLanding` records only against an open mark,
+   *  so the counter answers "did this path leave one behind?" directly. */
+  describe('the block-frame landing mark', () => {
+    it('is left open by an applied response for the consumer to close', async () => {
+      resetBlockFrameStats();
+      const worker = new FakeWorker();
+      const builder = createNeighborGraphBuilder({
+        minWorkerCells: 0,
+        workerFactory: () => worker as unknown as Worker,
+      });
+      const pending = builder.build(cells(), { topology: { k: 2 } });
+      worker.complete();
+      expect(await pending).not.toBeNull();
+      blockFrameStats.observeLanding();
+      const snapshot = snapshotBlockFrameStats();
+      expect(snapshot.count).toBe(1);
+      expect(snapshot.recent[0].landingMs).toBeGreaterThanOrEqual(0);
+      builder.dispose();
+      resetBlockFrameStats();
+    });
+
+    it('is cleared by a stale reply, whose only work is a re-send', async () => {
+      resetBlockFrameStats();
+      const worker = new TransferringFakeWorker();
+      const builder = createNeighborGraphBuilder({
+        minWorkerCells: 0,
+        workerFactory: () => worker as unknown as Worker,
+      });
+      const pending = builder.build(cells(), {
+        topology: { k: 2 },
+        includePassive: true,
+        preferredEdges: [{ from: 1, to: 2, d: 2 }],
+      });
+      worker.replyStale();
+      blockFrameStats.observeLanding();
+      expect(snapshotBlockFrameStats().count).toBe(0);
+      worker.complete();
+      expect(await pending).not.toBeNull();
+      builder.dispose();
+      resetBlockFrameStats();
+    });
+
+    it('is cleared by a superseded response, which only frees the worker', async () => {
+      resetBlockFrameStats();
+      const worker = new FakeWorker();
+      const builder = createNeighborGraphBuilder({
+        minWorkerCells: 0,
+        workerFactory: () => worker as unknown as Worker,
+      });
+      const first = builder.build(cells(), { topology: { k: 2 } });
+      const second = builder.build(cells(10), { topology: { k: 2 } });
+      expect(await first).toBeNull();
+      // Answers request #1 while #2 is the active build.
+      worker.complete();
+      blockFrameStats.observeLanding();
+      expect(snapshotBlockFrameStats().count).toBe(0);
+      worker.complete();
+      expect(await second).not.toBeNull();
+      builder.dispose();
+      resetBlockFrameStats();
+    });
+
+    it('is cleared by a failed reply, which falls back synchronously', async () => {
+      resetBlockFrameStats();
+      const worker = new SessionFakeWorker();
+      const builder = createNeighborGraphBuilder({
+        minWorkerCells: 0,
+        workerFactory: () => worker as unknown as Worker,
+      });
+      const pending = builder.build(cells(), { topology: { k: 2 } });
+      worker.replyFailed();
+      expect(await pending).not.toBeNull();
+      blockFrameStats.observeLanding();
+      expect(snapshotBlockFrameStats().count).toBe(0);
+      builder.dispose();
+      resetBlockFrameStats();
+    });
   });
 
   it('carries its counters on the fabric snapshot, in their own module, with a reset', async () => {
