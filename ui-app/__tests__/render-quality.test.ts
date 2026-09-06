@@ -6,6 +6,7 @@ import {
   resolveAutoStartupQuality,
   resolveCanvasDpr,
   resolveQualityOverride,
+  resolveStartupAntialias,
   shouldApplyAutoStartupQuality,
 } from '../src/render-quality';
 
@@ -49,6 +50,33 @@ describe('render quality route helpers', () => {
   it('keeps the deterministic high default when viewport geometry is unusable', () => {
     expect(resolveAutoStartupQuality(0, 900, 1, 2)).toBe('high');
     expect(resolveAutoStartupQuality(Number.NaN, 900, 1, 2)).toBe('high');
+  });
+
+  it('leaves MSAA on below the med startup class and off at or above it', () => {
+    // On for a HIGH-class buffer (< 8 MP), where the hard edges it helps are
+    // cheap to resolve.
+    expect(resolveStartupAntialias(1440, 900, 1, 2)).toBe(true);
+    expect(resolveStartupAntialias(1920, 1080, 1, 2)).toBe(true);
+    // Off for a buffer that opens at MED or LOW (>= 8 MP), where the per-frame
+    // resolve is the deadline maker and the DPR lever is already inert.
+    expect(resolveStartupAntialias(3840, 2160, 1, 2)).toBe(false); // 4K@1x -> med
+    expect(resolveStartupAntialias(1920, 1080, 2, 2)).toBe(false); // 1080p@2x -> med
+    expect(resolveStartupAntialias(3840, 2160, 2, 2)).toBe(false); // 4K@2x -> low
+  });
+
+  it('puts the antialias boundary exactly on the med pixel class', () => {
+    // Exactly 8 MP is the med class -> MSAA off; a pixel under it is high -> on.
+    expect(resolveStartupAntialias(
+      AUTO_STARTUP_MED_BUFFER_PIXELS, 1, 1, 2,
+    )).toBe(false);
+    expect(resolveStartupAntialias(
+      AUTO_STARTUP_MED_BUFFER_PIXELS - 1, 1, 1, 2,
+    )).toBe(true);
+    // A browser DPR above High's own ceiling must not exaggerate the load.
+    expect(resolveStartupAntialias(1_000, 1_000, 8, 2)).toBe(true);
+    // Unusable geometry falls back to the safe HIGH default: AA stays on.
+    expect(resolveStartupAntialias(0, 900, 1, 2)).toBe(true);
+    expect(resolveStartupAntialias(Number.NaN, 900, 1, 2)).toBe(true);
   });
 
   it('does not silently adapt deterministic review Labs', () => {

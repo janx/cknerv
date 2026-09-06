@@ -56,6 +56,29 @@ export function resolveAutoStartupQuality(
   return 'high';
 }
 
+/** Whether to negotiate MSAA (the Canvas `antialias` context attribute) at
+ * boot. MSAA is a multisampled default framebuffer resolved every frame at a
+ * cost proportional to the drawing-buffer pixels, and it is largest exactly
+ * where the DPR lever is already inert (>= 8 MP). It is a context attribute
+ * fixed at Canvas creation and cannot follow the runtime tier, so it is decided
+ * once from the same buffer class the startup ceiling uses: a buffer that opens
+ * at MED or LOW (>= 8 MP) turns MSAA off, and only a HIGH-class buffer (< 8 MP)
+ * keeps it on — for the hard edges it actually helps (the capsule
+ * `LineSegments2`, the couriers, the icosahedra), whose fill is cheap there.
+ * Unusable geometry keeps AA on, matching {@link resolveAutoStartupQuality}'s
+ * deterministic HIGH fallback. */
+export function resolveStartupAntialias(
+  cssWidth: number,
+  cssHeight: number,
+  devicePixelRatio: number,
+  highMaxDpr: number,
+): boolean {
+  return (
+    resolveAutoStartupQuality(cssWidth, cssHeight, devicePixelRatio, highMaxDpr)
+    === 'high'
+  );
+}
+
 /** Explicit deterministic quality override for screenshots and performance
  * review. Unknown values leave adaptive runtime ownership unchanged. */
 export function resolveQualityOverride(search: string): QualityPreset | null {

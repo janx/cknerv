@@ -185,12 +185,15 @@ describe('scene-root memo inputs', () => {
 
 describe('canvas ground', () => {
   it('paints its own ground rather than showing one through', () => {
-    // ⚠️ This flag does not reach the compositor: three hardcodes `alpha: true`
-    // in the context attributes it creates, so the surface always carries an
-    // alpha channel and the flag only picks the default clear alpha. It is
-    // pinned as the honest value for a scene that paints its own ground — the
-    // one the clear falls back to if the background below ever goes away.
-    expect(APP_SOURCE).toContain('gl={{ antialias: true, alpha: false }}');
+    // ⚠️ The `alpha: false` flag does not reach the compositor: three hardcodes
+    // `alpha: true` in the context attributes it creates, so the surface always
+    // carries an alpha channel and the flag only picks the default clear alpha.
+    // It is pinned as the honest value for a scene that paints its own ground —
+    // the one the clear falls back to if the background below ever goes away.
+    // `antialias` beside it is no longer a literal: it is decided once at mount
+    // by the startup buffer class (off above 8 MP), so this guards the ground
+    // flag, not the MSAA value — render-quality.test.ts owns that boundary.
+    expect(APP_SOURCE).toContain('antialias: startupAntialias, alpha: false }}');
     // The clear IS the ground: the CSS below the canvas carries it until the
     // first frame exists, the scene carries it afterwards, and both now say the
     // one token, so the pre-first-light black cannot shift by half an edit.

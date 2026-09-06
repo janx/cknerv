@@ -185,6 +185,7 @@ import {
   hasQuerySwitch,
   resolveCanvasDpr,
   resolveQualityOverride,
+  resolveStartupAntialias,
 } from './render-quality';
 import {
   resolveBuildVersion,
@@ -643,6 +644,20 @@ export default function App({
   const canvasDpr = resolveCanvasDpr(
     typeof window === 'undefined' ? 1 : window.devicePixelRatio,
     qualityCascade.maxDpr,
+  );
+  // MSAA is a context attribute fixed when the Canvas creates its GL context,
+  // so unlike the DPR it cannot follow the runtime tier: it is decided once at
+  // mount from the same buffer class the startup ceiling uses. Off above 8 MP
+  // (a buffer that opens at MED/LOW — exactly where the DPR lever is inert and
+  // the per-frame resolve is largest), on for a HIGH-class buffer below it.
+  const startupAntialias = useMemo(
+    () => resolveStartupAntialias(
+      typeof window === 'undefined' ? 0 : window.innerWidth,
+      typeof window === 'undefined' ? 0 : window.innerHeight,
+      typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+      QUALITY_PRESETS.high.maxDpr,
+    ),
+    [],
   );
   // Live caches, seeded from the bootstrap snapshots so the first paint is
   // already populated, then updated in place by the WS streams below. A
@@ -2299,7 +2314,12 @@ export default function App({
           // A genuinely opaque canvas would mean handing three a context
           // created here with `alpha: false` — three then reads the real
           // attributes back off it.
-          gl={{ antialias: true, alpha: false }}
+          //
+          // `antialias` is decided once at mount by the startup buffer class
+          // (see `startupAntialias`): off above 8 MP, on for a HIGH-class
+          // buffer below it. It is a context attribute and cannot change
+          // without remounting the Canvas, so it must not be a runtime tier.
+          gl={{ antialias: startupAntialias, alpha: false }}
           dpr={canvasDpr}
           style={{ background: HUD_COLORS.stageGround }}
           // The context exists — the boot record's GL line closes here, the
