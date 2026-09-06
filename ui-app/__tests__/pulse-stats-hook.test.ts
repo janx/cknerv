@@ -92,6 +92,11 @@ describe('installPulseStatsHook', () => {
     expect(picker).toHaveProperty('rebuilds');
     expect(picker).toHaveProperty('suspendedSkips');
     expect(picker).toHaveProperty('rebuildReasons.pointerdown');
+    // The two incremental outcomes ride the same surface: a rebuild count
+    // that fell is only readable as a WIN beside the patches that replaced it
+    // and the deferrals a gesture left for its settle.
+    expect(picker).toHaveProperty('patches');
+    expect(picker).toHaveProperty('deferredRebuilds');
     window.__cellPickStatsReset!();
     expect(window.__cellPickStats!().raycasts).toBe(0);
 

@@ -52,10 +52,20 @@
 //                                    peer polls and blocks, and read.
 //   window.__colonyStatsReset()  → zero the colony rebuild counters
 //   window.__cellPickStats()     → { raycasts, suspendedSkips, reuses, rebuilds,
-//                                    rebuildReasons, padRefreshes, hits } — the
-//                                    Cell picker's index rebuilds and which
-//                                    gate tripped each one. Reset, sweep the
-//                                    pointer or drag the camera, and read.
+//                                    patches, deferredRebuilds, rebuildReasons,
+//                                    padRefreshes, hits } — the Cell picker's
+//                                    index rebuilds and which gate tripped each
+//                                    one. Reset, sweep the pointer or drag the
+//                                    camera, and read. The four outcomes
+//                                    partition the answered raycasts:
+//                                    `rebuilds` re-projected the field,
+//                                    `patches` repaired the discs whose LOD
+//                                    crossed the expanded-detail line,
+//                                    `deferredRebuilds` left a moving camera's
+//                                    staleness for the settle, `reuses` found
+//                                    nothing to do. A hover tail should read
+//                                    `detailEpoch` reasons with `patches`
+//                                    beside them and `rebuilds` near zero.
 //   window.__cellPickStatsReset() → zero the picker counters
 //   window.__renderPerformanceStats()   → bounded p50/p95/p99 CPU/GPU/frame data
 //   window.__renderPerformanceStatsJson() → versioned JSON export

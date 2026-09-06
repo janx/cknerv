@@ -97,6 +97,7 @@ import {
   CELL_EXPANDED_PICK_MIN_RADIUS_PX,
   CELL_EXPANDED_PICK_PADDING_PX,
   CELL_HOVER_FOCUS,
+  CELL_PICK_DETAIL_PATCH_LIMIT,
   CELL_PICK_FOCUS_PAD_CEILING_PX,
   CELL_SELECTED_FOCUS,
   CONSENSUS_BRAID_BASE_SCALE,
@@ -106,9 +107,11 @@ import {
   pointerRayOwnedByNetworkPeer,
   cellGalaxyRotationScaleTarget,
   cellPickRadiusPx,
+  cellPickRebuildDecision,
   consensusBraidRenderScale,
   dampCellGalaxyRotationScale,
   selectedCellNumericId,
+  type CellPickStaleReasons,
 } from '../derives/cellInteraction.derive';
 import { galaxyRadianceGain, makeCellHybridMaterial } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
@@ -221,6 +224,11 @@ interface CellGalaxyProps {
    * suspend the O(N) screen-space picker after a real drag begins while still
    * allowing the pointer-down and click raycasts that preserve R3F semantics. */
   pickingSuspendedRef?: React.RefObject<boolean>;
+  /** The same frame's MOTION WINDOW verdict — `pickingSuspendedRef` widened by
+   *  the un-moved press, and the ref `AdaptiveQualityController` reads as
+   *  `motionActiveRef`. Inside it the picker marks its screen index stale for
+   *  a moving camera without re-projecting the field. */
+  cameraMotionActiveRef?: { readonly current: boolean };
   /** Live compressed amount for the unresolved population, from
    *  `deriveCellPopulationField`, owned by the caller and read in the frame
    *  loop. It changes VALUE every block, so it travels by ref and not as a
@@ -940,6 +948,7 @@ interface CellPickerProps {
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
   pickingSuspendedRef?: React.RefObject<boolean>;
+  cameraMotionActiveRef?: { readonly current: boolean };
   onSelect: (id: string | null) => void;
 }
 
@@ -1077,6 +1086,13 @@ export interface CellPickRaycastSources {
   /** While true, hover probes are skipped; presses and clicks still answer
    *  (see `isCellPickPointerAction`). */
   pickingSuspendedRef?: React.RefObject<boolean>;
+  /** The MOTION WINDOW the adaptive-quality sampler reads — the same verdict
+   *  `CameraMotionSentinel` settles once a frame, which is
+   *  `pickingSuspendedRef` widened by the un-moved press. Inside it a moving
+   *  camera marks the index stale without re-projecting the field; the first
+   *  at-rest raycast rebuilds. Absent reads as at rest, which is the
+   *  pre-window behaviour exactly. */
+  cameraMotionActiveRef?: { readonly current: boolean };
   /** The DOM event R3F is dispatching this raycast for — its `lastEvent`. A
    *  raycast with no event on record counts as a hover probe. */
   pointerEventRef?: { readonly current: { readonly type: string } | null };
@@ -1099,6 +1115,7 @@ export function createCellPickRaycast({
   selectedCellIdRef,
   hoveredCellIdRef,
   pickingSuspendedRef,
+  cameraMotionActiveRef,
   pointerEventRef,
   forcePreciseRef,
   viewportRef,
@@ -1145,6 +1162,25 @@ export function createCellPickRaycast({
   let padRevision = -1;
   let padSelectedCellId: number | null = null;
   let padHoveredCellId: number | null = null;
+  // Which side of the expanded-detail line each slot's radius was baked on.
+  // The detail lane reaches the index through `cellPickRadiusPx`'s threshold
+  // and nowhere else, so this one bit per slot is the WHOLE of what a detail
+  // epoch can have changed — and comparing it with the live lane is a byte a
+  // slot, the same trade the focus pads' two id lookups already make against
+  // the projection they replace.
+  const indexedExpanded = new Uint8Array(INSTANCE_CAPACITY);
+  // Refilled in place each raycast; never read outside the one that filled it.
+  const staleReasons: CellPickStaleReasons = {
+    pointerdown: false,
+    fieldVersion: false,
+    sizeEpoch: false,
+    count: false,
+    detailEpoch: false,
+    viewport: false,
+    spin: false,
+    camera: false,
+    projection: false,
+  };
 
   return function raycastCells(
     this: THREE.Object3D,
@@ -1252,15 +1288,107 @@ export function createCellPickRaycast({
     const detailEpochStale = indexedDetailEpoch !== detailPickEpoch.epoch;
     const viewportStale = indexedWidth !== width || indexedHeight !== height;
     const projectionStale = !indexedProjection.equals(camera.projectionMatrix);
-    const structuralIndexChange = fieldVersionStale
-      || sizeEpochStale
-      || countStale
-      || detailEpochStale
-      || viewportStale
-      || matrixStale
-      || cameraStale
-      || projectionStale;
-    if (forcePrecise || structuralIndexChange) {
+    staleReasons.pointerdown = forcePrecise;
+    staleReasons.fieldVersion = fieldVersionStale;
+    staleReasons.sizeEpoch = sizeEpochStale;
+    staleReasons.count = countStale;
+    staleReasons.detailEpoch = detailEpochStale;
+    staleReasons.viewport = viewportStale;
+    staleReasons.spin = matrixStale;
+    staleReasons.camera = cameraStale;
+    staleReasons.projection = projectionStale;
+    let decision = cellPickRebuildDecision(
+      staleReasons,
+      cameraMotionActiveRef?.current === true,
+    );
+    // An index that has never been built has no entries to repair and no
+    // snapshot to project them through, so its first raycast is a rebuild
+    // whatever the reasons say.
+    if (decision === 'patch' && indexedRevision === 0) decision = 'rebuild';
+    if (decision === 'patch') {
+      // The near set that crosses the detail line is capped at twelve
+      // identities, so the diff is a handful of slots in a field that did not
+      // move. Re-project exactly those, through the index's OWN snapshot — its
+      // model view, its viewport, its projection — so a repaired disc and the
+      // radii around it go on describing one camera, exactly as the focus pads
+      // already do. Any slot whose repair would move it in the grid hands the
+      // whole raycast back to the rebuild below.
+      const patchHalfW = indexedWidth * 0.5;
+      const patchHalfH = indexedHeight * 0.5;
+      const patchEntryLane = screenIndex.entry;
+      let crossed = 0;
+      let padPatched = false;
+      for (let i = 0; i < count; i += 1) {
+        const detail = detailArray[i] ?? 0;
+        const expanded = Number.isFinite(detail)
+          && detail > CELL_EXPANDED_DETAIL_THRESHOLD ? 1 : 0;
+        if (expanded === indexedExpanded[i]) continue;
+        crossed += 1;
+        if (crossed > CELL_PICK_DETAIL_PATCH_LIMIT) {
+          decision = 'rebuild';
+          break;
+        }
+        const seed = cells[i].pos_seed;
+        cellView.x = seed[0];
+        cellView.y = seed[1];
+        cellView.z = seed[2];
+        cellView.applyMatrix4(indexedModelView);
+        const viewZ = -cellView.z;
+        // The frustum rejections do not read detail, and the snapshot they are
+        // taken against is the one the rebuild used: a slot the rebuild
+        // skipped is a slot this skips, with nothing indexed either way.
+        if (viewZ <= 0) {
+          indexedExpanded[i] = expanded;
+          continue;
+        }
+        cellNdc.copy(cellView).applyMatrix4(indexedProjection);
+        if (cellNdc.z < -1 || cellNdc.z > 1) {
+          indexedExpanded[i] = expanded;
+          continue;
+        }
+        const depthToPx = patchHalfH / viewZ;
+        const braidScale = CONSENSUS_BRAID_BASE_SCALE
+          * Math.max(0, pickPresenceArr[i]);
+        const pointRadiusPx = sizeArray[i] * depthToPx;
+        const braidRadiusPx = CONSENSUS_BRAID_LOCAL_RADIUS * braidScale
+          * indexedProjectionScaleY * depthToPx;
+        const pointRadius = Number.isFinite(pointRadiusPx)
+          ? Math.max(0, pointRadiusPx)
+          : 0;
+        const braidRadius = Number.isFinite(braidRadiusPx)
+          ? Math.max(0, braidRadiusPx)
+          : 0;
+        const visibleRadius = Math.max(pointRadius, braidRadius);
+        patchEntryLane[0] = (cellNdc.x + 1) * patchHalfW;
+        patchEntryLane[1] = (1 - cellNdc.y) * patchHalfH;
+        patchEntryLane[2] = expanded === 0
+          ? visibleRadius
+          : Math.max(
+            visibleRadius,
+            CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+            braidRadius + CELL_EXPANDED_PICK_PADDING_PX,
+          );
+        patchEntryLane[3] = cellNdc.z;
+        if (!screenIndex.patchEntry(i)) {
+          decision = 'rebuild';
+          break;
+        }
+        indexedExpanded[i] = expanded;
+        if (focusPads[0].index === i || focusPads[1].index === i) {
+          padPatched = true;
+        }
+      }
+      if (decision === 'patch') {
+        cellPickStats.observePatch();
+        cellPickStats.observeRebuildReason('detailEpoch');
+        indexedDetailEpoch = detailPickEpoch.epoch;
+        // A pad may only ever GROW the disc the index holds, and a pad's
+        // radius reads the detail lane live — so a repaired disc under one of
+        // the two pads has to re-resolve it, or the stale pad would shrink it.
+        if (padPatched) indexedRevision += 1;
+      }
+    }
+    if (decision === 'rebuild') {
       // Every gate that is open is counted, not only the first: a reader
       // tuning one gate has to know when another would have fired anyway.
       cellPickStats.observeRebuild();
@@ -1312,6 +1440,14 @@ export function createCellPickRaycast({
         cellView.z = localZ;
         cellView.applyMatrix4(modelView);
 
+        // The side of the detail line this entry is baked on, recorded for
+        // every slot the loop walks — including the ones it goes on to reject
+        // — so a later epoch's diff sees crossings and never a rejection.
+        const detail = detailArray[i] ?? 0;
+        const expanded = Number.isFinite(detail)
+          && detail > CELL_EXPANDED_DETAIL_THRESHOLD ? 1 : 0;
+        indexedExpanded[i] = expanded;
+
         // View-space depth feeds both visual footprint and frustum rejection.
         const viewZ = -cellView.z;
         if (viewZ <= 0) continue;
@@ -1328,9 +1464,7 @@ export function createCellPickRaycast({
           ? Math.max(0, braidRadiusPx)
           : 0;
         const visibleRadius = Math.max(pointRadius, braidRadius);
-        const detail = detailArray[i] ?? 0;
-        const pickPxR = !Number.isFinite(detail)
-          || detail <= CELL_EXPANDED_DETAIL_THRESHOLD
+        const pickPxR = expanded === 0
           ? visibleRadius
           : Math.max(
             visibleRadius,
@@ -1387,7 +1521,14 @@ export function createCellPickRaycast({
       );
       indexedProjection.copy(camera.projectionMatrix);
       indexedRevision += 1;
-    } else {
+    } else if (decision === 'defer') {
+      // Marked stale and left that way: the gates are re-read from live state
+      // on every raycast, so nothing is remembered and nothing is forgotten —
+      // the first raycast the sentinel calls at rest finds the same reasons
+      // open and rebuilds. The counter is here so a probe can tell a deferred
+      // window from a quiet one.
+      cellPickStats.observeDeferredRebuild();
+    } else if (decision === 'reuse') {
       cellPickStats.observeReuse();
     }
 
@@ -1492,6 +1633,7 @@ function CellPicker({
   selectedCellIdRef,
   hoveredCellIdRef,
   pickingSuspendedRef,
+  cameraMotionActiveRef,
   onSelect,
 }: CellPickerProps) {
   const ref = useRef<THREE.Object3D>(null);
@@ -1521,6 +1663,7 @@ function CellPicker({
       selectedCellIdRef,
       hoveredCellIdRef,
       pickingSuspendedRef,
+      cameraMotionActiveRef,
       pointerEventRef,
       forcePreciseRef: forcePreciseRaycastRef,
       viewportRef: sizeRef,
@@ -1532,6 +1675,7 @@ function CellPicker({
       node.raycast = THREE.Object3D.prototype.raycast;
     };
   }, [
+    cameraMotionActiveRef,
     cellsListRef,
     detailAttr,
     detailPickEpoch,
@@ -1705,6 +1849,7 @@ function CellGalaxy({
   landingFlashRef,
   overlay,
   pickingSuspendedRef,
+  cameraMotionActiveRef,
   populationGainRef,
   populationActive = false,
   cellDetailViewFocusRef,
@@ -2654,6 +2799,7 @@ function CellGalaxy({
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
           pickingSuspendedRef={pickingSuspendedRef}
+          cameraMotionActiveRef={cameraMotionActiveRef}
           onSelect={onSelect}
         />
       </group>

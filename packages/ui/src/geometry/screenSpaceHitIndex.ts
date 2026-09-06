@@ -22,14 +22,25 @@ const NO_RADIUS_PADS: readonly ScreenSpaceRadiusPad[] = [];
 
 /** Allocation-stable CSS-pixel grid for point/sprite hit testing. Each item is
  * stored in its centre bucket; queries widen by the largest admitted radius,
- * so large sprites remain exact without duplicating entries across buckets. */
+ * so large sprites remain exact without duplicating entries across buckets.
+ *
+ * Three ways in, in ascending cost: a query-time {@link ScreenSpaceRadiusPad}
+ * changes a disc for one `find` and stores nothing; {@link patchEntry} writes
+ * a new radius into an entry whose centre has not moved, keeping its bucket
+ * and its chain; a `begin` + `insert` pass re-projects the field. */
 export class ScreenSpaceHitIndex {
   private readonly centersX: Float32Array;
   private readonly centersY: Float32Array;
   private readonly radiiSq: Float32Array;
   private readonly depths: Float32Array;
   private readonly next: Int32Array;
+  /** The build each slot was last admitted in, compared against `generation`.
+   *  A membership record that costs one store on admission and no clearing at
+   *  all, so `begin` stays one fill however large the capacity is. */
+  private readonly admittedAt: Int32Array;
   private heads = new Int32Array(0);
+  /** Bumped by `begin`; starts at 1 so a never-admitted slot's 0 reads false. */
+  private generation = 0;
   private columns = 0;
   private rows = 0;
   private width = 0;
@@ -46,6 +57,7 @@ export class ScreenSpaceHitIndex {
     this.radiiSq = new Float32Array(capacity);
     this.depths = new Float32Array(capacity);
     this.next = new Int32Array(capacity);
+    this.admittedAt = new Int32Array(capacity);
   }
 
   /** `admitPadPx` widens ONLY the off-screen rejection in `insert`, by the
@@ -64,6 +76,30 @@ export class ScreenSpaceHitIndex {
     }
     this.heads.fill(-1);
     this.maxRadius = 0;
+    this.generation += 1;
+  }
+
+  /** Whether this build admitted the slot — the record a patch has to consult
+   *  before it writes, since a rejected slot's stored centre belongs to some
+   *  earlier build. */
+  admitted(index: number): boolean {
+    return index >= 0
+      && index < this.capacity
+      && this.admittedAt[index] === this.generation;
+  }
+
+  /** `insert`'s rejection, asked as a question so a patch can find out whether
+   *  the values it is about to write would change an entry's membership
+   *  BEFORE it writes them. */
+  private admits(centerX: number, centerY: number, radius: number): boolean {
+    return Number.isFinite(centerX)
+      && Number.isFinite(centerY)
+      && Number.isFinite(radius)
+      && radius > 0
+      && centerX + radius + this.admitPad >= 0
+      && centerX - radius - this.admitPad <= this.width
+      && centerY + radius + this.admitPad >= 0
+      && centerY - radius - this.admitPad <= this.height;
   }
 
   /** The largest radius admitted since `begin`; zero for an empty index. */
@@ -105,14 +141,7 @@ export class ScreenSpaceHitIndex {
     if (
       index < 0
       || index >= this.capacity
-      || !Number.isFinite(centerX)
-      || !Number.isFinite(centerY)
-      || !Number.isFinite(radius)
-      || radius <= 0
-      || centerX + radius + this.admitPad < 0
-      || centerX - radius - this.admitPad > this.width
-      || centerY + radius + this.admitPad < 0
-      || centerY - radius - this.admitPad > this.height
+      || !this.admits(centerX, centerY, radius)
     ) return false;
 
     const bx = Math.max(
@@ -130,7 +159,66 @@ export class ScreenSpaceHitIndex {
     this.depths[index] = depth;
     this.next[index] = this.heads[bucket];
     this.heads[bucket] = index;
+    this.admittedAt[index] = this.generation;
     this.maxRadius = Math.max(this.maxRadius, radius);
+    return true;
+  }
+
+  /** `patchEntry` for the values passed in. */
+  patch(
+    index: number,
+    centerX: number,
+    centerY: number,
+    radius: number,
+    depth: number,
+  ): boolean {
+    const entry = this.entry;
+    entry[0] = centerX;
+    entry[1] = centerY;
+    entry[2] = radius;
+    entry[3] = depth;
+    return this.patchEntry(index);
+  }
+
+  /** Re-state ONE entry the caller has re-projected through this index's own
+   *  snapshot — its matrices, its viewport — because the entry's RADIUS moved
+   *  and nothing else did. The entry keeps the bucket its centre put it in and
+   *  its place in that bucket's chain, so a patch is three stores and no walk,
+   *  and the field around it is never re-projected.
+   *
+   *  Returns false having written nothing when the values would MOVE the
+   *  entry: a centre that is not the one indexed, or a radius that flips the
+   *  admit verdict. Either is chain surgery, and either leaves the caller's
+   *  drift envelope describing a membership the index no longer has — so the
+   *  answer to both is a rebuild, which is the caller's to run.
+   *
+   *  `maxRadiusPx` only ever GROWS here: the largest admitted radius cannot be
+   *  recovered when the entry that held it shrinks, short of walking the field.
+   *  A too-large one is conservative in both places it is read — `find` scans
+   *  strictly more buckets and still tests every candidate against its own
+   *  exact radius, and a drift bound widened by it can only rebuild sooner. */
+  patchEntry(index: number): boolean {
+    if (index < 0 || index >= this.capacity) return false;
+    const entry = this.entry;
+    const centerX = entry[0];
+    const centerY = entry[1];
+    const radius = entry[2];
+    const admits = this.admits(centerX, centerY, radius);
+    if (admits !== (this.admittedAt[index] === this.generation)) return false;
+    // Rejected before and rejected after: the index does not hold this slot,
+    // there is nothing in it to repair, and its stored centre is not this
+    // build's to compare against.
+    if (!admits) return true;
+    // Compare what the index STORED, not what the caller computed: the centre
+    // lanes are Float32Array, so a re-projection that reproduces the double
+    // exactly still has to be rounded before it can equal the entry.
+    if (
+      Math.fround(centerX) !== this.centersX[index]
+      || Math.fround(centerY) !== this.centersY[index]
+    ) return false;
+    this.radiiSq[index] = radius * radius;
+    this.depths[index] = entry[3];
+    if (radius > this.maxRadius) this.maxRadius = radius;
     return true;
   }
 

@@ -14,6 +14,14 @@
 // rate, `suspendedSkips` is what the motion gate declined, and the reasons
 // say which gate is firing. A reason is counted for every gate that was open
 // at the rebuild, so Σ reasons ≥ rebuilds.
+//
+// An answered raycast leaves the index in exactly one of four states, and the
+// counters partition them: `rebuilds` re-projected the field, `patches`
+// repaired the few discs whose LOD crossed the expanded-detail line,
+// `deferredRebuilds` left a moving camera's staleness for the first at-rest
+// raycast, and `reuses` found nothing to do. A `detailEpoch` reason with a
+// `patches` beside it is the picker working as intended; a `detailEpoch`
+// count that tracks `rebuilds` is the patch path refusing.
 
 export type CellPickRebuildReason =
   | 'pointerdown'
@@ -49,6 +57,10 @@ export interface CellPickStatsSnapshot {
   reuses: number;
   /** Whole-field re-projections. */
   rebuilds: number;
+  /** Raycasts that repaired the crossed discs in place instead of rebuilding. */
+  patches: number;
+  /** Raycasts that left a motion window's staleness for the settle to rebuild. */
+  deferredRebuilds: number;
   /** Which gate was open at each rebuild; several can be at once. */
   rebuildReasons: Record<CellPickRebuildReason, number>;
   /** The two focus pads re-resolved (a rebuild, or a hover/selection move). */
@@ -78,6 +90,8 @@ interface CellPickStatsState extends Omit<CellPickStatsSnapshot, 'suspendedSkips
   observeAnswered(): void;
   observeReuse(): void;
   observeRebuild(): void;
+  observePatch(): void;
+  observeDeferredRebuild(): void;
   observeRebuildReason(reason: CellPickRebuildReason): void;
   observePadRefresh(): void;
   observeHit(): void;
@@ -90,6 +104,8 @@ export const cellPickStats: CellPickStatsState = {
   answered: 0,
   reuses: 0,
   rebuilds: 0,
+  patches: 0,
+  deferredRebuilds: 0,
   rebuildReasons: zeroReasons(),
   padRefreshes: 0,
   hits: 0,
@@ -105,6 +121,12 @@ export const cellPickStats: CellPickStatsState = {
   },
   observeRebuild() {
     this.rebuilds += 1;
+  },
+  observePatch() {
+    this.patches += 1;
+  },
+  observeDeferredRebuild() {
+    this.deferredRebuilds += 1;
   },
   observeRebuildReason(reason) {
     this.rebuildReasons[reason] += 1;
@@ -122,6 +144,8 @@ export const cellPickStats: CellPickStatsState = {
       suspendedSkips: this.raycasts - this.answered,
       reuses: this.reuses,
       rebuilds: this.rebuilds,
+      patches: this.patches,
+      deferredRebuilds: this.deferredRebuilds,
       rebuildReasons: { ...this.rebuildReasons },
       padRefreshes: this.padRefreshes,
       hits: this.hits,
@@ -133,6 +157,8 @@ export const cellPickStats: CellPickStatsState = {
     this.answered = 0;
     this.reuses = 0;
     this.rebuilds = 0;
+    this.patches = 0;
+    this.deferredRebuilds = 0;
     this.rebuildReasons = zeroReasons();
     this.padRefreshes = 0;
     this.hits = 0;

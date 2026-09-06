@@ -12,12 +12,14 @@ import {
   cellCanvasCursor,
   cellFocusTarget,
   cellPickRadiusPx,
+  cellPickRebuildDecision,
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
   NETWORK_PEER_PICK_FLAG,
   networkColonyRotationScaleTarget,
   pointerRayOwnedByNetworkPeer,
   dampCellGalaxyRotationScale,
+  type CellPickStaleReasons,
   dampCellFocus,
   focusedBraidScale,
   selectedCellNumericId,
@@ -201,5 +203,93 @@ describe('cell interaction derivation', () => {
     )).toBe(true);
     expect(cellNucleusLodRefreshDue(0, true, false)).toBe(true);
     expect(cellNucleusLodRefreshDue(0, false, true)).toBe(true);
+  });
+});
+
+describe('cellPickRebuildDecision', () => {
+  const REASONS = [
+    'pointerdown', 'fieldVersion', 'sizeEpoch', 'count', 'detailEpoch',
+    'viewport', 'spin', 'camera', 'projection',
+  ] as const;
+
+  const open = (
+    ...names: ReadonlyArray<(typeof REASONS)[number]>
+  ): CellPickStaleReasons => {
+    const reasons = Object.fromEntries(
+      REASONS.map((name) => [name, false]),
+    ) as unknown as CellPickStaleReasons;
+    for (const name of names) reasons[name] = true;
+    return reasons;
+  };
+
+  it('reuses an index nothing has invalidated, in a window or out of one', () => {
+    expect(cellPickRebuildDecision(open(), false)).toBe('reuse');
+    expect(cellPickRebuildDecision(open(), true)).toBe('reuse');
+  });
+
+  it('patches a detail-line crossing and never rebuilds for one alone', () => {
+    // The measured tail: 27 of 28 rebuilds in three seconds of hover carried
+    // this reason and nothing else. It is a handful of discs changing width
+    // in a field that did not move, and re-projecting twelve thousand cells
+    // is not what that costs.
+    expect(cellPickRebuildDecision(open('detailEpoch'), false)).toBe('patch');
+    expect(cellPickRebuildDecision(open('detailEpoch'), true)).toBe('patch');
+  });
+
+  it('rebuilds a changed MEMBERSHIP immediately, window or no window', () => {
+    // A stale index over a changed field answers with ids that no longer mean
+    // what they meant — the one error a deferral must never buy.
+    for (const reason of ['fieldVersion', 'sizeEpoch', 'count'] as const) {
+      expect(cellPickRebuildDecision(open(reason), true)).toBe('rebuild');
+      expect(cellPickRebuildDecision(open(reason), false)).toBe('rebuild');
+      // ...and it outranks every reason that would otherwise defer or patch.
+      expect(cellPickRebuildDecision(
+        open(reason, 'camera', 'spin', 'detailEpoch'),
+        true,
+      )).toBe('rebuild');
+    }
+  });
+
+  it('rebuilds a changed COORDINATE SYSTEM immediately, window or no window', () => {
+    // `find` is asked in the live CSS-pixel frame. An index built in another
+    // viewport or another projection is not the previous frame's truth, it is
+    // a different space — which is why these two are the picker's only exact
+    // compares.
+    for (const reason of ['viewport', 'projection'] as const) {
+      expect(cellPickRebuildDecision(open(reason), true)).toBe('rebuild');
+      expect(cellPickRebuildDecision(open(reason), false)).toBe('rebuild');
+      expect(cellPickRebuildDecision(open(reason, 'camera'), true))
+        .toBe('rebuild');
+    }
+  });
+
+  it('rebuilds for a press inside the window — the press exemption exists for that', () => {
+    // A suspended picker still raycasts pointerdown/click precisely so a click
+    // during camera motion lands on the cell under it. Deferring the press
+    // would hand that back, and it buys nothing at the gesture start it was
+    // aimed at: the motion sentinel settles once a frame, so the press that
+    // OPENS a drag is seen at rest anyway.
+    expect(cellPickRebuildDecision(open('pointerdown'), true)).toBe('rebuild');
+    expect(cellPickRebuildDecision(open('pointerdown'), false)).toBe('rebuild');
+    expect(cellPickRebuildDecision(open('pointerdown', 'camera'), true))
+      .toBe('rebuild');
+    expect(cellPickRebuildDecision(open('pointerdown', 'detailEpoch'), true))
+      .toBe('rebuild');
+  });
+
+  it('defers a moving camera pose, and only inside the window', () => {
+    // Spin and camera drift are the pose the index was projected through, and
+    // the drift envelope already bounds their error in pixels.
+    for (const reason of ['camera', 'spin'] as const) {
+      expect(cellPickRebuildDecision(open(reason), true)).toBe('defer');
+      expect(cellPickRebuildDecision(open(reason), false)).toBe('rebuild');
+    }
+    expect(cellPickRebuildDecision(open('camera', 'spin'), true)).toBe('defer');
+    // A detail crossing under a deferred pose defers with it: the epoch stays
+    // behind, and the rebuild at the settle covers both.
+    expect(cellPickRebuildDecision(open('camera', 'detailEpoch'), true))
+      .toBe('defer');
+    expect(cellPickRebuildDecision(open('camera', 'detailEpoch'), false))
+      .toBe('rebuild');
   });
 });

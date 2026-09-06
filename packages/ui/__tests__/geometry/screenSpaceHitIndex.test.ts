@@ -131,3 +131,88 @@ describe('ScreenSpaceHitIndex query-time radius pads', () => {
     expect(dropped.find(4, 80, [{ index: 0, radius: 30 }])).toBeNull();
   });
 });
+
+describe('ScreenSpaceHitIndex in-place radius patches', () => {
+  it('answers exactly as an index built with the patched radius does', () => {
+    // The same equivalence bar the pads are held to, for the write that
+    // outlives the query: after a patch, EVERY pointer position on the screen
+    // must return what a build at that radius returns — bucket walk order,
+    // depth ties and all.
+    for (const radius of [1, 9, 17, 26, 40]) {
+      const patched = crowd();
+      expect(patched.patch(1, 96, 60, radius, 0.2)).toBe(true);
+      expect(raster(patched)).toEqual(raster(crowd({ index: 1, radius })));
+    }
+  });
+
+  it('reports the patched radius as the one the answer was decided by', () => {
+    const index = crowd();
+    expect(index.find(96, 62)?.radiusSq).toBe(25);
+    index.patch(1, 96, 60, 20, 0.2);
+    expect(index.find(96, 62)?.radiusSq).toBe(400);
+  });
+
+  it('refuses, writing nothing, when the entry would MOVE', () => {
+    // A patch keeps the bucket the centre put it in. A different centre is a
+    // re-bucketing, which is chain surgery — and the caller's answer to that
+    // is a rebuild, so the refusal has to leave the index untouched.
+    const index = crowd();
+    const before = raster(index);
+    expect(index.patch(1, 97, 60, 20, 0.2)).toBe(false);
+    expect(index.patch(1, 96, 61, 20, 0.2)).toBe(false);
+    expect(raster(index)).toEqual(before);
+  });
+
+  it('refuses when the radius flips the admit verdict, either way', () => {
+    // Admitted → rejected: a radius the insert would have dropped cannot be
+    // written, because the entry is chained and its bucket walk would still
+    // find it.
+    const index = new ScreenSpaceHitIndex(4, 32);
+    index.begin(200, 160, 34);
+    expect(index.insert(0, 100, 80, 6, 0.5)).toBe(true);
+    expect(index.patch(0, 100, 80, 0, 0.5)).toBe(false);
+    expect(index.find(100, 80)?.index).toBe(0);
+
+    // Rejected → admitted: an entry off the viewport by more than the admit
+    // pad was never chained, so no store could put it in a bucket walk.
+    expect(index.insert(1, -80, 80, 3, 0.5)).toBe(false);
+    expect(index.patch(1, -80, 80, 90, 0.5)).toBe(false);
+    expect(index.find(4, 80)).toBeNull();
+  });
+
+  it('is a no-op on a slot this build rejected, and says so', () => {
+    // Rejected before and after: there is nothing chained to repair, and the
+    // slot's stored centre belongs to an earlier build — so the patch must not
+    // compare against that centre, and must not resurrect the entry.
+    const index = new ScreenSpaceHitIndex(4, 32);
+    index.begin(200, 160);
+    index.insert(0, 100, 80, 6, 0.5);
+    // The next build drops the entry off the viewport, where its own radius
+    // cannot reach back in.
+    index.begin(200, 160);
+    expect(index.insert(0, -80, 80, 3, 0.5)).toBe(false);
+    expect(index.admitted(0)).toBe(false);
+    expect(index.patch(0, -80, 80, 4, 0.5)).toBe(true);
+    expect(index.find(4, 80)).toBeNull();
+    // ...and nothing was written where the earlier build had left it.
+    expect(index.find(100, 80)).toBeNull();
+  });
+
+  it('grows the probe ceiling and never shrinks it inside a build', () => {
+    // `maxRadiusPx` is what the probe window and the caller's drift bound are
+    // derived from. A patch can raise it exactly; it cannot lower it without
+    // walking the field, so a shrink leaves it high — conservative in both
+    // readers, and reset by the next `begin`.
+    const index = crowd();
+    expect(index.maxRadiusPx).toBe(7);
+    index.patch(1, 96, 60, 21, 0.2);
+    expect(index.maxRadiusPx).toBe(21);
+    index.patch(1, 96, 60, 2, 0.2);
+    expect(index.maxRadiusPx).toBe(21);
+    // ...and a too-large ceiling changes no answer: every candidate the wider
+    // walk reaches is still tested against its own exact radius.
+    expect(raster(index)).toEqual(raster(crowd({ index: 1, radius: 2 })));
+    index.begin(200, 160);
+    expect(index.maxRadiusPx).toBe(0);
+  });
+});

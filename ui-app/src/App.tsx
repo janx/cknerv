@@ -2438,6 +2438,7 @@ export default function App({
             flashDirtyIdsRef={flashDirtyIdsRef}
             landingFlashRef={landingFlashRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
+            cameraMotionActiveRef={cameraMotionActiveRef}
             overlay={galaxyOverlay}
           />
 

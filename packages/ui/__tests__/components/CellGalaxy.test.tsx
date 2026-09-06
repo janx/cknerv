@@ -31,6 +31,7 @@ import {
 import { getHeapSpaceStatistics } from 'node:v8';
 import {
   CELL_HOVER_FOCUS,
+  CELL_PICK_DETAIL_PATCH_LIMIT,
   CELL_PICK_FOCUS_PAD_CEILING_PX,
   CELL_SELECTED_FOCUS,
   CONSENSUS_BRAID_LOCAL_RADIUS,
@@ -41,6 +42,7 @@ import {
 import { consensusBraidPresenceScale } from '../../src/derives/consensusBraid.derive';
 import { capacityMass } from '../../src/derives/cellVisual.derive';
 import { ScreenSpaceHitIndex } from '../../src/geometry/screenSpaceHitIndex';
+import type { ScalarThresholdEpoch } from '../../src/geometry/sparseScalarAttribute';
 import {
   resetCellPickStats,
   snapshotCellPickStats,
@@ -328,6 +330,12 @@ describe('CellGalaxy', () => {
     expect(picker).toContain('indexedMatrixWorld.equals(matrix)');
     expect(picker).toContain('indexedProjection.equals(camera.projectionMatrix)');
     expect(picker).toContain('indexedDetailEpoch !== detailPickEpoch.epoch');
+    // The staleness policy is a table, read out of the closure so it can be
+    // held to one; the incremental path is the index's own, not a rebuild
+    // with a smaller loop.
+    expect(picker).toContain('cellPickRebuildDecision(');
+    expect(picker).toContain('screenIndex.patchEntry(');
+    expect(picker).toContain('cameraMotionActiveRef?.current === true');
     expect(picker).toContain('screenIndex.find(');
     expect(picker).toContain("canvas.addEventListener('pointerdown'");
     expect(picker).not.toContain("canvas.addEventListener('pointerup'");
@@ -1436,6 +1444,8 @@ interface PickHarness {
   fieldVersionRef: { current: number };
   sizeEpochRef: { current: number };
   pickingSuspendedRef: { current: boolean };
+  cameraMotionActiveRef: { current: boolean };
+  detailPickEpoch: ScalarThresholdEpoch;
   pointerEventRef: { current: { type: string } | null };
   raycast: (
     this: THREE.Object3D,
@@ -1482,6 +1492,8 @@ function pickHarness(count = 260): PickHarness {
   const fieldVersionRef = { current: 0 };
   const sizeEpochRef = { current: 0 };
   const pickingSuspendedRef = { current: false };
+  const cameraMotionActiveRef = { current: false };
+  const detailPickEpoch: ScalarThresholdEpoch = { threshold: 0.02, epoch: 0 };
   // What R3F's `lastEvent` holds while it raycasts: a hover probe unless a
   // test says otherwise.
   const pointerEventRef = { current: { type: 'pointermove' } as { type: string } | null };
@@ -1492,11 +1504,12 @@ function pickHarness(count = 260): PickHarness {
     sizeEpochRef,
     pickPresenceArr: presence,
     detailAttr: new THREE.BufferAttribute(details, 1),
-    detailPickEpoch: { threshold: 0.02, epoch: 0 },
+    detailPickEpoch,
     sizeAttr: new THREE.BufferAttribute(sizes, 1),
     selectedCellIdRef,
     hoveredCellIdRef,
     pickingSuspendedRef,
+    cameraMotionActiveRef,
     pointerEventRef,
     forcePreciseRef,
     viewportRef: { current: { width: PICK_WIDTH, height: PICK_HEIGHT } },
@@ -1504,9 +1517,23 @@ function pickHarness(count = 260): PickHarness {
   return {
     cells, cellsListRef, sizes, presence, details, object, camera,
     selectedCellIdRef, hoveredCellIdRef, forcePreciseRef,
-    fieldVersionRef, sizeEpochRef, pickingSuspendedRef, pointerEventRef,
+    fieldVersionRef, sizeEpochRef, pickingSuspendedRef, cameraMotionActiveRef,
+    detailPickEpoch, pointerEventRef,
     raycast,
   };
+}
+
+/** Cross the expanded-detail line on the named slots and bump the epoch
+ *  exactly as `writeSparseScalarAttribute` does for the detail lane: the
+ *  counter moves once per batch in which any slot changed sides. */
+function crossDetail(h: PickHarness, slots: readonly number[]): void {
+  let crossed = false;
+  for (const slot of slots) {
+    const was = h.details[slot] > h.detailPickEpoch.threshold;
+    h.details[slot] = was ? 0 : 0.5;
+    crossed = true;
+  }
+  if (crossed) h.detailPickEpoch.epoch += 1;
 }
 
 /** The picker's rebuild exactly as it stood before the focus pad and the
@@ -1901,6 +1928,162 @@ describe('cell pick camera budget', () => {
   });
 });
 
+describe('cell pick detail patch', () => {
+  it('repairs the crossed discs and answers what a whole re-projection would', () => {
+    // The equivalence bar: after a detail-line crossing is PATCHED into the
+    // index, every pointer position on the screen must return what a fresh
+    // projection of the whole field at those details returns. `oracleSweep`
+    // is that projection — the picker's contract since before the index had
+    // any incremental path at all.
+    const h = pickHarness();
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+
+    // A seeded walk of the near set: slots leaving the expanded set, slots
+    // entering it, and both at once, each a batch the way one LOD tick is.
+    let state = 97;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    for (let round = 0; round < 12; round += 1) {
+      const slots: number[] = [];
+      const wanted = 1 + Math.floor(random() * 8);
+      while (slots.length < wanted) {
+        const slot = Math.floor(random() * h.cells.length);
+        if (!slots.includes(slot)) slots.push(slot);
+      }
+      crossDetail(h, slots);
+      let live: Array<number | null> = [];
+      expect(countRebuilds(() => { live = liveSweep(h); })).toBe(0);
+      expect(live).toEqual(oracleSweep(h));
+    }
+  });
+
+  it('crosses the line for the two focused discs without letting a stale pad shrink one', () => {
+    // A pad may only ever GROW the disc the index holds, and a pad's radius
+    // reads the detail lane live. A repaired disc under a pad that was not
+    // re-resolved would be a pad SHRINKING an entry, which is the one thing
+    // the pad contract forbids.
+    const h = pickHarness();
+    h.selectedCellIdRef.current = h.cells[3].id;
+    h.hoveredCellIdRef.current = h.cells[17].id;
+    livePick(h, 480, 320);
+
+    for (const slots of [[3], [17], [3, 17], [3, 17]]) {
+      crossDetail(h, slots);
+      let live: Array<number | null> = [];
+      expect(countRebuilds(() => { live = liveSweep(h); })).toBe(0);
+      expect(live).toEqual(oracleSweep(h));
+    }
+  });
+
+  it('re-projects the field when the lane was rewritten rather than ticked', () => {
+    // The near set is capped at twelve identities, so a diff past the patch
+    // limit is not an LOD tick — and a rebuild is both cheaper and honest.
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    crossDetail(
+      h,
+      Array.from({ length: CELL_PICK_DETAIL_PATCH_LIMIT + 1 }, (_, i) => i * 2),
+    );
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+
+  it('records the side of the line for slots the projection rejects', () => {
+    // A cell behind the camera is never inserted, and its flag is still
+    // recorded — otherwise the next diff reads the rejection as a crossing
+    // and hands the raycast to a rebuild for a slot that has no entry.
+    const h = pickHarness();
+    // Put a handful of cells behind the camera, which looks down -Z from
+    // z = 132.
+    for (const i of [5, 6, 7]) h.cells[i].pos_seed = [0, 0, 400];
+    h.fieldVersionRef.current += 1;
+    livePick(h, 480, 320);
+
+    crossDetail(h, [5, 6, 7]);
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(0);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+    // ...and the flags took, so the same slots crossing back are still a patch.
+    crossDetail(h, [5, 6, 7]);
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(0);
+  });
+
+  it('leaves a detail crossing to the rebuild when another gate is open', () => {
+    // Membership outranks it: a field version means the ids moved, and a
+    // patched radius over a moved field would be repaired onto the wrong cell.
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    resetCellPickStats();
+    crossDetail(h, [40]);
+    h.fieldVersionRef.current += 1;
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    // ...and the epoch went with it, so the next raycast has nothing to do.
+    expect(countRebuilds(() => livePick(h, 481, 320))).toBe(0);
+    expect(snapshotCellPickStats().patches).toBe(0);
+  });
+});
+
+describe('cell pick motion window', () => {
+  it('leaves a moving camera stale and rebuilds on the first at-rest raycast', () => {
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    const rested = liveSweep(h);
+
+    // A drift past the budget, inside the window: marked, not rebuilt — and
+    // the answer is the index as it stood, which is the pose the raycast
+    // before it was answered from.
+    h.cameraMotionActiveRef.current = true;
+    h.camera.position.set(9, 21, 129);
+    h.camera.lookAt(0, 0, 0);
+    h.camera.updateMatrixWorld(true);
+    let moved: Array<number | null> = [];
+    expect(countRebuilds(() => { moved = liveSweep(h); })).toBe(0);
+    expect(moved).toEqual(rested);
+
+    // The sentinel settles at rest: the same reasons are still open, still
+    // read from live state, and the very next raycast pays for them once.
+    h.cameraMotionActiveRef.current = false;
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+
+  it('still answers a press precisely inside the window', () => {
+    // The press exemption is why a suspended picker raycasts pointerdown at
+    // all: a click during motion has to land on the cell under it.
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    h.cameraMotionActiveRef.current = true;
+    h.pickingSuspendedRef.current = true;
+    h.camera.position.set(-14, 24, 126);
+    h.camera.lookAt(0, 0, 0);
+    h.camera.updateMatrixWorld(true);
+
+    h.pointerEventRef.current = { type: 'pointerdown' };
+    h.forcePreciseRef.current = true;
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    // ...and that snapshot is the live pose, not the one the window froze.
+    expect(livePick(h, 480, 320)).toBe(referencePick(h, h.camera, 480, 320));
+  });
+
+  it('never defers a viewport, a projection or a membership change', () => {
+    // Deferring these would not answer from a stale index, it would answer in
+    // a different coordinate system, or with ids that moved.
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    h.cameraMotionActiveRef.current = true;
+
+    h.fieldVersionRef.current += 1;
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    h.sizeEpochRef.current += 1;
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    h.camera.fov = 42;
+    h.camera.updateProjectionMatrix();
+    expect(countRebuilds(() => livePick(h, 480, 320))).toBe(1);
+    expect(liveSweep(h)).toEqual(oracleSweep(h));
+  });
+});
+
 describe('cell pick suspension', () => {
   it('answers presses and clicks while suspended, and hover probes only when not', () => {
     const h = pickHarness();
@@ -2272,5 +2455,50 @@ describe('cell pick stats', () => {
     expect(snapshotCellPickStats().rebuilds).toBe(4);
     resetCellPickStats();
     expect(snapshotCellPickStats().raycasts).toBe(0);
+  });
+
+  it('counts a detail patch and a deferred rebuild as the outcomes they are', () => {
+    resetCellPickStats();
+    const h = pickHarness();
+    livePick(h, 480, 320);
+    expect(snapshotCellPickStats()).toMatchObject({
+      rebuilds: 1, patches: 0, deferredRebuilds: 0, reuses: 0,
+    });
+
+    // A detail-line crossing: one patch, the reason still counted so a probe
+    // can see WHICH gate the patch answered, and no rebuild.
+    crossDetail(h, [40, 41]);
+    livePick(h, 480, 320);
+    let s = snapshotCellPickStats();
+    expect(s).toMatchObject({ rebuilds: 1, patches: 1, deferredRebuilds: 0 });
+    expect(s.rebuildReasons.detailEpoch).toBe(2);
+
+    // A moving camera inside the window: marked, not rebuilt.
+    h.cameraMotionActiveRef.current = true;
+    h.camera.position.set(11, 23, 127);
+    h.camera.lookAt(0, 0, 0);
+    h.camera.updateMatrixWorld(true);
+    livePick(h, 480, 320);
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s).toMatchObject({ rebuilds: 1, patches: 1, deferredRebuilds: 2 });
+
+    // At rest the same reasons are still open and get paid for once.
+    h.cameraMotionActiveRef.current = false;
+    livePick(h, 480, 320);
+    livePick(h, 481, 320);
+    s = snapshotCellPickStats();
+    expect(s).toMatchObject({ rebuilds: 2, patches: 1, deferredRebuilds: 2 });
+
+    // The four outcomes partition the raycasts that got past the motion gate:
+    // every answered raycast rebuilt, patched, deferred, or found nothing.
+    const answered = s.raycasts - s.suspendedSkips;
+    expect(s.rebuilds + s.patches + s.deferredRebuilds + s.reuses)
+      .toBe(answered);
+
+    resetCellPickStats();
+    expect(snapshotCellPickStats()).toMatchObject({
+      patches: 0, deferredRebuilds: 0,
+    });
   });
 });

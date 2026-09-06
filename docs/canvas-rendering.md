@@ -439,6 +439,18 @@ capacity-derived braid presence changed), the expanded-detail epoch, the
 viewport, and the projection matrix. A payload-only delta — an enrichment
 refresh, a death — republishes the list and rebuilds nothing.
 
+A detail-epoch bump does not rebuild. The detail lane reaches the index across
+one threshold and nowhere else, and the near set that crosses it is capped at
+twelve identities, so the picker diffs the live lane against the side of the
+line each entry was baked on — one byte a slot — and re-projects only the slots
+that crossed, through the index's OWN snapshot, writing their new radius into
+the bucket their centre already put them in (`ScreenSpaceHitIndex.patchEntry`).
+A repair that would MOVE an entry (a centre that is not the indexed one, a
+radius that flips the admit verdict) or a diff past
+`CELL_PICK_DETAIL_PATCH_LIMIT` hands the raycast back to a rebuild. A patched
+disc under one of the two focus pads re-resolves them, because a pad may only
+ever grow the disc the index holds.
+
 Camera motion is budgeted (1.5 px) against the index's own drift envelope
 (`geometry/cellPickDriftEnvelope.ts`): the image-plane box of the admitted
 entries, over which the exact maximum of the projective drift — centre
@@ -455,6 +467,21 @@ raycasts are answered throughout, pointer-down from a precise snapshot, so a
 click during motion selects what it hit and never reads as a miss (see §11).
 Selection and inspection eligibility are applied at index construction so
 hidden or non-navigable records cannot win a hit by accident.
+
+Inside the MOTION WINDOW — `cameraMotionActiveRef`, the same once-a-frame
+verdict `AdaptiveQualityController` reads, which is the picking suspension
+widened by the un-moved press — a stale camera POSE (`camera`, `spin`) marks
+the index without re-projecting it, and the first at-rest raycast pays for it
+once; the gates are re-read from live state every raycast, so nothing is
+remembered and nothing is forgotten. Three families never take that trade, and
+`cellPickRebuildDecision` is the table: MEMBERSHIP (`fieldVersion`,
+`sizeEpoch`, `count`) would answer with ids that moved; the COORDINATE SYSTEM
+(`viewport`, `projection`) is the space `find` is asked in, and a stale one is
+not the previous frame's truth but a different frame of reference; and
+`pointerdown`, because the press exemption above exists precisely so a click
+during motion lands on the cell under it — and deferring it would buy nothing
+at the gesture start, since the sentinel settles once a frame and the press
+that opens a drag is therefore seen at rest.
 
 ## 8. Display Topology and Neural Fabric
 
@@ -2115,8 +2142,9 @@ its `.bridge` block (host-registry skips, strokes moved, uploads) and its
 the cell attributes included); `__colonyStats()` (`topologyBuilds` against
 `scaffoldMisses`, `floods`, `edgeGeometryBuilds`, `courierSchedules`,
 `deliveryPlans`); `__cellPickStats()` (raycasts, `suspendedSkips`, `reuses`,
-`rebuilds`, and `rebuildReasons`, which counts every gate open at a rebuild
-and so sums to more than `rebuilds`); `__pulseStats()` (admitted and dropped-by-
+`rebuilds`, `patches`, `deferredRebuilds`, and `rebuildReasons`, which counts
+every gate open at a rebuild and so sums to more than `rebuilds`; the four
+outcomes partition the answered raycasts); `__pulseStats()` (admitted and dropped-by-
 reason plus the live-plan gauges `forcedByDeadline` and `maxStepMs`),
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;

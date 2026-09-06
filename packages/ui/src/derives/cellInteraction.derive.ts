@@ -21,6 +21,12 @@ export const CELL_EXPANDED_DETAIL_THRESHOLD = 0.02;
  * index admits entries within this distance of the viewport so the two
  * focused discs can be padded at query time rather than re-projected. */
 export const CELL_PICK_FOCUS_PAD_CEILING_PX = 34;
+/** How many slots may cross the expanded-detail line before the picker stops
+ * repairing entries and re-projects the field. One LOD tick can move at most
+ * the near cap out and the near cap in — 24 slots at the largest preset — so
+ * a diff past this is not a tick, it is a lane rewritten, and a rebuild is
+ * both cheaper and the honest answer. */
+export const CELL_PICK_DETAIL_PATCH_LIMIT = 32;
 /** Camera-distance LOD is perceptual state, not motion. Sampling it at 12 Hz
  *  keeps rotation/animation on the render clock while avoiding a full Cell
  *  field transform + GPU attribute upload on every frame. */
@@ -165,6 +171,73 @@ export function cellPickRadiusPx(
     CELL_EXPANDED_PICK_MIN_RADIUS_PX,
     braidRadius + CELL_EXPANDED_PICK_PADDING_PX,
   );
+}
+
+/** Every gate the picker's screen index can be stale on, as ONE record the
+ *  raycast refills in place — same names as `CellPickRebuildReason`, which
+ *  counts them — so asking what to do about them allocates nothing. */
+export interface CellPickStaleReasons {
+  pointerdown: boolean;
+  fieldVersion: boolean;
+  sizeEpoch: boolean;
+  count: boolean;
+  detailEpoch: boolean;
+  viewport: boolean;
+  spin: boolean;
+  camera: boolean;
+  projection: boolean;
+}
+
+/** `rebuild` re-projects the field; `patch` repairs the entries whose LOD
+ *  crossed and leaves the rest; `defer` answers off the index as it stands and
+ *  leaves it stale for the first at-rest raycast to rebuild; `reuse` is an
+ *  index nothing has invalidated. */
+export type CellPickRebuildDecision = 'reuse' | 'patch' | 'defer' | 'rebuild';
+
+/**
+ * What a raycast should do about the gates that are open — the picker's whole
+ * staleness policy, out of the closure so it can be read as a table.
+ *
+ * Inside a motion window the camera is moving under the index every frame, and
+ * hover probes are dropped by the motion gate anyway, so re-projecting twelve
+ * thousand cells to answer the few raycasts that do get through buys a truth
+ * that is stale again before it is read. Two families never take that trade:
+ *
+ * - MEMBERSHIP (`fieldVersion`, `sizeEpoch`, `count`). A stale index over a
+ *   changed field answers with ids that no longer mean what they meant.
+ * - The SPACE the query is expressed in (`viewport`, `projection`). `find` is
+ *   asked in the LIVE CSS-pixel frame; an index built in another one is not
+ *   the previous frame's truth, it is a different coordinate system. These are
+ *   the picker's two exact compares for exactly this reason.
+ *
+ * `pointerdown` is the third, and it is the one the plan's default would have
+ * deferred: a suspended picker still raycasts presses and clicks precisely so
+ * a click during motion lands on the cell under it (`isCellPickPointerAction`),
+ * and deferring the press would give that back. It also buys nothing at the
+ * gesture start it was aimed at — the motion sentinel settles once per frame,
+ * so the press that OPENS a drag is seen at rest and rebuilds regardless.
+ *
+ * What is left — `camera` and `spin` — is the camera POSE, whose error the
+ * drift envelope already bounds in pixels, and which the gesture's own
+ * pointerdown rebuilt at the press.
+ */
+export function cellPickRebuildDecision(
+  reasons: CellPickStaleReasons,
+  motionActive: boolean,
+): CellPickRebuildDecision {
+  if (reasons.fieldVersion || reasons.sizeEpoch || reasons.count) {
+    return 'rebuild';
+  }
+  if (reasons.viewport || reasons.projection || reasons.pointerdown) {
+    return 'rebuild';
+  }
+  if (reasons.camera || reasons.spin) {
+    return motionActive ? 'defer' : 'rebuild';
+  }
+  // Detail reaches the index across one line and the near set that crosses it
+  // is capped, so a bump is a handful of discs that changed width in a field
+  // that did not move.
+  return reasons.detailEpoch ? 'patch' : 'reuse';
 }
 
 /** Frame-rate-independent focus easing with a quicker attack than release. */
