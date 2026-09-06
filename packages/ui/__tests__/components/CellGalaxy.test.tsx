@@ -519,30 +519,35 @@ describe('CKB node anchor emphasis', () => {
     );
   });
 
-  it('is findable at rest: cyan label and a ring, with the halo untouched', () => {
+  it('is findable at rest by its cyan word alone, with the halo untouched', () => {
     const resting = ckbNodeAnchorPresentation(false);
     const selected = ckbNodeAnchorPresentation(true);
 
     // C-9: the one entity the NODE card is about, the origin of every measured
     // spoke, was a 12px wireframe under a grey word. The label wears the
-    // anchor's own cyan at rest now and the mark carries a ring — and the halo
-    // is exactly what it was, because the fix is legibility and not a second
-    // light in a frame this round is taking light OUT of.
+    // anchor's own cyan at rest now — and the halo is exactly what it was,
+    // because the fix is legibility and not a second light in a frame this
+    // round is taking light OUT of.
     expect(resting.labelColor).toBe(HUD_COLORS.cyanInk);
     expect(resting.labelColor).toBe(selected.labelColor);
     expect(resting.labelOpacity).toBeCloseTo(0.6, 6);
     expect(resting.haloIntensity).toBe(0.52);
-    // Still a ladder: selection promotes both the word and the ring.
+    // Still a ladder: selection promotes the word.
     expect(resting.labelOpacity).toBeLessThan(selected.labelOpacity);
-    expect(resting.ringOpacity).toBeGreaterThan(0);
-    expect(resting.ringOpacity).toBeLessThan(selected.ringOpacity);
-    // The ring is drawn, camera-facing, outside the body and one pixel thick
-    // at the fitted camera (~5.4 px/wu).
+    // No ring around the mark. C-9 also drew a camera-facing circle outside
+    // the body; the user struck it on 2026-09-06 ("why is there a ring
+    // outside the local node? remove it"). The anchor is the wireframe, the
+    // halo and the word — a closed circle here would read as a Cell's
+    // content-address halo.
+    expect(resting).not.toHaveProperty('ringOpacity');
+    expect(selected).not.toHaveProperty('ringOpacity');
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
-    expect(source).toContain('const ANCHOR_REST_RING_RADIUS = ANCHOR_BODY_RADIUS * 1.9;');
-    expect(source).toContain('const ANCHOR_REST_RING_WIDTH = 0.19;');
-    expect(source).toMatch(/<ringGeometry[\s\S]*ANCHOR_REST_RING_RADIUS \+ ANCHOR_REST_RING_WIDTH/);
-    expect(source).toMatch(/opacity=\{presentation\.ringOpacity\}/);
+    expect(source).not.toContain('ANCHOR_REST_RING');
+    const anchorStart = source.indexOf('function CkbNodeAnchor(');
+    const anchorEnd = source.indexOf('export function CkbSelectionReticle(');
+    expect(anchorStart).toBeGreaterThan(-1);
+    expect(anchorEnd).toBeGreaterThan(anchorStart);
+    expect(source.slice(anchorStart, anchorEnd)).not.toMatch(/<ringGeometry/);
   });
 
   it('owns its pixel through the peers\' arbitration, not a second one', () => {
