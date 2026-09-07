@@ -17,11 +17,13 @@
 //! }
 //! ```
 //!
-//! Atomic write via `.tmp` → rename. Failure on read / parse / hydrate
-//! logs a warning and falls through to the empty-state path —
+//! Atomic write via `.tmp` → flush → rename. Failure on read / parse /
+//! hydrate logs a warning and falls through to the empty-state path —
 //! persistence is best-effort and never wedges the server on a corrupt
-//! save file.
+//! save file. The one file that is never discarded is one a NEWER schema
+//! wrote: that is set aside under its own version instead.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -55,6 +57,15 @@ pub struct PersistedFile {
 
 pub fn persisted_path(workdir: &Path) -> PathBuf {
     workdir.join(FILE_NAME)
+}
+
+/// Where a save written by a NEWER build is kept while an older one runs.
+/// The schema that wrote it is in the name, so a work directory can hold one
+/// of these per version without either overwriting the other silently.
+fn schema_aside_path(path: &Path, schema_version: u32) -> PathBuf {
+    let mut aside = path.to_path_buf().into_os_string();
+    aside.push(format!(".schema{schema_version}.bak"));
+    PathBuf::from(aside)
 }
 
 /// Outcome of a load attempt.
@@ -95,8 +106,27 @@ pub fn save(state: &Arc<ServerState>, workdir: &Path) -> std::io::Result<()> {
     if let Some(parent) = final_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&tmp_path, bytes)?;
+    // The rename is atomic over the directory entry, but only over bytes the
+    // disk has actually taken. Without the flush below, a machine that loses
+    // power moments after the rename can come back to a `cknerv-state.json`
+    // that is truncated or empty — the entry landed, its contents never did —
+    // and the whole point of writing a temp file first is that the previous
+    // save is never the thing at risk.
+    {
+        let mut tmp = std::fs::File::create(&tmp_path)?;
+        tmp.write_all(&bytes)?;
+        tmp.sync_all()?;
+    }
     std::fs::rename(&tmp_path, &final_path)?;
+    // The rename itself is a directory write, and it needs the same promise.
+    // Best-effort: some platforms refuse to open a directory at all, and a
+    // save that survives the process but not the machine is still the save we
+    // wrote — failing the whole call over the second flush would be worse.
+    if let Some(parent) = final_path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
     Ok(())
 }
 
@@ -130,10 +160,39 @@ pub fn load(state: Arc<ServerState>, workdir: &Path) -> LoadOutcome {
             return LoadOutcome::default();
         }
     };
-    if file.schema_version != SCHEMA_VERSION {
+    if file.schema_version > SCHEMA_VERSION {
+        // A build newer than this one wrote it. Deleting it would mean that
+        // starting the older binary once — to bisect, to compare, by accident
+        // — silently destroyed state this process cannot even read, and
+        // derived state is only cheap to rebuild while the node it came from
+        // is still reachable. Set it aside under the version that wrote it
+        // instead: this boot starts empty, and the file is still there when
+        // the build that understands it comes back.
+        let aside = schema_aside_path(&path, file.schema_version);
+        match std::fs::rename(&path, &aside) {
+            Ok(()) => tracing::warn!(
+                target: "cknerv-server",
+                "persisted state schema {} is newer than this build's {} — moved {} to {} and starting empty",
+                file.schema_version,
+                SCHEMA_VERSION,
+                path.display(),
+                aside.display()
+            ),
+            Err(e) => tracing::warn!(
+                target: "cknerv-server",
+                "persisted state schema {} is newer than this build's {} — leaving {} where it is ({} could not be written: {e}) and starting empty",
+                file.schema_version,
+                SCHEMA_VERSION,
+                path.display(),
+                aside.display()
+            ),
+        }
+        return LoadOutcome::default();
+    }
+    if file.schema_version < SCHEMA_VERSION {
         tracing::warn!(
             target: "cknerv-server",
-            "persisted state schema {} != current {} — discarding",
+            "persisted state schema {} is older than this build's {} — discarding",
             file.schema_version,
             SCHEMA_VERSION
         );
@@ -347,6 +406,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workdir);
     }
 
+    /// The older half of the schema split: a shape this build has moved past
+    /// is rebuilt from the node, and rebuilding is cheap, so the file goes.
     #[test]
     fn load_with_schema_v4_discards_file() {
         let workdir = tmpdir();
@@ -365,6 +426,10 @@ mod tests {
         let outcome = load(s, &workdir);
         assert!(!outcome.restored);
         assert!(!path.exists(), "file should have been deleted");
+        assert!(
+            !schema_aside_path(&path, 4).exists(),
+            "an older save is discarded, not kept aside"
+        );
         let _ = std::fs::remove_dir_all(&workdir);
     }
 
@@ -445,23 +510,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workdir);
     }
 
+    /// The other half: a save this build cannot read is not this build's to
+    /// destroy. Running the older binary once — bisecting, comparing two
+    /// tips — used to take the newer save with it, and the state it deleted
+    /// is only rebuildable while the node that produced it is still there.
     #[test]
-    fn load_with_newer_schema_discards_file() {
+    fn load_sets_a_newer_schema_aside_instead_of_deleting_it() {
         let workdir = tmpdir();
         let path = persisted_path(&workdir);
-        std::fs::write(
-            &path,
-            serde_json::to_vec(&serde_json::json!({
-                "schema_version": SCHEMA_VERSION + 1,
-                "entities": {},
-                "projections": {},
-            }))
-            .unwrap(),
-        )
+        let written = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION + 1,
+            "entities": {},
+            "projections": {},
+        }))
         .unwrap();
+        std::fs::write(&path, &written).unwrap();
+
         let outcome = load(Arc::new(ServerState::new()), &workdir);
         assert!(!outcome.restored);
         assert!(!path.exists(), "newer state must not be partially loaded");
+        let aside = schema_aside_path(&path, SCHEMA_VERSION + 1);
+        assert!(
+            aside.exists(),
+            "the newer save should be waiting at {}",
+            aside.display()
+        );
+        assert_eq!(
+            std::fs::read(&aside).unwrap(),
+            written,
+            "what was set aside is the file, byte for byte"
+        );
+
         let _ = std::fs::remove_dir_all(&workdir);
     }
 

@@ -172,9 +172,13 @@ reservoir target; otherwise it starts a fresh hydration and replaces the
 checkpoint when that replay completes. A valid restored tip skips historical
 hydration, and the normal forward poll processes the complete downtime gap.
 
-Persistence is best-effort: unreadable, corrupt, or schema-mismatched state is
-discarded and the server starts empty. `cknerv purge --confirm` deletes derived
-`data/` state while preserving `cknerv.toml`.
+Persistence is best-effort: unreadable, corrupt, or older-schema state is
+discarded and the server starts empty. State written by a *newer* schema than
+the running build is the one thing that is never deleted — it is renamed beside
+itself as `cknerv-state.json.schema<N>.bak`, where `N` is the schema that wrote
+it, so running an older binary once does not destroy what a newer one saved.
+`cknerv purge --confirm` deletes derived `data/` state while preserving
+`cknerv.toml`.
 
 The current schema is v5, which added canonical per-component Cell morphology
 seeds and the complete output-data byte length. Schema-v4 state is

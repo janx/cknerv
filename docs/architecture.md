@@ -1173,10 +1173,13 @@ After restore, the adapter validates saved recent hashes against the node to
 detect an offline reorg before choosing forward catch-up, exact reorg, or
 rebuild. A saved height alone is not trusted as proof of the old main chain.
 
-A missing file is a normal empty boot. Parse failure or schema mismatch logs a
-warning, discards the bad file, and rebuilds. An incompatible persistence-shape
-change must bump `SCHEMA_VERSION` and state whether `cknerv purge --confirm` is
-required.
+A missing file is a normal empty boot. Parse failure or an older schema logs a
+warning, discards the bad file, and rebuilds. A schema *newer* than the running
+build is never discarded: it is renamed beside itself as
+`cknerv-state.json.schema<N>.bak` and the boot starts empty, so an older binary
+run once cannot destroy what a newer one wrote. An incompatible
+persistence-shape change must bump `SCHEMA_VERSION` and state whether
+`cknerv purge --confirm` is required.
 
 ## 13. CLI, Configuration, and Delivery
 
