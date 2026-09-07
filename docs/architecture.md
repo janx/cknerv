@@ -1,5 +1,30 @@
 # cknerv Design and Architecture
 
+The normative design contract for the whole stack. Sections 1–3 are the shape
+of the system, 4–9 the backend, 10–11 the browser, and 12–20 the operational
+and contributor rules that follow from them.
+
+1. [System Purpose](#1-system-purpose)
+2. [Overall Architecture](#2-overall-architecture)
+3. [Repository Layers and Dependency Direction](#3-repository-layers-and-dependency-direction)
+4. [Core Domain Model](#4-core-domain-model)
+5. [Direct CKB Adapter](#5-direct-ckb-adapter)
+6. [CellGalaxy Projection](#6-cellgalaxy-projection)
+7. [Server Runtime](#7-server-runtime)
+8. [HTTP and WebSocket Protocol](#8-http-and-websocket-protocol)
+9. [Optional Enrichment Architecture](#9-optional-enrichment-architecture)
+10. [Browser Data Layer](#10-browser-data-layer)
+11. [UI and Rendering Architecture](#11-ui-and-rendering-architecture)
+12. [Persistence and Recovery](#12-persistence-and-recovery)
+13. [CLI, Configuration, and Delivery](#13-cli-configuration-and-delivery)
+14. [Correctness, Failure, and Security Boundaries](#14-correctness-failure-and-security-boundaries)
+15. [Cross-language and Cross-layer Contracts](#15-cross-language-and-cross-layer-contracts)
+16. [Extension Guide](#16-extension-guide)
+17. [Testing and Verification Strategy](#17-testing-and-verification-strategy)
+18. [Key Budgets](#18-key-budgets)
+19. [Known Tradeoffs and Limits](#19-known-tradeoffs-and-limits)
+20. [Implementation Map](#20-implementation-map)
+
 ## 1. System Purpose
 
 cknerv is a local-first, read-only CKB chain visualization stack. Its default
@@ -200,8 +225,8 @@ ckbadger's catalogue the four pinned lock families cover 59.8% of mainnet's
 live cells and the five asset families 33.4%, which is why the identity had to
 stop being derivable from the family. (`Object` and `Identity` have since made
 it seven; the argument is unchanged — the chain deploys script families faster
-than anyone pins them.) `ScriptId` is unset on Cells restored
-from state written before it existed and is omitted from the wire while unset.
+than anyone pins them.) `ScriptId` is unset on Cells restored from state
+written before it existed, and is omitted from the wire while unset.
 
 ### 4.4 Three Kinds of Fact
 
@@ -610,6 +635,10 @@ binary header.
 
 ## 8. HTTP and WebSocket Protocol
 
+This section is the contract. [HTTP and WebSocket API](api.md) is the
+client-facing description of the same surface: route shapes, frame shapes, and
+the reorg, rebuild, and replay behavior a consumer has to handle.
+
 ### 8.1 Routes
 
 | Method and path | Response | Notes |
@@ -677,12 +706,17 @@ Connection recovery follows a subscribe-before-ring-snapshot rule:
 
 Large Cell snapshots have a dedicated little-endian binary format:
 
-- magic `CKNB`, currently version 2;
+- magic `CKNB`, currently version 6;
 - a fixed 72-byte header with revision at byte offset 8;
-- staged canonical rows followed by display-resident rows (see §6.5: the
-  buffer carries the stage, not the whole retained set);
-- f64, f32, u32, and u8 columns grouped for aligned typed-array views;
-- one ASCII string region referenced by offset tables;
+- staged canonical rows followed by display-resident rows, one column set
+  split at `n_cells` (see §6.5: the buffer carries the stage, not the whole
+  retained set);
+- f64, f32, u32, u16, and u8 columns grouped for aligned typed-array views;
+- one ASCII string region for `tx_hash`, `content_hash`, and `data_hex`,
+  referenced by per-field offset tables;
+- a tail dictionary of `(code_hash, hash_type)` pairs, since one galaxy holds
+  only a few dozen distinct ones, with two `u16` refs per row instead of two
+  inline hex hashes;
 - a bounded tail for tags, display provenance, recent links, backfill data,
   and the aggregate view statistics segment, which describes the full retained
   set regardless of which rows this buffer carries.
@@ -742,7 +776,9 @@ per capability. Default cadences are:
 | Transaction horizon | 60 s |
 | Fork watch | 15 s |
 | Network atlas | 60 s |
+| Network roster | 60 s |
 | Chain census | 30 s |
+| Producer ledger | 2 min |
 | Script registry | 5 min |
 | Initial galaxy composition | Run once and hold after success; retry failures after 30 s |
 | Composition top-up | Start at 5 s; back off after repeated empty rounds to roughly 5 min |
@@ -1043,8 +1079,8 @@ Structural budgets are independent:
 - Automatic quality degradation never changes which Cells are on stage.
 
 This prevents performance pressure from becoming a silent semantic change.
-See [Canvas Design and Rendering Architecture](canvas-rendering.md) for stricter visual
-constraints, optimization order, and acceptance criteria.
+See [Canvas Design and Rendering Architecture](canvas-rendering.md) for
+stricter visual constraints, optimization order, and acceptance criteria.
 
 ## 12. Persistence and Recovery
 
@@ -1155,7 +1191,9 @@ Precedence is fixed:
 CLI arguments > <workdir>/cknerv.toml > built-in defaults
 ```
 
-There is no environment-variable configuration layer. Main sections are:
+There is no environment-variable configuration layer. The generated template
+and the meaning of every key are in [Configuration](configuration.md); the
+sections are:
 
 - `[ckb]`: RPC URL;
 - `[ckbadger]`: optional API URL and maximum accepted lag;
@@ -1178,9 +1216,9 @@ The payload overrides the SPA's defaults in every embedded deployment while the
 Vite dev harness runs them directly, so a per-profile number that trails a
 frontend retune ships a galaxy nobody visually accepted — which happened twice
 (the gap-fill densification and the link-ring block guarantee both reached only
-dev). `tests/fixtures/runtime_config_galaxy.json` pins the two sides
-together. Reintroduce a
-per-profile delta only as a deliberate divergence carrying its own fixture.
+dev). `tests/fixtures/runtime_config_galaxy.json` pins the two sides together.
+Reintroduce a per-profile delta only as a deliberate divergence carrying its
+own fixture.
 
 ### 13.3 Embedded SPA
 
@@ -1303,16 +1341,10 @@ application. Every value that affects determinism must arrive in the mutation.
 | UI Vitest | Derives, geometry, worker protocol, materials, R3F components, HUD, clock, quality |
 | ui-app Vitest | Runtime config, scene state machines, review routes, selection/navigation flows |
 
-### 17.2 Standard Commands
+### 17.2 Required Checks
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all
-pnpm test
-pnpm typecheck
-cargo build --release -p cknerv-cli
-```
+The full gate — formatting, clippy, both test suites, and the release build —
+is [Development: Build and Test](development.md#build-and-test).
 
 For documentation-only changes, the minimum check is:
 
@@ -1321,8 +1353,8 @@ git diff --check
 ```
 
 Changes to the CLI, server, CKB adapter, persistence, or SPA boot path also
-require the README/SMOKE runtime check. At minimum, verify both snapshot routes,
-tip advancement, Ctrl-C persistence, and port release.
+require a runtime check against a live node. At minimum, verify both snapshot
+routes, tip advancement, Ctrl-C persistence, and port release.
 
 ## 18. Key Budgets
 
@@ -1357,7 +1389,7 @@ tip advancement, Ctrl-C persistence, and port release.
 | Hydration fetch concurrency | 8 | CKB adapter |
 | Enrichment max concurrency | 3 | Server supervisor |
 | Topology worker threshold | 512 Cells | UI |
-| Columnar format | `CKNB` v2, 72-byte header | Core/cache contract |
+| Columnar format | `CKNB` v6, 72-byte header | Core/cache contract |
 
 These budgets belong to different layers and are not interchangeable. The 50k
 limit bounds canonical retention, 12k bounds server-authored display
@@ -1365,6 +1397,10 @@ membership, and 8k bounds passive-fibre screen composition. They protect state
 coverage, visual composition, and GPU cost respectively.
 
 ## 19. Known Tradeoffs and Limits
+
+These are the structural ones. What the product does not attempt to be — a
+complete live-cell set, an indexer, a transaction submitter — is
+[Development: Known Limits](development.md#known-limits).
 
 - Bounded Cell and link windows are not a full historical index. Deep history
   queries belong in a separate index service.
