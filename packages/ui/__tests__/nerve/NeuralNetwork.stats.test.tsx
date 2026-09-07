@@ -281,6 +281,49 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
       .toBeGreaterThan(-1);
   });
 
+  // T5b: three heavy block consumers, one shared per-frame ledger. Each asks
+  // before it starts and reports what it spent; the ledger itself is opened by
+  // the raw priority −1 frame, which is the first subscriber of every frame,
+  // so nothing can read the previous frame's remains. The rule's own arithmetic
+  // is unit-tested in frameBudget.test.ts; what is pinned here is the wiring.
+  it('opens one heavy-work ledger a frame and charges all three consumers to it', () => {
+    // Opened beside T1's frame mark, in the first subscriber of the frame.
+    const markAt = NETWORK_SOURCE.indexOf('blockFrameStats.markFrame();');
+    const beginAt = NETWORK_SOURCE.indexOf('beginFrameBudget();', markAt);
+    expect(beginAt).toBeGreaterThan(markAt);
+    expect(beginAt).toBeLessThan(
+      NETWORK_SOURCE.indexOf('advanceConsensusMemoryRouteHopPulseClock(', markAt),
+    );
+    expect(NETWORK_SOURCE.match(/beginFrameBudget\(\)/g)).toHaveLength(1);
+
+    // Both of this file's consumers ask before they start and report after.
+    const drainAsk = NETWORK_SOURCE.indexOf(
+      'mayStartFrameWork(\n        FRAME_BUDGET_FABRIC_DRAIN,',
+    );
+    const drainSpend = NETWORK_SOURCE.indexOf(
+      'spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, drainMs);',
+    );
+    expect(drainAsk).toBeGreaterThan(-1);
+    expect(drainSpend).toBeGreaterThan(drainAsk);
+    expect(drainAsk).toBeLessThan(
+      NETWORK_SOURCE.indexOf('drainFabricLandingQueue(landingQueue, {'),
+    );
+    const planAsk = NETWORK_SOURCE.indexOf(
+      'mayStartFrameWork(\n      FRAME_BUDGET_PLAN_SLICE,',
+    );
+    const planSpend = NETWORK_SOURCE.indexOf(
+      'spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, sliceMs);',
+    );
+    expect(planAsk).toBeGreaterThan(-1);
+    expect(planSpend).toBeGreaterThan(planAsk);
+    expect(planAsk).toBeLessThan(
+      NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)'),
+    );
+    // A consumer the ledger held still asks for the next frame: under a
+    // demand frameloop nothing else would.
+    expect(NETWORK_SOURCE).toContain('    )) {\n      invalidate();\n      return;\n    }');
+  });
+
   // T4: the landing was one task doing two halves — the graph swap and the
   // fabric's grow/kill for the selection that swap published — and a task
   // cannot yield to itself. The split's correctness is entirely a matter of
@@ -314,17 +357,23 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     // check on the overwhelming majority of frames, which have nothing to land.
     const drainAt = NETWORK_SOURCE.indexOf('drainFabricLandingQueue(landingQueue, {');
     expect(drainAt).toBeGreaterThan(-1);
-    expect(NETWORK_SOURCE.lastIndexOf('if (landingQueue.items.length > 0 && handles) {', drainAt))
-      .toBeGreaterThan(-1);
+    expect(NETWORK_SOURCE.lastIndexOf(
+      'landingQueue.items.length > 0\n      && handles\n',
+      drainAt,
+    )).toBeGreaterThan(-1);
     expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', drainAt))
       .toBeGreaterThan(NETWORK_SOURCE.lastIndexOf('useFrame((_state, delta) => {', drainAt));
     expect(drainAt).toBeLessThan(
       NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)'),
     );
-    // The budget is read from the interval this frame followed, and the sim
-    // clock is read at drain so a birth never animates from the past.
+    // The budget is read from the interval this frame followed — capped by
+    // what the frame's shared heavy-work ledger has left for this consumer,
+    // so a slow frame's quarter-interval cannot spend the live plan out of
+    // its own frame — and the sim clock is read at drain so a birth never
+    // animates from the past.
     expect(NETWORK_SOURCE).toContain(
-      'budgetMs: fabricLandingBudgetMs(rawDeltaSeconds * 1000),',
+      'fabricLandingBudgetMs(rawDeltaSeconds * 1000),\n'
+      + '          frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN),',
     );
     // A remount rehydrates the fabric wholesale, so every queued delta is a
     // patch against a base that no longer exists.

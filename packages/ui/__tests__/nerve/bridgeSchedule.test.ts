@@ -10,7 +10,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BRIDGE_PRE_BUILD_VERSION,
+  BRIDGE_STEP_ESTIMATE_MS,
   bridgeRunDecision,
+  nextBridgeStep,
+  type BridgeBuildStep,
   type PendingBridgeBuild,
 } from '../../src/nerve/bridgeSchedule';
 
@@ -95,5 +98,37 @@ describe('the bridge run decision', () => {
     // The lab scenes mount the layer without the owner's ref; the component
     // reads `+Infinity` for them, so the first frame after a build runs it.
     expect(bridgeRunDecision(arm(42, 1), Number.POSITIVE_INFINITY, 0)).toBe(true);
+  });
+});
+
+describe('the bridge build as three steps', () => {
+  it('runs sync, then select, then reconcile, and then it is over', () => {
+    // ⚠️ The order is the contract: the registry must be current before the
+    // selection reads it, and a selection must exist before it is reconciled
+    // onto the strokes. Nothing here may be reordered or folded together —
+    // that is what put 33 ms on one frame.
+    const walked: BridgeBuildStep[] = [];
+    let step: BridgeBuildStep | null = 'sync';
+    while (step !== null) {
+      walked.push(step);
+      step = nextBridgeStep(step);
+    }
+    expect(walked).toEqual(['sync', 'select', 'reconcile']);
+  });
+
+  it('estimates the select as the grain and the reconcile as noise', () => {
+    // The review's own split of the 19.7 ms median body. These are the FIRST
+    // ask only: after a step runs, its last measured cost is the estimate.
+    expect(BRIDGE_STEP_ESTIMATE_MS).toEqual({
+      sync: 6,
+      select: 15,
+      reconcile: 3,
+    });
+    // The selection is the largest single grain the class has, which is why
+    // it is the step the frame budget is most likely to hold back.
+    expect(BRIDGE_STEP_ESTIMATE_MS.select)
+      .toBeGreaterThan(BRIDGE_STEP_ESTIMATE_MS.sync);
+    expect(BRIDGE_STEP_ESTIMATE_MS.select)
+      .toBeGreaterThan(BRIDGE_STEP_ESTIMATE_MS.reconcile);
   });
 });

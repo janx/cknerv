@@ -2125,8 +2125,10 @@ Use the same snapshot and capture settings for these minimum scenarios:
   that plan nothing take no sample), `cpu.neural-network.active-pulse-frame`,
   `cpu.neural-fabric.emit`, `cpu.neural-fabric.recall-aperture`,
   `cpu.cell-nucleus.lod`, `cpu.bridge.sync-hosts` (every build) and
-  `cpu.bridge.select` (only builds whose hosts moved — two labels because a
-  mean over both populations would describe neither), `cpu.colony.topology`
+  `cpu.bridge.select` (the selection alone, on the builds whose hosts moved —
+  two labels because a mean over both populations would describe neither, and
+  the stroke reconcile is a frame of its own with the block gauge for a
+  reading), `cpu.colony.topology`
   and `cpu.colony.flood` (the App memos). Every span is a
   `beginCpuProbe`/`endCpuProbe` pair or a `measureCpuProbe` around the real
   call site; nothing is sampled on a substitute path.

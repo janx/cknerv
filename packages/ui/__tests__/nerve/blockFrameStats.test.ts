@@ -86,6 +86,27 @@ describe('blockFrameStats', () => {
     expect(snapshot.recent.map((entry) => entry.bridgeMs)).toEqual([9, 4]);
   });
 
+  it('reads a bridge build as its total AND its longest single step', () => {
+    // T5b: the body is three steps on three frames, so the number that says
+    // what a block costs the class and the number that says what ONE frame
+    // carried are different readings and both are recorded. `bridgeMs` is the
+    // sum; `bridgeStepMaxMs` is the grain the wave is graded on.
+    land(0, 20);
+    blockFrameStats.observeBridge(6 + 15 + 3, 15);
+    land(100, 118);
+    // A skipped build is one cheap step: sum and grain are the same number.
+    blockFrameStats.observeBridge(0.4);
+    const snapshot = snapshotBlockFrameStats();
+    expect(snapshot.bridgeCount).toBe(2);
+    expect(snapshot.recent.map((entry) => entry.bridgeMs)).toEqual([24, 0.4]);
+    expect(snapshot.recent.map((entry) => entry.bridgeStepMaxMs))
+      .toEqual([15, 0.4]);
+    // The maxima are separate: the sum's max is 24, the grain's is 15 — and a
+    // sum of three modest steps must never be read as a 24 ms frame.
+    expect(snapshot.max.bridgeMs).toBe(24);
+    expect(snapshot.max.bridgeStepMaxMs).toBe(15);
+  });
+
   it('moves the bridge maximum even with no landing to stamp', () => {
     // An anchor change re-runs the effect with no build behind it. T5 is
     // graded on this maximum, so it must not need a landing to be recorded.
@@ -134,7 +155,7 @@ describe('blockFrameStats', () => {
       count: 0,
       bridgeCount: 0,
       recent: [],
-      max: { landingMs: 0, bridgeMs: 0, frameGapMs: 0 },
+      max: { landingMs: 0, bridgeMs: 0, bridgeStepMaxMs: 0, frameGapMs: 0 },
     });
     // Reset drops the open mark and the frame reference too, so a landing
     // that straddles a reset cannot be reported against a stale clock.

@@ -4,9 +4,12 @@
 //   1. the WORKER LANDING TASK — the topology worker's `built` message
 //      handler, plus the promise chain it resolves (a microtask, so still the
 //      same task): the graph swap, the topology apply and the fabric commit;
-//   2. the BRIDGE FRAME the arming commit defers to — host sync, selection
-//      and the stroke reconcile, run on the first frame where the fabric of
-//      the version that landing published has itself landed;
+//   2. the BRIDGE FRAMES the arming commit defers to — host sync, selection
+//      and the stroke reconcile, one step per frame from the first frame
+//      where the fabric of the version that landing published has itself
+//      landed. `bridgeMs` is the SUM of the three, which is what the class
+//      costs a block; `bridgeStepMaxMs` is the longest single step, which is
+//      what any one frame actually carries;
 //   3. the rAF INTERVAL that contained the landing — the frame before it to
 //      the frame after, which is what a viewer actually sees.
 // Each is a wall-clock reading of a task, not a CPU probe: `beginCpuProbe`
@@ -19,14 +22,18 @@
 // ui-app, so the library stays free of `window` coupling.
 
 /** Wall-clock reading for one landed topology build. `bridgeMs` is stamped by
- *  the bridge frame that follows the landing (0 until it runs), `frameGapMs`
- *  starts as the gap since the frame BEFORE the landing and is finalised by
- *  the frame after it. */
+ *  the bridge sequence that follows the landing (0 until it finishes),
+ *  `frameGapMs` starts as the gap since the frame BEFORE the landing and is
+ *  finalised by the frame after it. */
 export interface BlockFrameSample {
   /** `performance.now()` at the end of the landing task. */
   atMs: number;
   landingMs: number;
+  /** Every bridge step of this build, added up. */
   bridgeMs: number;
+  /** The longest single bridge step of this build — the reading that says
+   *  what ONE frame carried, and the one the sustain wave is graded on. */
+  bridgeStepMaxMs: number;
   frameGapMs: number;
 }
 
@@ -42,6 +49,7 @@ export interface BlockFrameStatsSnapshot {
   max: {
     landingMs: number;
     bridgeMs: number;
+    bridgeStepMaxMs: number;
     frameGapMs: number;
   };
 }
@@ -80,7 +88,10 @@ interface BlockFrameStatsState {
   /** End of the fabric commit: the landing task is over. Ignored when no
    *  start mark is open (the synchronous fallback resolves without one). */
   observeLanding(atMs?: number): void;
-  observeBridge(elapsedMs: number): void;
+  /** One finished bridge sequence: the sum of its steps, and its longest
+   *  single step (defaulting to the sum, which is what a one-step build
+   *  costs). */
+  observeBridge(elapsedMs: number, stepMaxMs?: number): void;
   /** One rAF callback. Finalises a pending entry's frame gap, then becomes
    *  the reference for the next landing. Allocation-free. */
   markFrame(atMs?: number): void;
@@ -92,7 +103,7 @@ export const blockFrameStats: BlockFrameStatsState = {
   count: 0,
   bridgeCount: 0,
   recent: [],
-  max: { landingMs: 0, bridgeMs: 0, frameGapMs: 0 },
+  max: { landingMs: 0, bridgeMs: 0, bridgeStepMaxMs: 0, frameGapMs: 0 },
 
   markLandingStart(atMs = blockFrameNowMs()) {
     landingStartedAtMs = atMs;
@@ -116,6 +127,7 @@ export const blockFrameStats: BlockFrameStatsState = {
       atMs,
       landingMs,
       bridgeMs: 0,
+      bridgeStepMaxMs: 0,
       frameGapMs: gapSoFar,
     };
     this.recent.push(entry);
@@ -127,15 +139,24 @@ export const blockFrameStats: BlockFrameStatsState = {
     pendingGapFromMs = lastFrameAtMs ?? atMs;
   },
 
-  observeBridge(elapsedMs) {
+  observeBridge(elapsedMs, stepMaxMs = elapsedMs) {
     if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return;
+    const stepMax = Number.isFinite(stepMaxMs) && stepMaxMs >= 0
+      ? stepMaxMs
+      : elapsedMs;
     this.bridgeCount += 1;
     if (elapsedMs > this.max.bridgeMs) this.max.bridgeMs = elapsedMs;
+    if (stepMax > this.max.bridgeStepMaxMs) {
+      this.max.bridgeStepMaxMs = stepMax;
+    }
     // Stamped onto the landing it followed. A bridge run with no landing
-    // behind it (an anchor change) still moves the max, which is the reading
-    // T5 is graded on.
+    // behind it (an anchor change) still moves the maxima, which is the
+    // reading T5 and T5b are graded on.
     const entry = this.recent[this.recent.length - 1];
-    if (entry !== undefined) entry.bridgeMs = elapsedMs;
+    if (entry !== undefined) {
+      entry.bridgeMs = elapsedMs;
+      entry.bridgeStepMaxMs = stepMax;
+    }
   },
 
   markFrame(atMs = blockFrameNowMs()) {
@@ -162,7 +183,7 @@ export const blockFrameStats: BlockFrameStatsState = {
     this.count = 0;
     this.bridgeCount = 0;
     this.recent = [];
-    this.max = { landingMs: 0, bridgeMs: 0, frameGapMs: 0 };
+    this.max = { landingMs: 0, bridgeMs: 0, bridgeStepMaxMs: 0, frameGapMs: 0 };
     landingStartedAtMs = null;
     lastFrameAtMs = null;
     pendingGapEntry = null;

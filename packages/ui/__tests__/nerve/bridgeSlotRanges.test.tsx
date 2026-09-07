@@ -44,6 +44,12 @@ import { DEATH_RETRACT_MS, GROWTH_MS } from '../../src/nerve/fabricEdgeRender';
 import { FABRIC_SLOT_FILLER_Y, FABRIC_SLOT_SEGMENTS } from '../../src/nerve/fabricSlots';
 import { LIVE } from '../../src/tweaks/liveTweaks';
 import { resetSimClock, simClock } from '../../src/tweaks/simClock';
+import {
+  FRAME_BUDGET_FABRIC_DRAIN,
+  beginFrameBudget,
+  resetFrameBudget,
+  spendFrameBudget,
+} from '../../src/nerve/frameBudget';
 import CellBridgeNerves from '../../src/nerve/CellBridgeNerves';
 
 const frames = vi.hoisted(() => ({
@@ -295,22 +301,45 @@ function writtenBlocks(buffers: BridgeBuffers): string[] {
     .sort();
 }
 
+/** Frames one build takes: `bridgeSchedule`'s three steps, one per frame. */
+const BRIDGE_BUILD_FRAMES = 3;
+
 const cellsRef = { current: new Map<number, Cell>() };
 const passiveGraphRef = { current: emptyNeighborGraph() };
 let view: RenderResult | null = null;
 let version = 0;
 
-/** Run one frame: every callback the current render registered, at `atSec`. */
+/** Run one frame: every callback the current render registered, at `atSec`.
+ *  The owner's raw priority −1 frame opens the shared heavy-work ledger before
+ *  any of them (`frameBudget`), and standing in for it is the harness's job —
+ *  without it this class would read one endless frame and hold its own steps.
+ */
 function frame(atSec: number): void {
   resetSimClock(simClock, atSec);
+  beginFrameBudget();
+  for (const callback of frames.callbacks) callback({}, 1 / 60);
+}
+
+/** A frame whose heavy budget the owner's other block consumers already took
+ *  — the drain and the live-plan slice on the frame right after a landing. */
+function busyFrame(atSec: number): void {
+  resetSimClock(simClock, atSec);
+  beginFrameBudget();
+  spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 11);
   for (const callback of frames.callbacks) callback({}, 1 / 60);
 }
 
 /** A completed topology build — the staged Cells change and the version bumps,
- *  which is the one thing that re-selects — followed by its own frame. The
- *  clock is set BEFORE the effect runs, so the build's strokes are born (or
+ *  which is the one thing that re-selects — followed by the frames it takes.
+ *
+ *  ⭐ THREE frames, all at `atSec`: the body is `bridgeSchedule`'s sync →
+ *  select → reconcile, one step per frame at most, so a build is finished on
+ *  the third. They share one clock, so the build's strokes are still born (or
  *  start dying) at exactly `atSec`, which is what a replay through the pure
- *  functions has to assume. */
+ *  functions has to assume. The renderer clears an attribute's ranges as it
+ *  uploads them, so the harness does the same between the frames — every
+ *  assertion below is about the marks of ONE frame, and the frame that matters
+ *  is the one the reconcile landed on. */
 function build(cells: readonly number[] | Map<number, Cell>, atSec: number): void {
   cellsRef.current = cells instanceof Map ? cells : cellsFor(cells);
   version += 1;
@@ -326,6 +355,10 @@ function build(cells: readonly number[] | Map<number, Cell>, atSec: number): voi
   );
   if (view === null) view = render(element);
   else view.rerender(element);
+  for (let step = 1; step < BRIDGE_BUILD_FRAMES; step += 1) {
+    frame(atSec);
+    consumeUploads(bridgeBuffers());
+  }
   frame(atSec);
 }
 
@@ -343,6 +376,7 @@ beforeEach(() => {
   passiveGraphRef.current = emptyNeighborGraph();
   resetSimClock();
   resetBridgeStats();
+  resetFrameBudget();
   vi.mocked(selectBridgeEdges).mockClear();
   setPopulationPlacement(placementFixture());
 });
@@ -620,17 +654,32 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     expect(select).toHaveBeenCalledTimes(0);
     expect(bridgeStats.builds).toBe(0);
 
-    // The first frame after the drain finishes is the bridge frame: the whole
-    // body at once, and the strokes it moves are admitted on the same frame.
+    // ⭐ The first frame after the drain finishes is step A — the host sync
+    // alone. The selection is the class's largest single grain (5–23 ms live),
+    // and it is not going to share a frame with the drain that just finished.
     landed.current = 1;
     frame(0.03);
+    expect(select).toHaveBeenCalledTimes(0);
+    expect(bridgeStats.builds).toBe(0);
+    expect(bridgeBuffers().geometry.instanceCount).toBe(0);
+
+    // Step B on the SECOND frame: the selection, and nothing it chose has
+    // reached the layer yet.
+    frame(0.04);
     expect(select).toHaveBeenCalledTimes(1);
+    expect(bridgeStats.builds).toBe(0);
+    expect(bridgeBuffers().geometry.instanceCount).toBe(0);
+
+    // Step C on the third: the reconcile, and the strokes it moves are
+    // admitted by the pass further down the SAME frame callback — which is
+    // the invariant the split had to keep.
+    frame(0.05);
     expect(bridgeStats.builds).toBe(1);
     expect(bridgeBuffers().geometry.instanceCount).toBeGreaterThan(0);
 
-    // One bridge frame per build, not one per frame from here on.
-    frame(0.04);
-    frame(0.05);
+    // One sequence per build, not one step per frame from here on.
+    frame(0.06);
+    frame(0.07);
     expect(select).toHaveBeenCalledTimes(1);
     expect(bridgeStats.builds).toBe(1);
   });
@@ -649,11 +698,68 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     commit([1, 2], 0.02, landed);
     landed.current = 2;
     frame(0.02);
+    frame(0.03);
     expect(select).toHaveBeenCalledTimes(1);
+    frame(0.04);
     expect(bridgeStats.builds).toBe(1);
     expect(select.mock.results[0].value.bridges.some(
       (bridge: { cellId: number }) => bridge.cellId === 2,
     )).toBe(true);
+  });
+
+  it('restarts at the host sync when a newer arm lands mid-sequence', () => {
+    // ⚠️ The one thing the sequence may never do is mix two builds: a
+    // selection taken over one build's hosts and reconciled onto another
+    // build's strokes is a layer of two versions. So a newer arm does not
+    // resume where the older sequence stood — it starts again at step A.
+    const select = vi.mocked(selectBridgeEdges);
+    const landed = { current: -1 };
+    commit([1], 0, landed);
+    landed.current = 1;
+    frame(0.01);
+    expect(select).toHaveBeenCalledTimes(0);
+
+    // Build 2 lands with build 1 one step in. Were the sequence resumed, this
+    // frame would be step B and the selection would run now.
+    commit([1, 2], 0.02, landed);
+    landed.current = 2;
+    frame(0.02);
+    expect(select).toHaveBeenCalledTimes(0);
+
+    // It is step A again, so the selection is on the frame after — once, over
+    // the newer build's hosts.
+    frame(0.03);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select.mock.results[0].value.bridges.some(
+      (bridge: { cellId: number }) => bridge.cellId === 2,
+    )).toBe(true);
+    frame(0.04);
+    expect(bridgeStats.builds).toBe(1);
+    expect(select).toHaveBeenCalledTimes(1);
+  });
+
+  it('yields the frame to the drain and the plan slice, and is never starved', () => {
+    // The measured block frame: the drain and the live-plan slice have
+    // already taken the frame's heavy budget, and the class's step is what
+    // would turn it into three vsyncs. It waits — but not forever.
+    const select = vi.mocked(selectBridgeEdges);
+    const landed = { current: -1 };
+    commit([1], 0, landed);
+    landed.current = 1;
+
+    for (let held = 0; held < 3; held += 1) {
+      busyFrame(0.01 + held * 0.01);
+      expect(bridgeStats.builds).toBe(0);
+      expect(select).toHaveBeenCalledTimes(0);
+    }
+    // Held three frames in a row is as long as any consumer here may be held:
+    // the fourth runs regardless, spent frame or not.
+    busyFrame(0.04);
+    // ...and the sequence proceeds from there, one step a frame.
+    frame(0.05);
+    expect(select).toHaveBeenCalledTimes(1);
+    frame(0.06);
+    expect(bridgeStats.builds).toBe(1);
   });
 });
 

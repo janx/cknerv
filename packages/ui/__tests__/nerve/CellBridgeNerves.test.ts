@@ -119,12 +119,14 @@ describe('the bridge layer stays inside its own budget', () => {
       .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
   });
 
-  it('arms the selection in the commit and runs the whole of it on a frame', () => {
+  it('arms the selection in the commit and runs it a step at a time on frames', () => {
     // ⭐ Hosts are keyed on the DRAWN fabric, and the owner drains a build's
     // grow and kill across the frames AFTER the commit that publishes its
     // version. So the commit may not select: it writes the slot and stops,
     // and the frame fires it once `fabricLandedVersionRef` says that build's
-    // fabric is whole. The three regions, sliced where the file puts them.
+    // fabric is whole — one STEP of it per frame, because the body itself was
+    // 33 ms on the one frame the drain and the live-plan slice also want. The
+    // three regions, sliced where the file puts them.
     const body = LAYER_CODE.slice(
       LAYER_CODE.indexOf('const runBridgeBuild ='),
       LAYER_CODE.lastIndexOf('useEffect('),
@@ -154,7 +156,27 @@ describe('the bridge layer stays inside its own budget', () => {
 
     // ⚠️ T1's constraint: the gauge travels WITH the body. Left around the
     // arming it would time two ref writes and report the win as already won.
-    expect(body).toContain('const bridgeStartedAtMs = blockFrameNowMs();');
+    // It is per STEP now — the block frame is only as short as its longest
+    // task — and the build's own entry is the sum of them plus the longest.
+    expect(body).toContain('const stepStartedAtMs = blockFrameNowMs();');
+    expect(body).toContain(
+      'blockFrameStats.observeBridge(running.spentMs, running.stepMaxMs);',
+    );
+    // One step a frame, and only on a frame that has room for it: the shared
+    // ledger is asked with the step's own last measured cost.
+    expect(body).toContain('spendFrameBudget(FRAME_BUDGET_BRIDGE_STEP, elapsedMs);')
+
+    // ⚠️ What the skip tests may only claim what the layer HOLDS. A sequence a
+    // newer arm replaced between the selection and the reconcile chose bridges
+    // that never reached a stroke, so the anchor it selected against is
+    // written by the reconcile step and never beside the selection.
+    const select = body.indexOf('selectBridgeEdges(');
+    const reconcile = body.indexOf('reconcileBridgeStrokes(');
+    expect(select).toBeGreaterThan(-1);
+    expect(body.indexOf('selectedAgainstRef.current = anchorIndex;'))
+      .toBeGreaterThan(select);
+    expect(body.indexOf('selectedAgainstRef.current = anchorIndex;'))
+      .toBeLessThan(reconcile);
 
     // The frame asks the rule before it does anything else, so the strokes a
     // selection moves still reach the admission pass on the same frame — and
@@ -163,8 +185,12 @@ describe('the bridge layer stays inside its own budget', () => {
     expect(bridgeFrame).toContain('fabricLandedVersionRef?.current');
     expect(bridgeFrame.indexOf('bridgeRunDecision('))
       .toBeLessThan(bridgeFrame.indexOf('lastTweakRef.current'));
-    expect(bridgeFrame.indexOf('runBridgeBuild(pendingBuild)'))
+    expect(bridgeFrame).toContain('mayStartFrameWork(');
+    expect(bridgeFrame.indexOf('runBridgeBuild(running)'))
       .toBeLessThan(bridgeFrame.indexOf('fullWalkRef.current = '));
+    // A newer arm restarts the sequence rather than resuming it, so a
+    // selection and the reconcile that lands it are always the same build's.
+    expect(bridgeFrame).toContain("step: 'sync',");
   });
 
   it('gives a birth a parked hole before it grows the prefix', () => {

@@ -73,3 +73,50 @@ export function bridgeRunDecision(
   if (pending.version <= BRIDGE_PRE_BUILD_VERSION) return true;
   return landedVersion >= pending.version;
 }
+
+// ── The build itself, as three steps on three frames ────────────────────────
+//
+// Moving the whole body out of the React commit (above) was only half of it.
+// The body still ran in ONE frame — 19.7 ms at the median, 33.2 at the worst,
+// measured on the frame right after a landing, which is also the frame the
+// fabric drain and the live-plan slice want. So the body is now a sequence,
+// one step per frame at most, each asking the frame budget before it starts:
+//
+//   A `sync`      — `syncBridgeHosts`: diff the persistent host registry
+//                   against the staged Cells and the drawn fabric. A build
+//                   that moved no host ends the sequence right here, which is
+//                   the steady state of a composed stage.
+//   B `select`    — `selectBridgeEdges`: the grain, 5–23 ms of coverage and
+//                   plan work over the anchor index.
+//   C `reconcile` — `reconcileBridgeStrokes` + the build's boot report: the
+//                   selection becomes births, deaths and revivals, and the
+//                   admission pass LATER IN THE SAME FRAME CALLBACK takes
+//                   them, so a chosen stroke still reaches the GPU on the
+//                   frame it was chosen.
+//
+// ⚠️ Everything a step reads it reads at ITS OWN run time — the registry, the
+// staged map, the sim clock. A step is not a continuation of a snapshot taken
+// three frames ago; it is the same "read the world now" the single-frame body
+// always did, one frame later. What must never be mixed is two BUILDS, and
+// that is the owner's rule rather than this module's: a newer arm restarts the
+// sequence from step A.
+
+/** Where a running bridge build stands. */
+export type BridgeBuildStep = 'sync' | 'select' | 'reconcile';
+
+/** What each step is expected to cost before it has ever run — the review's
+ *  own split of the 19.7 ms median body. After a step runs, its LAST MEASURED
+ *  cost is the estimate: the machine, the stage size and the quality tier all
+ *  move this by more than any constant could predict. */
+export const BRIDGE_STEP_ESTIMATE_MS: Readonly<Record<BridgeBuildStep, number>> = {
+  sync: 6,
+  select: 15,
+  reconcile: 3,
+};
+
+/** The step after this one, or `null` when the sequence is finished. */
+export function nextBridgeStep(step: BridgeBuildStep): BridgeBuildStep | null {
+  if (step === 'sync') return 'select';
+  if (step === 'select') return 'reconcile';
+  return null;
+}

@@ -118,6 +118,15 @@ import {
   planMeshUpdate,
 } from './livingMeshDriver';
 import {
+  FRAME_BUDGET_FABRIC_DRAIN,
+  FRAME_BUDGET_PLAN_SLICE,
+  beginFrameBudget,
+  frameBudgetRemainingMs,
+  mayStartFrameWork,
+  spendFrameBudget,
+} from './frameBudget';
+import {
+  FABRIC_LANDING_BUDGET_MS,
   createFabricLandingQueue,
   drainFabricLandingQueue,
   enqueueFabricLanding,
@@ -480,6 +489,11 @@ function NeuralNetwork({
    * with yet; a remount, which rehydrates the fabric wholesale, carries it
    * straight to the newest enqueued version. */
   const fabricLandedVersionRef = useRef(-1);
+  /** What the last drain cost, in wall milliseconds — the estimate the frame's
+   * shared heavy-work ledger is asked with. Seeded at the queue's own budget
+   * floor, then measured; a drain that has never run cannot be predicted by
+   * anything better than what it is allowed to spend. */
+  const fabricDrainCostMsRef = useRef<number>(FABRIC_LANDING_BUDGET_MS);
   /** Mirror of `displayGraphVersion` readable inside the landing microtask,
    * so the queued item can name the version it will have landed. */
   const displayGraphVersionRef = useRef(0);
@@ -832,6 +846,10 @@ function NeuralNetwork({
   // dependency re-run of the opening effect must not drop a batch a previous
   // run opened, and an unmount takes the queue with it.
   const livePlanQueueRef = useRef(createLivePulseQueue());
+  /** What the last planning slice cost — the frame ledger's estimate for this
+   * consumer, seeded at the slice's own budget floor. A slice is budget plus
+   * one route search, so the measured number is always the honest one. */
+  const planSliceCostMsRef = useRef<number>(LIVE_PLAN_BUDGET_MS);
   const livePlanStep = useMemo<LivePulseStepContext>(() => ({
     nowSec: 0,
     nowMs: () => performance.now(),
@@ -1455,6 +1473,11 @@ function NeuralNetwork({
     // rAF interval that contained it, and it finalises the gap of a landing
     // the previous frame opened. Allocation-free.
     blockFrameStats.markFrame();
+    // ...and the same first-subscriber position opens the frame's shared
+    // ledger of heavy block work. Every consumer of it — the drain below, the
+    // live-plan slice, the bridge class's step — asks and reports against
+    // THIS frame from here on. Three writes, no allocation.
+    beginFrameBudget();
     const pulseClock = advanceConsensusMemoryRouteHopPulseClock(
       routeHopPulseRef.current,
       renderedTraceRouteHopLock,
@@ -1521,19 +1544,44 @@ function NeuralNetwork({
     // budget is read from the interval this frame actually followed. The queue
     // is normally empty: one length check per frame, no allocation.
     const landingQueue = fabricLandingQueueRef.current;
-    if (landingQueue.items.length > 0 && handles) {
+    if (
+      landingQueue.items.length > 0
+      && handles
+      && mayStartFrameWork(
+        FRAME_BUDGET_FABRIC_DRAIN,
+        fabricDrainCostMsRef.current,
+      )
+    ) {
+      const drainStartedAtMs = blockFrameNowMs();
       drainFabricLandingQueue(landingQueue, {
         handles,
-        budgetMs: fabricLandingBudgetMs(rawDeltaSeconds * 1000),
+        // Its own budget, capped by what the frame has left for it. The drain
+        // is normally the first heavy consumer of a frame and takes the whole
+        // of its share — but a 30 Hz frame's quarter-interval is larger than
+        // the frame's entire heavy budget, and a drain that spends the plan
+        // slice out of its own frame is the trade the ledger exists to
+        // refuse. Zero still lands one step: the queue always makes progress.
+        budgetMs: Math.min(
+          fabricLandingBudgetMs(rawDeltaSeconds * 1000),
+          frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN),
+        ),
         // Drain-time clocks: a birth animates from the frame it enters on,
         // never from the landing it waited behind.
         nowSec: simClock.elapsedSec,
         nowMs: blockFrameNowMs,
       });
+      const drainMs = blockFrameNowMs() - drainStartedAtMs;
+      fabricDrainCostMsRef.current = drainMs;
+      spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, drainMs);
       fabricLandedVersionRef.current = landingQueue.landedVersion;
       // Under a demand frameloop nothing else would ask for the frame that
       // finishes the queue.
       if (landingQueue.items.length > 0) invalidate();
+    } else if (landingQueue.items.length > 0) {
+      // Nothing landed this frame — a missing fabric, or a frame the ledger
+      // held this consumer back on. The queue is not empty, so ask for the
+      // next frame rather than waiting for something else to.
+      invalidate();
     }
   }, CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY);
 
@@ -1569,6 +1617,20 @@ function NeuralNetwork({
   useFrame((_state, delta) => {
     const queue = livePlanQueueRef.current;
     if (queue.batches.length === 0) return;
+    // The frame's shared ledger, asked at the TOP of the precedence ladder:
+    // this consumer's packets carry departure clocks nothing here may move, so
+    // it is charged only against what it has itself spent this frame — the
+    // drain and the bridge step cannot push a deadline out of its own frame.
+    // What it does owe them is the reporting below, which is how they learn
+    // how much of the frame is left.
+    if (!mayStartFrameWork(
+      FRAME_BUDGET_PLAN_SLICE,
+      planSliceCostMsRef.current,
+    )) {
+      invalidate();
+      return;
+    }
+    const sliceStartedAtMs = blockFrameNowMs();
     // Opt-in CPU span over the slice, taken only on frames that plan, so its
     // mean is a slice mean and not one over the empty frames between.
     const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.livePlanSlice);
@@ -1579,6 +1641,9 @@ function NeuralNetwork({
     livePlanStep.budgetMs = livePlanBudgetMs(delta * 1000);
     const report = stepLivePulseQueue(queue, livePlanStep);
     endCpuProbe(sliceProbe);
+    const sliceMs = blockFrameNowMs() - sliceStartedAtMs;
+    planSliceCostMsRef.current = sliceMs;
+    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, sliceMs);
     // T1 gauges (measurement only): how often a slice was forced past its
     // budget on the departure deadline, and the window's longest planner step.
     if (report.forcedByDeadline) pulseStats.observeForcedByDeadline();
