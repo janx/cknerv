@@ -61,7 +61,7 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
     >
       <ReadoutHeader
         title="ACTIVITY"
-        meta={`LATEST ${total} · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+        meta={`LATEST ${total}`}
         accent={accent}
         stale={stale}
         compact={compact || folded}

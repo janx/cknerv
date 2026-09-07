@@ -57,13 +57,14 @@ function formatBytes(bytes: number): string {
  *
  * Three independent measurements meet here: the indexed asset-ecosystem
  * record, the validated Cell census, and the index's family census. Each is
- * exact at its own anchor, and the section header states the first anchor
- * it has, once. Neither the count nor the bar repeats a scope word or an
- * anchor of its own — the section is the chain's, and the user struck those
- * tags as noise — but each still says STALE when its own record has gone
- * stale, because that is the one thing a reader must not miss. Any of the
- * three can be missing; the section renders when at least one exists, and
- * renders nothing sooner than a number it cannot prove.
+ * exact at its own anchor, and none of that reaches the panel: the header
+ * carried `AS OF #n` for a day, the count and the bar carried `CHAIN · AS OF
+ * #n`, and the user struck every one of them as noise — a block number
+ * beside a reading is not a fact a reader acts on. What each still says is
+ * STALE when its own record has gone stale, because that is the one thing a
+ * reader must not miss. Any of the three can be missing; the section
+ * renders when at least one exists, and renders nothing sooner than a number
+ * it cannot prove.
  */
 export default function CellCensusReadout({
   source,
@@ -102,7 +103,6 @@ export default function CellCensusReadout({
   // green lamp beside it and the two under it did not, which reads as a
   // verdict about the section rather than as the section's own colour.
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
-  const headerAnchor = usableRecord?.as_of ?? census?.as_of ?? families!.as_of;
   const liveCells = chainLiveRow(census, censusStale);
   const familyStale = familyState === 'stale';
 
@@ -125,7 +125,7 @@ export default function CellCensusReadout({
       >
         <ReadoutHeader
           title="CELL CENSUS"
-          meta={`${liveCells.value} LIVE · AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
+          meta={`${liveCells.value} LIVE`}
           accent={accent}
           stale={stale}
           compact
@@ -147,7 +147,6 @@ export default function CellCensusReadout({
     >
       <ReadoutHeader
         title="CELL CENSUS"
-        meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
         accent={accent}
         stale={stale}
       />

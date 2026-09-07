@@ -63,7 +63,8 @@ describe('rail collapse · folded sections', () => {
     const section = container.querySelector('[data-transaction-horizon-state]') as HTMLElement;
 
     expect(section.textContent).toContain('TX HORIZON');
-    expect(section.textContent).toContain('AS OF #100');
+    // The header's anchor went with every other `AS OF #n` on CKB·01.
+    expect(section.textContent).not.toContain('AS OF');
     // No bar: the twenty-four hour columns are the section's body.
     expect(section.querySelector('[data-transaction-hour-count]')).toBeNull();
     expect(section.textContent).not.toContain('PEAK/H');

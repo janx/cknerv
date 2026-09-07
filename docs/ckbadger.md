@@ -423,9 +423,9 @@ census and a sample of one population. **CELL CENSUS** is a fused readout
 inside `COMMON KNOWLEDGE BASE`, in the same header system as `TX HORIZON` and
 `ACTIVITY`: everything true of the whole chain — indexed live capacity,
 knowledge bytes, the validated live-Cell count, the chain's `ASSETS` bar, top
-assets — under one stated anchor. Neither the count nor the bar repeats a scope
-word or an anchor of its own (the section is the chain's, and the header says
-the anchor once); each says only `STALE` when its own record has gone stale.
+assets. No anchor is printed anywhere on CKB·01's three sections — not on a
+header, the count or the bar; every `AS OF #n` was struck as noise — and each
+reading says only `STALE` when its own record has gone stale.
 The bar is the chain by ckbadger's own menu, drawn from the
 `script_family_census` record below: `CKB` first, then `TOKENS · OBJECTS ·
 IDENTITIES` exactly as the Inventory pages classify them, the `DAO`, and

@@ -55,7 +55,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
       >
         <ReadoutHeader
           title="TX HORIZON"
-          meta={`H${compactCount(visual.currentHour)}/D${compactCount(visual.currentDay)} · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+          meta={`H${compactCount(visual.currentHour)}/D${compactCount(visual.currentDay)}`}
           accent={accent}
           stale={stale}
           compact
@@ -78,7 +78,7 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
     >
       <ReadoutHeader
         title="TX HORIZON"
-        meta={`${visual.hourlyCounts.length}/24H · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+        meta={`${visual.hourlyCounts.length}/24H`}
         accent={accent}
         stale={stale}
         compact

@@ -117,7 +117,9 @@ describe('CellCensusReadout', () => {
     const text = container.textContent ?? '';
 
     expect(text).toContain('CELL CENSUS');
-    expect(text).toContain('AS OF #100');
+    // No anchor anywhere in the section: the header wore `AS OF #n` for a
+    // day and the user struck it with the rest.
+    expect(text).not.toContain('AS OF');
     // Live capacity reads in the HUD-wide K/M/G·CKB family; the exact CKB
     // figure — and the CKByte equivalence — stay on the value's tooltip.
     expect(text).toContain('57.76 G·CKB');
@@ -196,10 +198,10 @@ describe('CellCensusReadout', () => {
     );
   });
 
-  it('carries no scope word and no anchor of its own, only STALE', () => {
-    // The section is the chain's and its header states the anchor once:
-    // `CHAIN`, `CHAIN · AS OF #n` on the count and on the bar were struck as
-    // noise. What survives is the one word a reader must not miss.
+  it('carries no scope word and no anchor, only STALE', () => {
+    // `CHAIN`, `CHAIN · AS OF #n` on the count and on the bar, then `AS OF
+    // #n` on the header: all struck as noise. What survives is the one word
+    // a reader must not miss.
     const agreed = render(
       <CellCensusReadout source={source} record={record} census={census()} scriptFamilyCensus={familyCensus()} />,
     );
@@ -217,9 +219,7 @@ describe('CellCensusReadout', () => {
         scriptFamilyCensus={familyCensus({ as_of: { block: 97, hash: '0xblock97' } })}
       />,
     );
-    expect(trailing.container.textContent).not.toContain('AS OF #97');
-    expect(trailing.container.textContent).not.toContain('AS OF #98');
-    expect(trailing.container.textContent).toContain('AS OF #100');
+    expect(trailing.container.textContent).not.toContain('AS OF');
     cleanup();
 
     // Its own refresh has stopped while the source is fine: the bar dims and
@@ -258,7 +258,7 @@ describe('CellCensusReadout', () => {
       <CellCensusReadout source={source} record={null} scriptFamilyCensus={familyCensus()} />,
     );
     expect(families.container.textContent).toContain('CELL CENSUS');
-    expect(families.container.textContent).toContain('AS OF #100');
+    expect(families.container.textContent).not.toContain('AS OF');
     expect(families.container.querySelector('[data-taxonomy-bar="ASSETS"]')).not.toBeNull();
     expect(families.container.textContent).not.toContain('Live capacity');
     cleanup();
@@ -358,7 +358,7 @@ describe('CellCensusReadout folded', () => {
     expect(section.dataset.cellCensusFolded).toBe('true');
     expect(section.textContent).toContain('CELL CENSUS');
     expect(section.textContent).toContain('1,471,373 LIVE');
-    expect(section.textContent).toContain('AS OF #100');
+    expect(section.textContent).not.toContain('AS OF');
     expect(section.textContent).not.toContain('Live capacity');
     expect(section.textContent).not.toContain('Knowledge');
     expect(section.querySelector('[data-taxonomy-bar]')).toBeNull();

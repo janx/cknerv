@@ -199,7 +199,7 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('ACTIVITY');
-    expect(text).toContain('LATEST 2 · AS OF #100');
+    expect(text).toContain('LATEST 2');
     expect(text).toContain('SCRIPT 1 · CKB 1');
     expect(text).toContain('.bit Time Info');
     expect(text).toContain('2P');
@@ -219,7 +219,7 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('ACTIVITY');
-    expect(text).toContain('LATEST 2 · AS OF #100');
+    expect(text).toContain('LATEST 2');
     expect(text).toContain('SCRIPT 1 · CKB 1');
     expect(text).not.toContain('.bit Time Info');
     expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
@@ -236,7 +236,7 @@ describe('BlockchainReadout', () => {
     const text = container.textContent ?? '';
     expect(text).not.toContain('Tps');
     expect(text).toContain('TX HORIZON');
-    expect(text).toContain('3/24H · AS OF #100');
+    expect(text).toContain('3/24H');
     expect(text).toContain('HOUR 12');
     expect(text).toContain('DAY 345');
     expect(text).toContain('PEAK/H 12');
@@ -256,7 +256,7 @@ describe('BlockchainReadout', () => {
     const text = container.textContent ?? '';
     expect(text).not.toContain('Tps');
     expect(text).toContain('TX HORIZON');
-    expect(text).toContain('H12/D345 · AS OF #100');
+    expect(text).toContain('H12/D345');
     expect(text.indexOf('TX HORIZON')).toBeLessThan(text.indexOf('ACTIVITY'));
     expect(text).not.toContain('NERVOS DAO');
     expect(text).not.toContain('INDEXED');
