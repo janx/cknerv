@@ -102,6 +102,11 @@ async function bootstrap() {
 // live inspection of the nerve-pulse drop counters. Independent of the
 // render, so it stays available even if bootstrap below fails.
 installPulseStatsHook();
+// The second one is a decision as well as an installation, and it has to be
+// taken here: the CellField mirror is scaffolding for the P2.3 consumer
+// migration, so it is built only on a page opened with `?dev=1`, and this call
+// is what reads the switch. Before the first cache generation reaches
+// `ingestCellsCacheIntoField`, which is inside the tree `bootstrap` mounts.
 installCellFieldHook();
 
 // Drive the static boot readout in index.html from the boot record. Also
