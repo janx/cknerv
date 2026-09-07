@@ -251,6 +251,54 @@ export function populationFieldFillPixelRatio(pixelRatio: number): number {
   return Math.min(pixelRatio, POPULATION_FIELD_FILL_REF_DPR);
 }
 
+/**
+ * ⟨D-2⟩ The share of the point prefix the RESIDUAL HAIRLINE pass draws on a
+ * buffer denser than the reference.
+ *
+ * ⟨D-3⟩ above holds the beads' and the capsules' device-pixel FILL to the
+ * reference budget, because both are sized in drawing-buffer pixels and a 2×
+ * buffer would otherwise rasterise 4× the area for the same world size. The
+ * hairline pass is the one element it cannot reach: a `gl.LINES` stroke is one
+ * device pixel by construction, so its cost is not a footprint anybody writes
+ * — it is geometric, and it rides the buffer untouched. Measured at 1920×1080
+ * @2× on the 890M at ~1.3 GHz, `population.residual-fibres` is 2.47 ms of the
+ * 7.59 ms scoped scene pass: 33 %, and the most expensive single draw in the
+ * frame on every geometry the review sampled.
+ *
+ * So the law, and it is a COUNT law rather than a size one — the only currency
+ * a one-pixel line has:
+ *
+ *   at or below the reference DPR   the whole point prefix. Byte-identical.
+ *   above it                        the first HALF of the point prefix.
+ *
+ * The beads and the capsule backbone keep the FULL prefix. What a dense buffer
+ * loses is filament density — not reach, not level, and not the strands that
+ * carry the read: the same field at half the hairline density, exactly as a
+ * tier's prefix is "the same field at a lower sample density", and for the
+ * same reason. A prefix of the placement is a complete thinner field, because
+ * the walk finished every filament it emitted.
+ *
+ * A PREFIX and not a stride. `populationSegmentsForPointPrefix` is exact on a
+ * prefix of the points and on nothing else, and the hairline prefix is a
+ * sub-prefix of the point prefix, so no strand can hang off a bead that is not
+ * drawn — which is the one thing this partition must never do.
+ */
+export const POPULATION_HAIRLINE_DENSE_PREFIX = 0.5;
+
+/** The point prefix the hairline pass draws over: the whole of it at or below
+ *  the reference DPR (byte-identical to the pre-D-2 path — every 1× display),
+ *  and {@link POPULATION_HAIRLINE_DENSE_PREFIX} of it above. Pure; a
+ *  non-finite ratio reads as "not dense" and keeps the whole prefix. */
+export function populationHairlinePrefix(
+  points: number,
+  pixelRatio: number,
+  refDpr: number = POPULATION_FIELD_FILL_REF_DPR,
+): number {
+  // `!(a > b)` rather than `<=`, so a NaN ratio falls to the untouched path.
+  if (!(pixelRatio > refDpr)) return points;
+  return Math.round(points * POPULATION_HAIRLINE_DENSE_PREFIX);
+}
+
 /** Shared Leva input. `auto` owns only the effective rendering preset; selecting
  * high/med/low is an explicit manual override. */
 export const QUALITY_MODE_CONTROL = {

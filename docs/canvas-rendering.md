@@ -1600,8 +1600,14 @@ unchanged:
 
 - the population halo sizes its beads and backbone width at a reference-DPR
   fill budget (`populationFieldFillPixelRatio`, reference DPR 1), so High at
-  DPR 2 spends no more point and capsule fill than High at DPR 1; the one-pixel
-  residual-hairline pass is geometric and rides the buffer untouched;
+  DPR 2 spends no more point and capsule fill than High at DPR 1. The one-pixel
+  residual-hairline pass writes no footprint for that budget to cap — a
+  `gl.LINES` stroke is one device pixel by construction — so it takes a COUNT
+  ceiling instead: above the reference DPR it draws the first half of the point
+  prefix (`populationHairlinePrefix`, `POPULATION_HAIRLINE_DENSE_PREFIX` 0.5),
+  while the beads and the capsule backbone keep the whole of it. That prefix is
+  a sub-prefix of the point prefix, so no strand hangs off an undrawn bead, and
+  a dense buffer spends filament density rather than reach or level;
 - the Cell body sprite caps at `CELL_BODY_MAX_POINT_PX` (256 device px), the
   halo points conserve light on both sides of their existing CSS-pixel ceiling,
   and a measured peer's halo rolls its angular size off below

@@ -22,6 +22,7 @@ import {
 } from '../boot/nerveRestGate';
 import {
   populationFieldFillPixelRatio,
+  populationHairlinePrefix,
   populationSpriteMulForCap,
   QUALITY_PRESETS,
   useQualityRuntime,
@@ -329,6 +330,11 @@ export default function CellPopulationField({
   // ⟨D-3⟩ The live sprite multiplier from the last tier crossfade step, held so
   // the capsule width can take the per-frame device-pixel fill budget below.
   const spriteMulRef = useRef(1);
+  // ⟨D-2⟩ The buffer density the last trim was cut for. The frame loop is the
+  // only place this layer can read a DPR, and the trim runs inside it, so the
+  // ratio arrives by ref rather than as an argument — `applyTrim` stays a
+  // function of the tier alone, which is what its ramp calls it with.
+  const trimPixelRatioRef = useRef(1);
   const populationCapMul = QUALITY_PRESETS[quality].populationCapMul;
 
   // Placement, off the main thread. Walking 105K points of filament against a
@@ -474,17 +480,31 @@ export default function CellPopulationField({
       Math.round(counts.count * capMul),
     ));
     const index = placed.fibres.getIndex();
-    // BOTH halves of the partition trim on the same rule and against the same
-    // point prefix. Each is a subsequence of a buffer that is monotone
+    // ⟨D-2⟩ …and the hairlines trim against a prefix OF that prefix on a buffer
+    // denser than the reference: the one-device-pixel pass is the element
+    // ⟨D-3⟩'s fill budget cannot reach (it writes no footprint — a `gl.LINES`
+    // stroke is one device pixel by construction), and at 2× it is the single
+    // most expensive draw in the frame. `populationHairlinePrefix` states the
+    // law and the measurement once, beside the fill budget it completes. At or
+    // below the reference this IS `points` and the range below is
+    // byte-identical to the pre-D-2 path.
+    const hairlinePoints = populationHairlinePrefix(
+      points,
+      trimPixelRatioRef.current,
+    );
+    // BOTH halves of the partition trim on the same rule and against a point
+    // prefix. Each is a subsequence of a buffer that is monotone
     // non-decreasing in its larger endpoint, and a subsequence of a monotone
     // sequence is monotone, so the binary search is still exact on each — and
-    // a segment it keeps has BOTH endpoints under the prefix, so no preset can
-    // leave a promoted strand hanging off a point that is not drawn.
+    // a segment it keeps has BOTH endpoints under the prefix it was given, so
+    // no preset can leave a promoted strand hanging off a point that is not
+    // drawn. The hairline prefix is a SUB-prefix of the bead prefix, so the
+    // same guarantee covers it unchanged.
     const segments = index
       ? populationSegmentsForPointPrefix(
         index.array as unknown as ArrayLike<number>,
         counts.residualSegmentCount,
-        points,
+        hairlinePoints,
       )
       : 0;
     const backbone = populationSegmentsForPointPrefix(
@@ -517,6 +537,12 @@ export default function CellPopulationField({
   const capTarget = populationCapMul;
   const capRamp = useRef({ from: capTarget, to: capTarget, startedAt: 0 });
   const capApplied = useRef(-1);
+  // ⟨D-2⟩ The other half of the trim's key. The tier is not the only thing that
+  // moves the hairline range: crossing the reference DPR does too, and a tier
+  // crossfade is one way to cross it (each preset caps the renderer at its own
+  // `maxDpr`, so `high → low` on a 2× display walks 2 → 1). `null` until the
+  // first trim, so the opening cut is never mistaken for a settled state.
+  const denseApplied = useRef<boolean | null>(null);
   useEffect(() => {
     const ramp = capRamp.current;
     if (ramp.to === capTarget) return;
@@ -536,6 +562,7 @@ export default function CellPopulationField({
   useEffect(() => {
     if (placed === null) return;
     capApplied.current = -1;
+    denseApplied.current = null;
   }, [placed]);
 
   useEffect(() => () => { material.dispose(); }, [material]);
@@ -617,8 +644,19 @@ export default function CellPopulationField({
     // the reference this IS the true ratio and every quantity below is
     // byte-identical to the pre-D-3 path.
     const fillPixelRatio = populationFieldFillPixelRatio(pixelRatio);
-    if (Math.abs(capMul - capApplied.current) > 0.0005) {
+    // ⟨D-2⟩ The trim is keyed on the tier AND on the buffer density, because
+    // the hairline range is a function of both. Denseness is the boolean the
+    // range actually turns on — `fillPixelRatio < pixelRatio` is exactly "above
+    // the reference" — so a DPR that moves inside one regime (2 → 3) is not a
+    // change to re-cut for, and a settled page still does nothing at all.
+    const denseBuffer = fillPixelRatio < pixelRatio;
+    trimPixelRatioRef.current = pixelRatio;
+    if (
+      Math.abs(capMul - capApplied.current) > 0.0005
+      || denseBuffer !== denseApplied.current
+    ) {
       capApplied.current = capMul;
+      denseApplied.current = denseBuffer;
       applyTrim(capMul);
       const spriteMul = populationSpriteMulForCap(capMul);
       spriteMulRef.current = spriteMul;

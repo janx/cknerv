@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   POPULATION_FIELD_FILL_REF_DPR,
+  POPULATION_HAIRLINE_DENSE_PREFIX,
   QUALITY_PRESETS,
   getQualityRuntimeSnapshot,
   populationFieldFillPixelRatio,
+  populationHairlinePrefix,
   populationSpriteMulForCap,
   setAdaptiveQuality,
   setAdaptiveQualityLocked,
@@ -278,5 +280,50 @@ describe('⟨D-3⟩ the population field spends no more device-pixel fill at hig
     expect(drawn2Uncapped).toBeCloseTo(drawn1 * 2, 6);
     expect(drawn2Capped).toBe(drawn1);
     expect(drawn2Capped).toBeLessThan(drawn2Uncapped);
+  });
+});
+
+describe('⟨D-2⟩ the hairline pass takes half the point prefix on a dense buffer', () => {
+  it('draws the whole prefix at or below the reference dpr — the 1× path is byte-identical', () => {
+    // The one-device-pixel pass is the element ⟨D-3⟩'s fill budget cannot
+    // reach, so this is the lever that bounds it — and like ⟨D-3⟩ it may not
+    // touch a single 1× display.
+    expect(populationHairlinePrefix(105_000, 1, POPULATION_FIELD_FILL_REF_DPR))
+      .toBe(105_000);
+    expect(populationHairlinePrefix(105_000, 0.5)).toBe(105_000);
+    expect(populationHairlinePrefix(0, 1)).toBe(0);
+  });
+
+  it('takes the first half above the reference — at 1.5× as at 2×', () => {
+    // Denseness is a boolean, not a curve: 1.5 (the `med` ceiling) and 2 (the
+    // `high` one) are both "above the reference" and both cut the same way.
+    expect(POPULATION_HAIRLINE_DENSE_PREFIX).toBe(0.5);
+    expect(populationHairlinePrefix(105_000, 1.5)).toBe(52_500);
+    expect(populationHairlinePrefix(105_000, 2)).toBe(52_500);
+    expect(populationHairlinePrefix(105_000, 3)).toBe(52_500);
+    // Rounded, like every other prefix this layer computes.
+    expect(populationHairlinePrefix(7, 2)).toBe(4);
+    expect(populationHairlinePrefix(0, 2)).toBe(0);
+  });
+
+  it('is a SUB-prefix of the point prefix, at every tier and every dpr', () => {
+    // The whole safety argument: `populationSegmentsForPointPrefix` is exact on
+    // a prefix of the points, and a strand may never hang off a bead that is
+    // not drawn. The hairline prefix is inside the bead prefix, so the same
+    // binary search covers it unchanged.
+    for (const capMul of [1, 0.5, 0.25, 0.03]) {
+      const points = Math.round(105_000 * capMul);
+      for (const dpr of [0.75, 1, 1.5, 2, 2.625, 3]) {
+        const hairline = populationHairlinePrefix(points, dpr);
+        expect(hairline).toBeGreaterThanOrEqual(0);
+        expect(hairline).toBeLessThanOrEqual(points);
+      }
+    }
+  });
+
+  it('reads a non-finite ratio as "not dense" and keeps the whole prefix', () => {
+    // `resolvePointSpritePixelRatio` already guards the call site; a lever that
+    // can only ever REMOVE filaments must not be armed by a NaN either way.
+    expect(populationHairlinePrefix(105_000, Number.NaN)).toBe(105_000);
   });
 });
