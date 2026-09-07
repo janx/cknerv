@@ -284,3 +284,16 @@ export * from './derives/producerOriginStats';
 // same surface: both were argued from source until they had a counter.
 export * from './derives/colonyStats';
 export * from './geometry/cellPickStats';
+// The last two readings this package used to put on `window` itself: the
+// adaptive controller's sample windows and the halo layer's live draw counts.
+// They are exported for the same reason every counter above is — the app's
+// hook module owns the devtools surface, and a library that writes a global
+// has a second, undeclared consumer.
+export * from './tweaks/qualitySampleLog';
+export {
+  registerPopulationFieldStatsReader,
+  snapshotPopulationFieldStats,
+  type PopulationFieldPlacementCounts,
+  type PopulationFieldStatsReader,
+  type PopulationFieldStatsSnapshot,
+} from './geometry/populationFieldStats';

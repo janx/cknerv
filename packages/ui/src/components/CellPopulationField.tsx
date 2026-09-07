@@ -17,6 +17,10 @@ import {
 } from '../geometry/populationPlacementStore';
 import { beginPopulationFieldPlacement } from '../geometry/populationFieldSession';
 import {
+  registerPopulationFieldStatsReader,
+  type PopulationFieldPlacementCounts,
+} from '../geometry/populationFieldStats';
+import {
   reportBootPopulationExpected,
   reportBootPopulationReady,
 } from '../boot/nerveRestGate';
@@ -70,16 +74,6 @@ interface BackboneLayer {
   mesh: LineSegments2;
   /** Promoted segments in the buffer, before any preset trims it. */
   count: number;
-}
-
-interface PlacementCounts {
-  count: number;
-  segmentCount: number;
-  backboneSegmentCount: number;
-  residualSegmentCount: number;
-  backboneComponents: number;
-  streamlines: number;
-  work: number;
 }
 
 /** Instance data for the capsule pass: two endpoints and two taper ratios per
@@ -319,7 +313,7 @@ export default function CellPopulationField({
       )
       : undefined
   ), [placed]);
-  const placementRef = useRef<PlacementCounts | null>(null);
+  const placementRef = useRef<PopulationFieldPlacementCounts | null>(null);
   const { effective: quality } = useQualityRuntime();
   const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const fibresGeometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -613,39 +607,37 @@ export default function CellPopulationField({
   }, [placed]);
 
   // Dev counter, following the `__pulseStats()` precedent. It reports what the
-  // placement pass produced; it never affects a number the HUD prints.
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined;
-    const global = window as unknown as Record<string, unknown>;
-    global.__populationFieldStats = () => ({
-      placement: placementRef.current,
-      requested: POPULATION_FIELD_POINTS,
-      // What the preset actually draws, so a live look can tell the cascade
-      // reached this layer without reading a buffer.
-      drawn: {
-        points: pointsGeometryRef.current?.drawRange.count ?? 0,
-        segments: (fibresGeometryRef.current?.drawRange.count ?? 0) / 2,
-        // The capsule pass, reported beside the hairlines it was taken out
-        // of, so a live look can read the partition without a buffer.
-        backbone: backboneLayerRef.current?.geometry.instanceCount ?? 0,
-      },
-      emission: material.uniforms.uEmission.value,
-      fibreEmission: fibreMaterial.uniforms.uEmission.value,
-      // Equal to `fibreEmission` by construction, and printed so a live look
-      // can see that it is: the backbone is wider, never brighter.
-      backboneEmission: backboneMaterial.uniforms.uEmission.value,
-      backboneWidthPx: backboneMaterial.linewidth,
-      // The taper, so a live look can tell which build is on screen without
-      // reading a shader. It reports what the layer was given; it never
-      // affects a number the HUD prints.
-      taper: {
-        sizeMin: material.uniforms.uSizeMin.value,
-        sizeMax: material.uniforms.uSizeMax.value,
-        minPointPx: material.uniforms.uMinPointPx.value,
-      },
-    });
-    return () => { delete global.__populationFieldStats; };
-  }, [material, fibreMaterial, backboneMaterial]);
+  // placement pass produced; it never affects a number the HUD prints. The
+  // reading is live component state, so what is published is the READER —
+  // registered while this layer is mounted, dropped when it goes, and put on
+  // `window` by the app's hook module rather than by this package.
+  useEffect(() => registerPopulationFieldStatsReader(() => ({
+    placement: placementRef.current,
+    requested: POPULATION_FIELD_POINTS,
+    // What the preset actually draws, so a live look can tell the cascade
+    // reached this layer without reading a buffer.
+    drawn: {
+      points: pointsGeometryRef.current?.drawRange.count ?? 0,
+      segments: (fibresGeometryRef.current?.drawRange.count ?? 0) / 2,
+      // The capsule pass, reported beside the hairlines it was taken out of,
+      // so a live look can read the partition without a buffer.
+      backbone: backboneLayerRef.current?.geometry.instanceCount ?? 0,
+    },
+    emission: material.uniforms.uEmission.value,
+    fibreEmission: fibreMaterial.uniforms.uEmission.value,
+    // Equal to `fibreEmission` by construction, and printed so a live look
+    // can see that it is: the backbone is wider, never brighter.
+    backboneEmission: backboneMaterial.uniforms.uEmission.value,
+    backboneWidthPx: backboneMaterial.linewidth,
+    // The taper, so a live look can tell which build is on screen without
+    // reading a shader. It reports what the layer was given; it never
+    // affects a number the HUD prints.
+    taper: {
+      sizeMin: material.uniforms.uSizeMin.value,
+      sizeMax: material.uniforms.uSizeMax.value,
+      minPointPx: material.uniforms.uMinPointPx.value,
+    },
+  })), [material, fibreMaterial, backboneMaterial]);
 
   // Five uniform writes. There is no march, no offscreen target, no
   // composite, and no per-frame work proportional to anything — the geometry

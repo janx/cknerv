@@ -24,6 +24,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CellPopulationField from '../../src/components/CellPopulationField';
 import {
+  snapshotPopulationFieldStats,
+  type PopulationFieldStatsSnapshot,
+} from '../../src/geometry/populationFieldStats';
+import {
   resetPopulationPlacement,
   setPopulationPlacement,
   type PopulationPlacementSnapshot,
@@ -84,17 +88,13 @@ function chainPlacement(): PopulationPlacementSnapshot {
 
 interface Drawn { points: number; segments: number; backbone: number }
 
-function stats(): {
-  drawn: Drawn;
-  taper: { sizeMin: number; sizeMax: number; minPointPx: number };
-} {
-  const read = (window as unknown as Record<string, unknown>)
-    .__populationFieldStats as (() => {
-      drawn: Drawn;
-      taper: { sizeMin: number; sizeMax: number; minPointPx: number };
-    }) | undefined;
+/** The mounted layer's own reading, through the registry the package exports
+ *  — the same value `window.__populationFieldStats()` hands a live session,
+ *  reached the way a consumer of the library reaches it. */
+function stats(): PopulationFieldStatsSnapshot {
+  const read = snapshotPopulationFieldStats();
   if (!read) throw new Error('the layer published no stats');
-  return read();
+  return read;
 }
 
 const drawn = (): Drawn => stats().drawn;

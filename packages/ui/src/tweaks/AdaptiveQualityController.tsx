@@ -16,13 +16,9 @@ import {
   createAdaptiveQualityState,
   restartAdaptiveQualityState,
 } from './adaptiveQuality';
+import { recordQualitySample } from './qualitySampleLog';
 
 const MAX_VALID_WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS * 4;
-
-/** How many windows `window.__cknervQualitySamples` keeps. Twenty minutes of
- *  them at the sampler's own cadence — enough to read a whole calibration and
- *  the hour after it, small enough that nobody has to remember to turn it off. */
-const QUALITY_SAMPLE_RING = 1600;
 
 export interface AdaptiveQualityControllerProps {
   /** True while historical hydration/replay is in flight (cells backfill).
@@ -231,24 +227,21 @@ export default function AdaptiveQualityController({
     const averageFrameMs = elapsedMs / Math.max(1, frames.current);
     // The dev counter, on the `__pulseStats()` precedent: what the controller
     // was actually handed, so a live session can be read rather than guessed
-    // at. It never affects a number the HUD prints.
-    if (typeof window !== 'undefined') {
-      const ring = ((window as unknown as Record<string, unknown>)
-        .__cknervQualitySamples ??= []) as unknown[];
-      ring.push({
-        atMs: Math.round(now),
-        windowMs: Math.round(elapsedMs),
-        frames: frames.current,
-        meanFrameMs: Number(averageFrameMs.toFixed(2)),
-        maxFrameMs: Number(maxFrameMs.current.toFixed(1)),
-        stalled,
-        quality: adaptiveState.current.quality,
-        smoothedFrameMs: Number(adaptiveState.current.smoothedFrameMs.toFixed(2)),
-        slowEvidenceMs: Math.round(adaptiveState.current.slowEvidenceMs),
-        locked: adaptiveState.current.locked,
-      });
-      if (ring.length > QUALITY_SAMPLE_RING) ring.shift();
-    }
+    // at. It never affects a number the HUD prints. The ring is a module of
+    // its own and the `window` hook that surfaces it belongs to the app —
+    // this package writes no global.
+    recordQualitySample({
+      atMs: Math.round(now),
+      windowMs: Math.round(elapsedMs),
+      frames: frames.current,
+      meanFrameMs: Number(averageFrameMs.toFixed(2)),
+      maxFrameMs: Number(maxFrameMs.current.toFixed(1)),
+      stalled,
+      quality: adaptiveState.current.quality,
+      smoothedFrameMs: Number(adaptiveState.current.smoothedFrameMs.toFixed(2)),
+      slowEvidenceMs: Math.round(adaptiveState.current.slowEvidenceMs),
+      locked: adaptiveState.current.locked,
+    });
     if (stalled) {
       frames.current = 0;
       lastAt.current = now;

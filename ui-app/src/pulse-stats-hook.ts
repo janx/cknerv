@@ -42,6 +42,23 @@
 //                                    non-increasing: read `switches` twice
 //                                    around a load spike and any growth is a
 //                                    step down, never a climb back.
+//   window.__cknervQualitySamples() → the sample windows the adaptive
+//                                  controller was handed, oldest first: mean
+//                                  and longest frame, `stalled` for the ones
+//                                  it threw away, and the tier / evidence /
+//                                  lock it weighed them against.
+//                                  ⚠️ A FUNCTION now. It used to be the ring
+//                                    ARRAY itself, written straight onto
+//                                    `window` from inside @cknerv/ui; the ring
+//                                    moved into the library as a module and
+//                                    this is its snapshot, so a probe that
+//                                    read the array must now call it.
+//   window.__cknervQualitySamplesReset() → empty the sample log
+//   window.__populationFieldStats() → the halo's population layer: the
+//                                  placement it was given, what its three
+//                                  draws would submit, and the emission and
+//                                  taper they carry — or `null` while no such
+//                                  layer is mounted.
 //   window.__producerOriginStats()      → { waves, attested, anonymous,
 //                                    suppressed, byProducer, attestedRatePct }
 //                                  — where each colony block wave STARTED.
@@ -78,9 +95,15 @@
 //   window.__renderPerformanceStats()   → bounded p50/p95/p99 CPU/GPU/frame data
 //   window.__renderPerformanceStatsJson() → versioned JSON export
 //   window.__renderPerformanceStatsReset() → clean measurement window
-// Read-only; safe to leave attached. The library itself stays window-free.
+// Read-only; safe to leave attached. The library itself stays window-free —
+// every name above is an export of @cknerv/ui installed here, and
+// `packages/ui/__tests__/windowFreeLibrary.test.ts` reads the package off
+// disk and fails if anything in it writes a `__` surface of its own.
 import {
   getQualityRuntimeSnapshot,
+  snapshotQualitySamples,
+  resetQualitySamples,
+  snapshotPopulationFieldStats,
   snapshotPulseStats,
   resetPulseStats,
   snapshotFabricStats,
@@ -111,6 +134,9 @@ declare global {
     __uploadStats?: typeof snapshotGpuUploads;
     __uploadStatsReset?: typeof resetGpuUploads;
     __qualityStats?: typeof getQualityRuntimeSnapshot;
+    __cknervQualitySamples?: typeof snapshotQualitySamples;
+    __cknervQualitySamplesReset?: typeof resetQualitySamples;
+    __populationFieldStats?: typeof snapshotPopulationFieldStats;
     __producerOriginStats?: typeof snapshotProducerOriginStats;
     __producerOriginStatsReset?: typeof resetProducerOriginStats;
     __colonyStats?: typeof snapshotColonyStats;
@@ -134,6 +160,9 @@ export function installPulseStatsHook(): void {
   window.__uploadStats = snapshotGpuUploads;
   window.__uploadStatsReset = resetGpuUploads;
   window.__qualityStats = getQualityRuntimeSnapshot;
+  window.__cknervQualitySamples = snapshotQualitySamples;
+  window.__cknervQualitySamplesReset = resetQualitySamples;
+  window.__populationFieldStats = snapshotPopulationFieldStats;
   window.__producerOriginStats = snapshotProducerOriginStats;
   window.__producerOriginStatsReset = resetProducerOriginStats;
   window.__colonyStats = snapshotColonyStats;

@@ -26,6 +26,7 @@ import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CellPopulationField from '../../src/components/CellPopulationField';
+import { snapshotPopulationFieldStats } from '../../src/geometry/populationFieldStats';
 import {
   resetPopulationPlacement,
   setPopulationPlacement,
@@ -86,12 +87,12 @@ function chainPlacement(): PopulationPlacementSnapshot {
 interface Drawn { points: number; segments: number; backbone: number }
 
 /** What the three draws would submit, read off the live geometries through the
- *  layer's own dev counter. */
+ *  layer's own dev counter — the registry the package exports, which is what
+ *  the app's hook publishes as `window.__populationFieldStats()`. */
 function drawn(): Drawn {
-  const stats = (window as unknown as Record<string, unknown>)
-    .__populationFieldStats as (() => { drawn: Drawn }) | undefined;
+  const stats = snapshotPopulationFieldStats();
   if (!stats) throw new Error('the layer published no stats');
-  return stats().drawn;
+  return stats.drawn;
 }
 
 /** One frame at a given renderer DPR. */

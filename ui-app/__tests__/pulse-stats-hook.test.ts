@@ -100,6 +100,20 @@ describe('installPulseStatsHook', () => {
     window.__cellPickStatsReset!();
     expect(window.__cellPickStats!().raycasts).toBe(0);
 
+    // The two readings the library used to write onto `window` itself, now
+    // installed here like every other one. `__cknervQualitySamples` is a
+    // FUNCTION where it used to be the ring array, which is the whole of the
+    // shape change a probe has to know about; the halo's stats answer `null`
+    // until a layer is mounted, which is the truthful reading for a page
+    // whose scene has not built its halo yet.
+    expect(typeof window.__cknervQualitySamples).toBe('function');
+    expect(typeof window.__cknervQualitySamplesReset).toBe('function');
+    expect(Array.isArray(window.__cknervQualitySamples!())).toBe(true);
+    window.__cknervQualitySamplesReset!();
+    expect(window.__cknervQualitySamples!()).toEqual([]);
+    expect(typeof window.__populationFieldStats).toBe('function');
+    expect(window.__populationFieldStats!()).toBeNull();
+
     // The opt-in render probe rides the same devtools surface. The hooks are
     // always discoverable, but the snapshot proves measurement itself remains
     // disabled until RenderStatsSampler is demanded / ?render-stats=1.

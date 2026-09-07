@@ -18,6 +18,10 @@ import {
   setAdaptiveQuality,
   setQualityMode,
 } from '../../src/tweaks/qualityPresets';
+import {
+  resetQualitySamples,
+  snapshotQualitySamples,
+} from '../../src/tweaks/qualitySampleLog';
 
 const WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS + 1;
 
@@ -460,10 +464,13 @@ describe('a stall is not evidence', () => {
 
   it('publishes what it was handed, so a live session can be read', () => {
     render(<AdaptiveQualityController />);
-    delete (window as unknown as Record<string, unknown>).__cknervQualitySamples;
+    // The log is a module of the package now rather than an array on
+    // `window` — the app's hook installs the snapshot below as
+    // `window.__cknervQualitySamples()`, and this reads it the way the
+    // library's own consumers do.
+    resetQualitySamples();
     sampleWindows(16, 3);
-    const ring = (window as unknown as Record<string, unknown>)
-      .__cknervQualitySamples as Array<Record<string, unknown>>;
+    const ring = snapshotQualitySamples();
     expect(ring.length).toBeGreaterThan(0);
     expect(ring[ring.length - 1]).toMatchObject({ stalled: false, quality: 'high' });
     expect(ring[ring.length - 1].maxFrameMs).toBeLessThan(60);
@@ -473,7 +480,7 @@ describe('a stall is not evidence', () => {
     stalledWindow(520);
     now += 16; frame();
     now += 16; frame();
-    const last = ring[ring.length - 1];
+    const last = snapshotQualitySamples().at(-1)!;
     expect(last.stalled).toBe(true);
     expect(last.maxFrameMs).toBeGreaterThanOrEqual(500);
   });
