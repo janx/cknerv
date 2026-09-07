@@ -20,7 +20,7 @@ use cknerv_core::{EnrichmentEvent, OutPoint};
 
 use crate::cell_data::{CellDataReader, CELL_DATA_IN_FLIGHT, CELL_DATA_MAX_BYTES};
 use crate::enrichment::EnrichmentSource;
-use crate::projection_registry::SnapshotEnvelope;
+use crate::projection_registry::{past_poison, SnapshotEnvelope};
 use crate::state::ServerState;
 
 /// A year, the largest interval HTTP caching conventionally states. Paired
@@ -134,7 +134,7 @@ async fn projection_snapshot(
     Path(name): Path<String>,
     State(s): State<RouterState>,
 ) -> impl IntoResponse {
-    let runner = match s.state.projections.read().unwrap().lookup(&name) {
+    let runner = match past_poison(s.state.projections.read()).lookup(&name) {
         Some(r) => r,
         None => {
             return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();
@@ -155,7 +155,7 @@ async fn projection_snapshot_bin(
     Path(name): Path<String>,
     State(s): State<RouterState>,
 ) -> impl IntoResponse {
-    let runner = match s.state.projections.read().unwrap().lookup(&name) {
+    let runner = match past_poison(s.state.projections.read()).lookup(&name) {
         Some(r) => r,
         None => {
             return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();
@@ -184,7 +184,7 @@ async fn projection_stream(
     Query(params): Query<HashMap<String, String>>,
     State(s): State<RouterState>,
 ) -> impl IntoResponse {
-    let runner = match s.state.projections.read().unwrap().lookup(&name) {
+    let runner = match past_poison(s.state.projections.read()).lookup(&name) {
         Some(r) => r,
         None => {
             return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();

@@ -95,6 +95,16 @@ pub type SharedMutation = Arc<SharedMutationEntry>;
 /// reach a frame. The ring used to hold 50_000, of which 47_952 were
 /// exactly that: unreachable retained bytes, each memoizing its own wire
 /// text.
+///
+/// Depth is not the only thing that decides whether a reconnect replays.
+/// Every `BackfillProgress` empties the ring outright (see
+/// [`ServerState::apply_mutation`]) — an active one to draw a barrier
+/// across the replay, an inactive one to hand the capacity back as well —
+/// so a client that reconnects while a backfill is running always takes a
+/// full snapshot, however much history the ring held a moment earlier.
+/// That is the barrier doing its job rather than a shortfall in this
+/// number: a replay stitched across a rebuild would describe a chain the
+/// server has already stopped believing in.
 pub(crate) const MUTATION_RING_CAP: usize = 4_096;
 const _: () = assert!(
     MUTATION_RING_CAP >= 2 * ws::REPLAY_MAX_ENTRIES,

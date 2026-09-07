@@ -660,9 +660,6 @@ impl CellGalaxy {
         Self::with_config(CellGalaxyConfig::default())
     }
 
-    /// Publish the display plane's composition shortfall to `sink`, so a
-    /// supplier outside the projection can close it. Without this the
-    /// plane never computes or publishes demand.
     /// Install the seam the optional index reads to learn which scripts are
     /// worth asking about. Nothing about naming enters this projection.
     pub fn with_observed_scripts_sink(mut self, sink: Arc<ObservedScriptsSink>) -> Self {
@@ -683,6 +680,9 @@ impl CellGalaxy {
         stats
     }
 
+    /// Publish the display plane's composition shortfall to `sink`, so a
+    /// supplier outside the projection can close it. Without this the
+    /// plane never computes or publishes demand.
     pub fn with_composition_demand_sink(mut self, sink: Arc<CompositionDemandSink>) -> Self {
         self.display.set_demand_sink(sink);
         self
