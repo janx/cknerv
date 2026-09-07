@@ -53,3 +53,12 @@ SoundCloud is not contacted and no audio is loaded during dashboard startup;
 the first request is made only when the chip is clicked. The feature therefore
 requires internet access — unlike the rest of cknerv, which runs against local
 sources — and is subject to SoundCloud's terms and regional availability.
+
+Nothing of SoundCloud's runs in the dashboard's own origin. The fade, the loop
+and the track advance are driven by talking to the player frame directly —
+JSON `{ method, value }` over `postMessage`, in
+[`ui-app/src/soundcloud-widget.ts`](../ui-app/src/soundcloud-widget.ts) —
+rather than by loading the vendor's widget script, which would run beside the
+dashboard with its own reach to every local API route. Replies are accepted
+only from `https://w.soundcloud.com` and only from the frame the Jukebox
+itself mounted.

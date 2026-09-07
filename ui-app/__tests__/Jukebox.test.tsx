@@ -4,7 +4,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
 } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Jukebox, {
@@ -20,8 +19,8 @@ import Jukebox, {
   KOMM_VOCAL_LOOP_AT_MS,
   SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX,
   SOUNDCLOUD_PLAYER_SCALE,
-  SOUNDCLOUD_WIDGET_API_SRC,
 } from '../src/Jukebox';
+import { SOUNDCLOUD_WIDGET_ORIGIN } from '../src/soundcloud-widget';
 
 const OPEN_LABEL = 'Open Jukebox and play default SoundCloud track';
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
@@ -29,45 +28,61 @@ const ARIANNE_TRACK = JUKEBOX_TRACKS[1];
 const JOSETO_ARC_PIANO_TRACK = JUKEBOX_TRACKS[2];
 const SHEET_MUSIC_BOSS_TRACK = JUKEBOX_TRACKS[3];
 
-type WidgetEvent = { currentPosition?: number };
-type WidgetListener = (event?: WidgetEvent) => void;
+interface WidgetMessage {
+  method: string;
+  value?: unknown;
+}
 
-function installWidgetMock(volume = 80) {
-  const listeners = new Map<string, WidgetListener>();
-  const widget = {
-    bind: vi.fn((eventName: string, listener: WidgetListener) => {
-      listeners.set(eventName, listener);
-    }),
-    unbind: vi.fn((eventName: string) => listeners.delete(eventName)),
-    getPosition: vi.fn((callback: (position: number) => void) => callback(0)),
-    getVolume: vi.fn((callback: (value: number) => void) => callback(volume)),
-    pause: vi.fn(),
-    play: vi.fn(),
-    seekTo: vi.fn(),
-    setVolume: vi.fn(),
+/** The player as the browser presents it: an iframe whose `contentWindow`
+ *  takes JSON strings and answers with `message` events from SoundCloud's
+ *  origin. The old fake stood in for the vendor script's widget object; there
+ *  is no script to fake any more, so this one stands where the boundary
+ *  actually is — at the window the client speaks across. It answers the two
+ *  getters the way the real widget does (under the getter's own name, with
+ *  the volume it was last given), which is what makes the fade and loop
+ *  behaviour below a test of the whole round trip rather than of a stub. */
+function connectPlayer(frame: HTMLIFrameElement, initialVolume = 80) {
+  const source = frame.contentWindow as Window;
+  const sent: WidgetMessage[] = [];
+  let volume = initialVolume;
+  let position = 0;
+
+  const receive = (method: string, value?: unknown) => {
+    window.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ method, value }),
+      origin: SOUNDCLOUD_WIDGET_ORIGIN,
+      source,
+    }));
   };
-  const Events = {
-    FINISH: 'finish',
-    PLAY: 'play',
-    PLAY_PROGRESS: 'play-progress',
-    SEEK: 'seek',
-  };
-  const factory = Object.assign(vi.fn(() => widget), { Events });
-  Object.defineProperty(window, 'SC', {
-    configurable: true,
-    value: { Widget: factory },
+
+  const postMessage = vi.fn((data: string) => {
+    const message = JSON.parse(data) as WidgetMessage;
+    sent.push(message);
+    if (message.method === 'setVolume') volume = message.value as number;
+    if (message.method === 'seekTo') position = message.value as number;
+    if (message.method === 'getVolume') receive('getVolume', volume);
+    if (message.method === 'getPosition') receive('getPosition', position);
   });
-  return { Events, factory, listeners, widget };
+  vi.spyOn(source, 'postMessage').mockImplementation(
+    postMessage as unknown as Window['postMessage'],
+  );
+
+  return {
+    postMessage,
+    sent,
+    /** Every value the page has sent under one method, in order. */
+    calls: (method: string) => sent
+      .filter((message) => message.method === method)
+      .map((message) => message.value),
+    ready: () => receive('ready', null),
+    emit: receive,
+  };
 }
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
-  document
-    .querySelector('script[data-cknerv-soundcloud-widget-api="true"]')
-    ?.remove();
-  delete window.SC;
 });
 
 describe('Jukebox', () => {
@@ -102,6 +117,11 @@ describe('Jukebox', () => {
     expect(SHEET_MUSIC_BOSS_TRACK.embedUrl).toContain(
       'tracks%2F1921367153',
     );
+    // Every player is served from the one origin the widget client will
+    // accept a message from, and addresses its own messages to.
+    expect(JUKEBOX_TRACKS.every((track) => (
+      track.embedUrl.startsWith(`${SOUNDCLOUD_WIDGET_ORIGIN}/`)
+    ))).toBe(true);
   });
 
   it('loads no third-party content until clicked, then requests default autoplay', () => {
@@ -187,32 +207,41 @@ describe('Jukebox', () => {
     }).getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('loads the widget controller lazily and loops a finished track', async () => {
-    const { Events, factory, listeners, widget } = installWidgetMock();
+  it('speaks to the player itself, after it says ready, and loops a finished track', () => {
     render(<Jukebox />);
-
-    expect(document.querySelector(`script[src="${SOUNDCLOUD_WIDGET_API_SRC}"]`))
-      .toBeNull();
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
     }));
-    const frame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    const frame = screen.getByTitle(
+      MICHELLE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
+    const player = connectPlayer(frame);
     fireEvent.load(frame);
 
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
-    listeners.get(Events.PLAY)?.();
-    listeners.get(Events.FINISH)?.();
+    // Nothing may be said to a widget that has not announced itself; the
+    // four registrations wait for `ready` and then go out in order.
+    expect(player.sent).toEqual([]);
+    player.ready();
+    expect(player.calls('addEventListener')).toEqual([
+      'playProgress',
+      'seek',
+      'play',
+      'finish',
+    ]);
 
-    expect(widget.pause).toHaveBeenCalledTimes(1);
-    expect(widget.setVolume).toHaveBeenNthCalledWith(1, 0);
-    expect(widget.seekTo).toHaveBeenCalledWith(0);
-    expect(widget.setVolume).toHaveBeenNthCalledWith(2, 80);
-    expect(widget.play).toHaveBeenCalledTimes(1);
+    player.emit('play', { currentPosition: 0 });
+    player.emit('finish');
+
+    expect(player.calls('pause')).toHaveLength(1);
+    expect(player.calls('setVolume')).toEqual([0, 80]);
+    expect(player.calls('seekTo')).toEqual([0]);
+    expect(player.calls('play')).toHaveLength(1);
+    // The whole point of the exercise: no vendor script ever enters the page.
+    expect(document.querySelector('script[src*="soundcloud"]')).toBeNull();
   });
 
-  it('plays a different random track after every finish', async () => {
+  it('plays a different random track after every finish', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
-    const { Events, factory, listeners, widget } = installWidgetMock();
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
@@ -222,33 +251,47 @@ describe('Jukebox', () => {
     }));
 
     const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
-    const michelleFrame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    const michelleFrame = screen.getByTitle(
+      MICHELLE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
+    const michelle = connectPlayer(michelleFrame);
     fireEvent.load(michelleFrame);
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(michelleFrame));
+    michelle.ready();
 
-    act(() => listeners.get(Events.FINISH)?.());
+    act(() => michelle.emit('finish'));
 
     expect(panel.getAttribute('data-jukebox-playback-mode')).toBe('random');
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
       ARIANNE_TRACK.id,
     );
-    expect(widget.pause).toHaveBeenCalledTimes(1);
-    expect(widget.seekTo).not.toHaveBeenCalled();
+    expect(michelle.calls('pause')).toHaveLength(1);
+    expect(michelle.calls('seekTo')).toEqual([]);
+    // The player being left behind is told to stop listening, once per event.
+    expect(michelle.calls('removeEventListener')).toEqual([
+      'playProgress',
+      'seek',
+      'play',
+      'finish',
+    ]);
 
-    const arianneFrame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    const arianneFrame = screen.getByTitle(
+      ARIANNE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
+    const arianne = connectPlayer(arianneFrame);
     fireEvent.load(arianneFrame);
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(arianneFrame));
-    act(() => listeners.get(Events.FINISH)?.());
+    arianne.ready();
+    act(() => arianne.emit('finish'));
 
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
       MICHELLE_TRACK.id,
     );
-    expect(widget.pause).toHaveBeenCalledTimes(2);
-    expect(widget.seekTo).not.toHaveBeenCalled();
+    expect(arianne.calls('pause')).toHaveLength(1);
+    expect(arianne.calls('seekTo')).toEqual([]);
+    // A retired player hears nothing further: its listener is gone with it.
+    expect(michelle.calls('pause')).toHaveLength(1);
   });
 
-  it('fades the Arianne track from 5:55 and loops it at 6:00', async () => {
-    const { Events, factory, listeners, widget } = installWidgetMock(80);
+  it('fades the Arianne track from 5:55 and loops it at 6:00', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
@@ -258,35 +301,37 @@ describe('Jukebox', () => {
     }));
 
     const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
-    const frame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    const frame = screen.getByTitle(
+      ARIANNE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
     expect(panel.getAttribute('data-jukebox-fade-start-ms')).toBe(
       String(KOMM_VOCAL_FADE_START_MS),
     );
     expect(panel.getAttribute('data-jukebox-loop-at-ms')).toBe(
       String(KOMM_VOCAL_LOOP_AT_MS),
     );
+    const player = connectPlayer(frame, 80);
     fireEvent.load(frame);
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
+    player.ready();
 
-    listeners.get(Events.PLAY_PROGRESS)?.({
+    player.emit('playProgress', {
       currentPosition: KOMM_VOCAL_FADE_START_MS,
     });
-    listeners.get(Events.PLAY_PROGRESS)?.({ currentPosition: 357_500 });
-    expect(widget.setVolume).toHaveBeenLastCalledWith(40);
+    player.emit('playProgress', { currentPosition: 357_500 });
+    expect(player.calls('setVolume').at(-1)).toBe(40);
 
-    listeners.get(Events.PLAY_PROGRESS)?.({
+    player.emit('playProgress', {
       currentPosition: KOMM_VOCAL_LOOP_AT_MS,
     });
-    expect(widget.pause).toHaveBeenCalledTimes(1);
-    expect(widget.setVolume).toHaveBeenCalledWith(0);
-    expect(widget.seekTo).toHaveBeenCalledWith(0);
-    expect(widget.setVolume).toHaveBeenLastCalledWith(80);
-    expect(widget.play).toHaveBeenCalledTimes(1);
+    expect(player.calls('pause')).toHaveLength(1);
+    expect(player.calls('setVolume')).toContain(0);
+    expect(player.calls('seekTo')).toEqual([0]);
+    expect(player.calls('setVolume').at(-1)).toBe(80);
+    expect(player.calls('play')).toHaveLength(1);
   });
 
-  it('uses the Arianne cutoff as the next-track point in random mode', async () => {
+  it('uses the Arianne cutoff as the next-track point in random mode', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
-    const { Events, factory, listeners, widget } = installWidgetMock(80);
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
@@ -299,24 +344,27 @@ describe('Jukebox', () => {
     }));
 
     const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
-    const frame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    const frame = screen.getByTitle(
+      ARIANNE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
+    const player = connectPlayer(frame, 80);
     fireEvent.load(frame);
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
+    player.ready();
 
-    act(() => listeners.get(Events.PLAY_PROGRESS)?.({
+    act(() => player.emit('playProgress', {
       currentPosition: KOMM_VOCAL_FADE_START_MS,
     }));
-    act(() => listeners.get(Events.PLAY_PROGRESS)?.({
+    act(() => player.emit('playProgress', {
       currentPosition: KOMM_VOCAL_LOOP_AT_MS,
     }));
 
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
       MICHELLE_TRACK.id,
     );
-    expect(widget.setVolume).toHaveBeenLastCalledWith(80);
-    expect(widget.pause).toHaveBeenCalledTimes(1);
-    expect(widget.seekTo).not.toHaveBeenCalled();
-    expect(widget.play).not.toHaveBeenCalled();
+    expect(player.calls('setVolume').at(-1)).toBe(80);
+    expect(player.calls('pause')).toHaveLength(1);
+    expect(player.calls('seekTo')).toEqual([]);
+    expect(player.calls('play')).toEqual([]);
   });
 
   it('switches to the piano version by replacing, not stacking, players', () => {
@@ -360,18 +408,22 @@ describe('Jukebox', () => {
     expect(panel.textContent).toContain('SOUNDCLOUD READY');
   });
 
-  it('contains SoundCloud teardown errors while switching tracks', async () => {
-    const { factory, widget } = installWidgetMock();
+  it('contains SoundCloud teardown errors while switching tracks', () => {
     const iframeConnectionStates: boolean[] = [];
     const { container } = render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
     }));
 
-    const michelleFrame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    const michelleFrame = screen.getByTitle(
+      MICHELLE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
+    const player = connectPlayer(michelleFrame);
     fireEvent.load(michelleFrame);
-    await waitFor(() => expect(factory).toHaveBeenCalledWith(michelleFrame));
-    widget.unbind.mockImplementation(() => {
+    player.ready();
+    // The failure this guards is the one SoundCloud actually produced: the
+    // frame's window torn out from under a message still being sent.
+    player.postMessage.mockImplementation(() => {
       iframeConnectionStates.push(michelleFrame.isConnected);
       throw new TypeError(
         "Cannot read properties of null (reading 'postMessage')",
@@ -384,7 +436,6 @@ describe('Jukebox', () => {
 
     const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
     expect(iframeConnectionStates).toEqual([true, true, true, true]);
-    expect(widget.unbind).toHaveBeenCalledTimes(4);
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
       ARIANNE_TRACK.id,
     );

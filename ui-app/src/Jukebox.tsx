@@ -6,9 +6,12 @@ import {
   type CSSProperties,
 } from 'react';
 import { HUD_COLORS, HUD_MOTION, rgba } from '@cknerv/ui';
+import {
+  createSoundCloudWidget,
+  SOUNDCLOUD_EVENTS,
+  type SoundCloudWidgetEvent,
+} from './soundcloud-widget';
 
-export const SOUNDCLOUD_WIDGET_API_SRC =
-  'https://w.soundcloud.com/player/api.js';
 export const KOMM_VOCAL_FADE_START_MS = 355_000;
 export const KOMM_VOCAL_LOOP_AT_MS = 360_000;
 
@@ -167,92 +170,6 @@ function injectJukeboxStyles(doc: Document = document): void {
     '@media (max-width:380px){.cknerv-jukebox-label,.cknerv-jukebox-code{display:none}}',
   ].join('\n');
   doc.head.appendChild(style);
-}
-
-interface SoundCloudWidgetEvent {
-  currentPosition?: number;
-}
-
-interface SoundCloudWidget {
-  bind: (
-    eventName: string,
-    listener: (event?: SoundCloudWidgetEvent) => void,
-  ) => void;
-  unbind: (eventName: string) => void;
-  getPosition: (callback: (position: number) => void) => void;
-  getVolume: (callback: (volume: number) => void) => void;
-  pause: () => void;
-  play: () => void;
-  seekTo: (milliseconds: number) => void;
-  setVolume: (volume: number) => void;
-}
-
-interface SoundCloudWidgetFactory {
-  (iframe: HTMLIFrameElement): SoundCloudWidget;
-  Events: {
-    FINISH: string;
-    PLAY: string;
-    PLAY_PROGRESS: string;
-    SEEK: string;
-  };
-}
-
-declare global {
-  interface Window {
-    SC?: {
-      Widget: SoundCloudWidgetFactory;
-    };
-  }
-}
-
-let soundCloudWidgetApiPromise: Promise<SoundCloudWidgetFactory> | null = null;
-
-function soundCloudWidgetFactory() {
-  return window.SC?.Widget;
-}
-
-function loadSoundCloudWidgetApi(): Promise<SoundCloudWidgetFactory> {
-  const loadedFactory = soundCloudWidgetFactory();
-  if (loadedFactory) return Promise.resolve(loadedFactory);
-
-  const selector = 'script[data-cknerv-soundcloud-widget-api="true"]';
-  const existingScript = document.querySelector<HTMLScriptElement>(selector);
-  if (soundCloudWidgetApiPromise && existingScript) {
-    return soundCloudWidgetApiPromise;
-  }
-
-  const script = existingScript ?? document.createElement('script');
-  const request = new Promise<SoundCloudWidgetFactory>((resolve, reject) => {
-    const onLoad = () => {
-      const factory = soundCloudWidgetFactory();
-      if (factory) {
-        resolve(factory);
-      } else {
-        reject(new Error('SoundCloud Widget API loaded without SC.Widget'));
-      }
-    };
-    const onError = () => {
-      script.remove();
-      reject(new Error('Unable to load SoundCloud Widget API'));
-    };
-
-    script.addEventListener('load', onLoad, { once: true });
-    script.addEventListener('error', onError, { once: true });
-    if (!existingScript) {
-      script.async = true;
-      script.src = SOUNDCLOUD_WIDGET_API_SRC;
-      script.dataset.cknervSoundcloudWidgetApi = 'true';
-      document.head.appendChild(script);
-    }
-  });
-
-  soundCloudWidgetApiPromise = request;
-  void request.catch(() => {
-    if (soundCloudWidgetApiPromise === request) {
-      soundCloudWidgetApiPromise = null;
-    }
-  });
-  return request;
 }
 
 // 14px, and it is the HUD's own rail inset (`RAIL_INSET_PX` in
@@ -568,166 +485,161 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
 
     const iframe = frameRef.current;
     let disposed = false;
-    let widget: SoundCloudWidget | null = null;
-    let boundEvents: string[] = [];
+    // The four events bound below, in the order they are asked for, which is
+    // the list teardown has to undo.
+    const boundEvents = [
+      SOUNDCLOUD_EVENTS.PLAY_PROGRESS,
+      SOUNDCLOUD_EVENTS.SEEK,
+      SOUNDCLOUD_EVENTS.PLAY,
+      SOUNDCLOUD_EVENTS.FINISH,
+    ];
+    // The controller is this module's own `postMessage` client, not a vendor
+    // script fetched into the page origin — see `soundcloud-widget.ts`. There
+    // is nothing to wait for: it exists the moment the frame does, and holds
+    // what it is told to say until the player announces itself.
+    const widget = createSoundCloudWidget(iframe);
 
     const teardown = () => {
       if (disposed) return;
       disposed = true;
 
-      const activeWidget = widget;
-      widget = null;
-      if (
-        !activeWidget
-        || !iframe.isConnected
-        || iframe.contentWindow === null
-      ) return;
-
-      boundEvents.forEach((eventName) => {
-        try {
-          activeWidget.unbind(eventName);
-        } catch {
-          // SoundCloud may detach its iframe window during teardown. Its
-          // controller must never be allowed to unmount the React app.
-        }
-      });
+      // The unbind messages are worth sending only while there is still a
+      // frame to hear them; the window listener comes off either way, which
+      // is what keeps a track switch a handover rather than a pile-up.
+      if (iframe.isConnected && iframe.contentWindow !== null) {
+        boundEvents.forEach((eventName) => {
+          try {
+            widget.unbind(eventName);
+          } catch {
+            // SoundCloud may detach its iframe window during teardown. Its
+            // controller must never be allowed to unmount the React app.
+          }
+        });
+      }
+      widget.dispose();
     };
 
     widgetTeardownRef.current = teardown;
 
-    void loadSoundCloudWidgetApi().then((factory) => {
+    let normalVolume = 100;
+    let fadeBaseVolume: number | null = null;
+    let resolvingFadeVolume = false;
+    let restarting = false;
+    let lastPosition = 0;
+
+    const clampVolume = (volume: number) => (
+      Number.isFinite(volume)
+        ? Math.min(100, Math.max(0, volume))
+        : 100
+    );
+
+    const restoreFadeVolume = () => {
+      const restoreVolume = fadeBaseVolume ?? normalVolume;
+      widget.setVolume(restoreVolume);
+      normalVolume = restoreVolume;
+      fadeBaseVolume = null;
+      resolvingFadeVolume = false;
+    };
+
+    const performRestart = (restoreVolume: number) => {
       if (disposed) return;
+      widget.pause();
+      widget.setVolume(0);
+      widget.seekTo(0);
+      widget.setVolume(restoreVolume);
+      widget.play();
+      normalVolume = restoreVolume;
+      fadeBaseVolume = null;
+      resolvingFadeVolume = false;
+    };
 
-      widget = factory(iframe);
-      const events = factory.Events;
-      let normalVolume = 100;
-      let fadeBaseVolume: number | null = null;
-      let resolvingFadeVolume = false;
-      let restarting = false;
-      let lastPosition = 0;
+    const restart = () => {
+      if (restarting) return;
+      restarting = true;
+      if (fadeBaseVolume !== null) {
+        performRestart(fadeBaseVolume);
+        return;
+      }
+      widget.getVolume((volume) => {
+        if (!disposed) performRestart(clampVolume(volume));
+      });
+    };
 
-      const clampVolume = (volume: number) => (
-        Number.isFinite(volume)
-          ? Math.min(100, Math.max(0, volume))
-          : 100
-      );
+    const finishTrack = () => {
+      if (disposed) return;
+      if (playbackModeRef.current === 'single') {
+        restart();
+        return;
+      }
 
-      const restoreFadeVolume = () => {
-        const restoreVolume = fadeBaseVolume ?? normalVolume;
-        widget?.setVolume(restoreVolume);
-        normalVolume = restoreVolume;
-        fadeBaseVolume = null;
-        resolvingFadeVolume = false;
-      };
+      if (fadeBaseVolume !== null) {
+        widget.setVolume(fadeBaseVolume);
+      }
+      widget.pause();
+      selectTrack(getRandomJukeboxTrackId(selectedTrackId));
+    };
 
-      const performRestart = (restoreVolume: number) => {
-        if (!widget || disposed) return;
-        widget.pause();
-        widget.setVolume(0);
-        widget.seekTo(0);
-        widget.setVolume(restoreVolume);
-        widget.play();
-        normalVolume = restoreVolume;
-        fadeBaseVolume = null;
-        resolvingFadeVolume = false;
-      };
+    const applyPosition = (position: number) => {
+      if (disposed || !Number.isFinite(position)) return;
+      lastPosition = position;
 
-      const restart = () => {
-        if (!widget || restarting) return;
-        restarting = true;
-        if (fadeBaseVolume !== null) {
-          performRestart(fadeBaseVolume);
+      if (restarting) {
+        if (position <= 1_000) {
+          restarting = false;
+        } else {
           return;
         }
+      }
+
+      if (loopAtMs !== null && position >= loopAtMs) {
+        finishTrack();
+        return;
+      }
+
+      if (fadeStartMs === null || loopAtMs === null) return;
+      if (position < fadeStartMs) {
+        if (fadeBaseVolume !== null) restoreFadeVolume();
+        return;
+      }
+
+      if (fadeBaseVolume === null) {
+        if (resolvingFadeVolume) return;
+        resolvingFadeVolume = true;
         widget.getVolume((volume) => {
-          if (!disposed) performRestart(clampVolume(volume));
+          if (disposed) return;
+          resolvingFadeVolume = false;
+          fadeBaseVolume = clampVolume(volume);
+          normalVolume = fadeBaseVolume;
+          applyPosition(lastPosition);
         });
-      };
+        return;
+      }
 
-      const finishTrack = () => {
-        if (!widget || disposed) return;
-        if (playbackModeRef.current === 'single') {
-          restart();
-          return;
+      const fadeProgress = (position - fadeStartMs)
+        / (loopAtMs - fadeStartMs);
+      widget.setVolume(Math.round(
+        fadeBaseVolume * Math.max(0, 1 - fadeProgress),
+      ));
+    };
+
+    const onProgress = (event?: SoundCloudWidgetEvent) => {
+      if (typeof event?.currentPosition !== 'number') return;
+      applyPosition(event.currentPosition);
+    };
+    const onPlay = () => {
+      widget.getPosition(applyPosition);
+      if (fadeBaseVolume !== null) return;
+      widget.getVolume((volume) => {
+        if (!disposed && fadeBaseVolume === null) {
+          normalVolume = clampVolume(volume);
         }
+      });
+    };
 
-        if (fadeBaseVolume !== null) {
-          widget.setVolume(fadeBaseVolume);
-        }
-        widget.pause();
-        selectTrack(getRandomJukeboxTrackId(selectedTrackId));
-      };
-
-      const applyPosition = (position: number) => {
-        if (!widget || disposed || !Number.isFinite(position)) return;
-        lastPosition = position;
-
-        if (restarting) {
-          if (position <= 1_000) {
-            restarting = false;
-          } else {
-            return;
-          }
-        }
-
-        if (loopAtMs !== null && position >= loopAtMs) {
-          finishTrack();
-          return;
-        }
-
-        if (fadeStartMs === null || loopAtMs === null) return;
-        if (position < fadeStartMs) {
-          if (fadeBaseVolume !== null) restoreFadeVolume();
-          return;
-        }
-
-        if (fadeBaseVolume === null) {
-          if (resolvingFadeVolume) return;
-          resolvingFadeVolume = true;
-          widget.getVolume((volume) => {
-            if (disposed || !widget) return;
-            resolvingFadeVolume = false;
-            fadeBaseVolume = clampVolume(volume);
-            normalVolume = fadeBaseVolume;
-            applyPosition(lastPosition);
-          });
-          return;
-        }
-
-        const fadeProgress = (position - fadeStartMs)
-          / (loopAtMs - fadeStartMs);
-        widget.setVolume(Math.round(
-          fadeBaseVolume * Math.max(0, 1 - fadeProgress),
-        ));
-      };
-
-      const onProgress = (event?: SoundCloudWidgetEvent) => {
-        if (typeof event?.currentPosition !== 'number') return;
-        applyPosition(event.currentPosition);
-      };
-      const onPlay = () => {
-        widget?.getPosition(applyPosition);
-        if (fadeBaseVolume !== null) return;
-        widget?.getVolume((volume) => {
-          if (!disposed && fadeBaseVolume === null) {
-            normalVolume = clampVolume(volume);
-          }
-        });
-      };
-
-      widget.bind(events.PLAY_PROGRESS, onProgress);
-      widget.bind(events.SEEK, onProgress);
-      widget.bind(events.PLAY, onPlay);
-      widget.bind(events.FINISH, finishTrack);
-      boundEvents = [
-        events.PLAY_PROGRESS,
-        events.SEEK,
-        events.PLAY,
-        events.FINISH,
-      ];
-    }).catch(() => {
-      // The native player remains usable if its optional controller is blocked.
-    });
+    widget.bind(SOUNDCLOUD_EVENTS.PLAY_PROGRESS, onProgress);
+    widget.bind(SOUNDCLOUD_EVENTS.SEEK, onProgress);
+    widget.bind(SOUNDCLOUD_EVENTS.PLAY, onPlay);
+    widget.bind(SOUNDCLOUD_EVENTS.FINISH, finishTrack);
 
     return () => {
       teardown();
