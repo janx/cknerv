@@ -3,21 +3,15 @@ import type {
   ChainCensus,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
-import {
-  assetEcosystemVisualState,
-  deriveAssetEcosystemBuckets,
-} from '../../derives/assetEcosystem.derive';
-import { formatCkb, formatExactCkb } from './cellFormat';
+import { assetEcosystemVisualState } from '../../derives/assetEcosystem.derive';
+import { CLASS_MIX_COLORS, formatCkb, formatExactCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, COMPANION_OPACITY, STALE_OPACITY } from './hudTheme';
 import { ReadoutHeader, StatRow } from './primitives';
-import { chainLiveRow } from './cellPopulation.presentation';
-
-const CATEGORY_LABELS: Record<string, string> = {
-  dao: 'DAO',
-  tokens: 'TOKENS',
-  objects: 'OBJECTS',
-  other: 'OTHER',
-};
+import {
+  chainClassShares,
+  chainLiveRow,
+  formatPopulationCount,
+} from './cellPopulation.presentation';
 
 function formatCkbAmount(shannons: string): string {
   try {
@@ -35,24 +29,33 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-function shareLabel(bps: number): string {
-  const percent = bps / 100;
-  return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2).replace(/0$/, '')}%`;
-}
-
 /**
  * Everything true of the whole chain, and nothing true of this dashboard's
  * local slice — that slice is the STAGE CAPACITY panel's whole subject.
+ *
+ * It is a section of several readings, not one: the capacity the chain has
+ * sold, the knowledge standing in it, the validated live-Cell census, that
+ * census's class mix, and the biggest tenants. It was titled CHAIN CAPACITY
+ * after the first of them, and the title made the bar under the census read
+ * as a split of the count above it, when it was a split of the capacity two
+ * rows up — DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER 85%. True of the CKB
+ * and silent about the Cells: a token Cell holds close to the least a Cell
+ * can hold and a balance Cell holds some three hundred times that, so by
+ * capacity a hundred and forty thousand token and object Cells weighed a
+ * tenth of a percent. The section is CHAIN STATE now, and the bar splits the
+ * census's COUNT — DAO, TYPED, PLAIN — under the same law as STAGE·07's
+ * chain-mix row, so the one number never prints two ways.
  *
  * Two independent measurements meet here: the indexed asset-ecosystem record
  * and the validated Cell census. Each is exact at its own anchor. The section
  * header states the record's anchor once for every record row; the census row
  * carries its own anchor whenever it differs, because a count must never
- * inherit an anchor that is not its own. Either measurement can be missing;
- * the section renders when at least one exists, and renders nothing sooner
- * than a number it cannot prove.
+ * inherit an anchor that is not its own — and the bar, being the census's own
+ * partition, stands and dims with the census rather than with the index.
+ * Either measurement can be missing; the section renders when at least one
+ * exists, and renders nothing sooner than a number it cannot prove.
  */
-export default function ChainCapacityReadout({ source, record, census = null, censusStale = false, folded = false }: {
+export default function ChainStateReadout({ source, record, census = null, censusStale = false, folded = false }: {
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
   census?: ChainCensus | null;
@@ -66,13 +69,12 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   folded?: boolean;
 }) {
   const visualState = source && record ? assetEcosystemVisualState(source, record) : null;
-  const buckets = visualState ? deriveAssetEcosystemBuckets(record!) : null;
-  const usableRecord = visualState && buckets ? record! : null;
+  const usableRecord = visualState ? record! : null;
   if (!usableRecord && !census) return null;
 
   const stale = visualState === 'stale';
   // The same accent its two siblings wear, and for the same reason they wear
-  // it: CHAIN CAPACITY, TX HORIZON and ACTIVITY are three stacked sections of
+  // it: CHAIN STATE, TX HORIZON and ACTIVITY are three stacked sections of
   // one panel about the chain, and not one of them is reporting health. This
   // one opened in `nominal` — so of three identical headers, the top one had a
   // green lamp beside it and the two under it did not, which reads as a
@@ -80,6 +82,12 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
   const headerAnchor = usableRecord?.as_of ?? census!.as_of;
   const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
+  // The census's own partition, in the hues the stage-versus-chain rows wear
+  // for the same three classes. Empty when the census carries no proven
+  // partition: the bar is then absent, never a guess under the census's anchor.
+  const classes = chainClassShares(census)
+    .map((cls) => ({ ...cls, color: CLASS_MIX_COLORS[cls.key] }));
+  const classTotal = classes.reduce((sum, cls) => sum + cls.count, 0);
 
   if (folded) {
     // Header and the one count the section is read for. `LIVE n` rather than
@@ -88,9 +96,9 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
     // not derivable from another section's.
     return (
       <section
-        aria-label="Chain capacity"
-        data-chain-capacity
-        data-chain-capacity-folded="true"
+        aria-label="Chain state"
+        data-chain-state
+        data-chain-state-folded="true"
         data-asset-ecosystem-state={visualState ?? undefined}
         style={{
           marginTop: 6,
@@ -99,7 +107,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
         }}
       >
         <ReadoutHeader
-          title="CHAIN CAPACITY"
+          title="CHAIN STATE"
           meta={`${liveCells.value} LIVE · AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
           accent={accent}
           stale={stale}
@@ -111,8 +119,8 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
 
   return (
     <section
-      aria-label="Chain capacity"
-      data-chain-capacity
+      aria-label="Chain state"
+      data-chain-state
       data-asset-ecosystem-state={visualState ?? undefined}
       style={{
         marginTop: 10,
@@ -121,7 +129,7 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
       }}
     >
       <ReadoutHeader
-        title="CHAIN CAPACITY"
+        title="CHAIN STATE"
         meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
         accent={accent}
         stale={stale}
@@ -166,47 +174,54 @@ export default function ChainCapacityReadout({ source, record, census = null, ce
           {liveCells.value}
         </span>
       </div>
-      {usableRecord && buckets && buckets.length > 0 ? (
-        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? STALE_OPACITY : 1 }}>
-          <div
-            title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
-            style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}
-          >
-            {buckets.map((bucket) => bucket.shareBps > 0 ? (
+      {classes.length > 0 ? (
+        <div
+          data-chain-class-mix
+          // The census's partition, directly under the count it partitions,
+          // and dimmed with that row rather than with the indexed rows above:
+          // it is the census's own reading and shares the census's anchor and
+          // staleness. Exact counts on hover, the way every value on this rail
+          // keeps its figure on its tooltip; the legend carries the shares.
+          title={`${classes.map((cls) => `${cls.label} ${formatPopulationCount(cls.count)}`).join(' · ')} · OF ${formatPopulationCount(classTotal)} LIVE CELLS`}
+          style={{ marginTop: 6, opacity: liveCells.dim ? 0.6 : 1 }}
+        >
+          <div style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}>
+            {classes.map((cls) => cls.count > 0 ? (
               <span
-                key={bucket.category}
-                data-asset-capacity-category={bucket.category}
+                key={cls.key}
+                data-chain-class={cls.key}
                 style={{
-                  width: `${bucket.shareBps / 100}%`,
-                  // ⚠️ A BAR MAY NOT OMIT WHAT ITS LEGEND NAMES. The legend
-                  // prints `TOKENS 0.08% · OBJECTS 0.03%` and the bar drew
-                  // them 0.27 px and 0.10 px wide — invisible — so a reader
-                  // checking the legend against the bar found two of its four
-                  // names missing (report A, A-9). One pixel is the floor, the
-                  // same floor STAGE·07's mix bar has kept all along.
+                  width: `${(cls.count / classTotal) * 100}%`,
+                  // ⚠️ A BAR MAY NOT OMIT WHAT ITS LEGEND NAMES. The capacity
+                  // bar this replaced printed `TOKENS 0.08% · OBJECTS 0.03%`
+                  // and drew them 0.27 px and 0.10 px wide — invisible — so a
+                  // reader checking the legend against the bar found two of
+                  // its four names missing (report A, A-9). By count no class
+                  // is that thin today, and the floor stays for the day one
+                  // is: one pixel, the same floor STAGE·07's mix bar keeps.
                   minWidth: 1,
-                  background: bucket.color,
-                  boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
+                  background: cls.color,
+                  boxShadow: `0 0 5px ${rgba(cls.color, 0.28)}`,
                 }}
               />
             ) : null)}
           </div>
-          {/* Qualitative: four unrelated hues, so the hue IS the mapping and
+          {/* Qualitative: three unrelated hues, so the hue IS the mapping and
               the legend's NAME carries it. The share stays in the caption
               tier — a caption beside a key. */}
           <div
-            data-capacity-legend="qualitative"
+            data-class-legend="qualitative"
             style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}
           >
-            {buckets
-              .filter((bucket) => bucket.shareBps > 0)
-              .map((bucket, index) => (
-                <span key={bucket.category}>
+            {classes
+              .filter((cls) => cls.count > 0)
+              .map((cls, index) => (
+                <span key={cls.key}>
                   {index > 0 ? ' · ' : null}
-                  <span data-capacity-legend-name style={{ color: bucket.color }}>
-                    {CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()}
+                  <span data-class-legend-name style={{ color: cls.color }}>
+                    {cls.label}
                   </span>
-                  {` ${shareLabel(bucket.shareBps)}`}
+                  {` ${cls.text}`}
                 </span>
               ))}
           </div>

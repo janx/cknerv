@@ -163,7 +163,7 @@ describe('BlockchainReadout', () => {
     // appears only with a proven chain measurement, and the local slice
     // lives on the mesh rail as its own STAGE SAMPLE panel — never as a
     // section of this one.
-    expect(container.textContent).not.toContain('CHAIN CAPACITY');
+    expect(container.textContent).not.toContain('CHAIN STATE');
     expect(container.textContent).not.toContain('STAGE SAMPLE');
     expect(container.textContent).not.toContain('Interval');
     expect(container.textContent).not.toContain('NERVOS DAO');
@@ -278,13 +278,13 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     const canonicalAt = text.indexOf('Reorgs');
-    const chainCapacityAt = text.indexOf('CHAIN CAPACITY');
+    const chainStateAt = text.indexOf('CHAIN STATE');
     const horizonAt = text.indexOf('TX HORIZON');
     const activityAt = text.indexOf('ACTIVITY');
 
     expect(canonicalAt).toBeGreaterThanOrEqual(0);
-    expect(canonicalAt).toBeLessThan(chainCapacityAt);
-    expect(chainCapacityAt).toBeLessThan(horizonAt);
+    expect(canonicalAt).toBeLessThan(chainStateAt);
+    expect(chainStateAt).toBeLessThan(horizonAt);
     expect(horizonAt).toBeLessThan(activityAt);
     expect(text).not.toContain('STAGE SAMPLE');
     expect(text).not.toContain('NERVOS DAO');

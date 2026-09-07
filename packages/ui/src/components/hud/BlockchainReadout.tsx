@@ -13,7 +13,7 @@ import { HudPanel, PanelHeader, StatRow } from './primitives';
 import ActivityFeedReadout from './ActivityFeedReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
-import ChainCapacityReadout from './ChainCapacityReadout';
+import ChainStateReadout from './ChainStateReadout';
 import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -107,7 +107,7 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
       <StatRow label="Reorgs" valueColor={reorgLive ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
       {/* Chain truth only. The dashboard's local slice is a different scope
           and lives on the mesh rail as the STAGE CAPACITY panel. */}
-      <ChainCapacityReadout
+      <ChainStateReadout
         source={enrichmentSource}
         record={assetEcosystem}
         census={cellPopulation?.chainCensus ?? null}

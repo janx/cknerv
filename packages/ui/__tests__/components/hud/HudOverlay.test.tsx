@@ -1621,7 +1621,7 @@ describe('HudOverlay rail collapse', () => {
 
   it('keeps CKB\u00b701\u2019s own five rows through the collapse', () => {
     // The panel narrows and its three lower sections fold (see
-    // `ChainCapacityReadout.test.tsx`), but tip, epoch, progress, mempool and
+    // `ChainStateReadout.test.tsx`), but tip, epoch, progress, mempool and
     // reorgs are what CKB\u00b701 IS and none of them goes.
     const { container } = stage(1280);
     const chainPanel = container.querySelector('[data-hud-panel="chain"]') as HTMLElement;

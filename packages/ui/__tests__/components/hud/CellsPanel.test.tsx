@@ -35,7 +35,7 @@ describe('CellsPanel', () => {
     expect(t).toContain('28,431');    // total observed
     expect(t).toContain('9,227');     // dead
     expect(t).not.toContain('STAGE CAPACITY');
-    expect(t).not.toContain('CHAIN CAPACITY');
+    expect(t).not.toContain('CHAIN STATE');
     expect(t).not.toContain('1.21 GB');
     expect(container.querySelector('[data-cell-capacity-mode]')).toBeNull();
   });

@@ -321,18 +321,13 @@ export const ASSET_COLORS: Record<string, string> = {
   object: CONTENT_BANDS.artifact, identity: CONTENT_BANDS.identity,
 };
 
-/** The census's three-class partition, in the chain-capacity bar's category
- *  hues (DAO, token-like, bare CKB) so the stage-versus-chain mix bars and
- *  the whole-chain capacity bar read as one color system —
- *  `assetEcosystem.derive.ts` reads these very values rather than keeping a
- *  second copy that could drift.
- *
- *  It said that while it was three-quarters true: the three named classes read
- *  from here and the FALLBACK — the branch that fires for a category nothing
- *  in this table names — spelled a bright cyan of its own, so the ONE bucket
- *  the bar knows least about was the loudest thing in it. It takes
- *  `CONTENT_BANDS.unlisted` now, with the rest of the house's unnamed
- *  families. */
+/** The census's three-class partition — DAO, typed, bare CKB — worn by every
+ *  bar that splits Cells by class: STAGE·07's stage-versus-chain rows and
+ *  CHAIN STATE's own class bar, which reads these very values rather than
+ *  keeping a second copy that could drift. The chain section used to draw the
+ *  index's capacity split in these hues, with a bright cyan of its own for
+ *  the one bucket it could not name; that bar is gone, and the count bar that
+ *  replaced it has no unnamed bucket to paint. */
 export const CLASS_MIX_COLORS = {
   dao: CONTENT_BANDS.value, typed: CONTENT_BANDS.token, plain: CONTENT_BANDS.plain,
 } as const;

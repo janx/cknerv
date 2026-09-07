@@ -418,12 +418,18 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-Capacity is split by scope across two surfaces. **CHAIN CAPACITY** is a
-fused readout inside `COMMON KNOWLEDGE BASE`, in the same header system as
-`TX HORIZON` and `ACTIVITY`: everything true of the whole chain — indexed
-live capacity, knowledge bytes, the validated live-Cell census, category
-shares, top assets — under one stated anchor, with the census row carrying
-its own anchor whenever it differs. **STAGE SAMPLE** (`STAGE·07`) is an
+Chain-scope and stage-scope readings live on two surfaces. **CHAIN STATE**
+is a fused readout inside `COMMON KNOWLEDGE BASE`, in the same header system
+as `TX HORIZON` and `ACTIVITY`: everything true of the whole chain — indexed
+live capacity, knowledge bytes, the validated live-Cell census with its
+`DAO · TYPED · PLAIN` mix split by Cell COUNT, top assets — under one stated
+anchor, with the census row and its mix bar carrying the census's own anchor
+and staleness whenever those differ from the record's. The record's
+basis-point capacity shares are validated on the wire but not drawn: split by
+capacity the chain reads DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER 85%,
+which is true of the CKB and says nothing about the Cells — a token Cell holds
+close to the minimum capacity, a balance Cell some three hundred times that —
+and under a Cell count it read as a Cell mix. **STAGE SAMPLE** (`STAGE·07`) is an
 independent panel holding everything true of this dashboard's local slice:
 retained capacity, the rendered→retained→observed population funnel, the
 stage-versus-chain composition disclosure, the asset/lock taxonomy, and the

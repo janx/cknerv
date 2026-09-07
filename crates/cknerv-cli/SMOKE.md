@@ -350,9 +350,10 @@ With a local ckbadger service configured:
       fold away, and the transaction horizon folds into a header-only
       `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does not overlap
       `PULSE`
-- [ ] `CELL MESH` replaces its retained-capacity detail with a labeled
-      `INDEXED CHAIN CAPACITY` bar and bounded top-asset list, without showing
-      duplicate capacity views
+- [ ] `COMMON KNOWLEDGE BASE` carries a `CHAIN STATE` section: live capacity,
+      knowledge, the validated live-Cell census with a `DAO · TYPED · PLAIN`
+      bar split by Cell COUNT (never by capacity), and a bounded top-asset
+      list, without duplicate capacity views
 - [ ] `PEER MESH` appends the reach bar and the country and client-version
       strips as plain rows of the panel — no `NETWORK ATLAS` heading, no strip
       captioned as a sample, the bar's own total in its caption rather than the

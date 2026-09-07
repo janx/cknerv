@@ -107,10 +107,6 @@ import {
   ACTIVITY_CATEGORY_COLORS,
   ACTIVITY_UNLISTED_COLOR,
 } from '../../../src/derives/activityFeed.derive';
-import {
-  ECOSYSTEM_CATEGORY_COLORS,
-  ECOSYSTEM_UNLISTED_COLOR,
-} from '../../../src/derives/assetEcosystem.derive';
 import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { replayPresentation } from '../../../src/components/hud/replayPresentation';
 import { streamHealthPresentation } from '../../../src/components/hud/StreamHealthBanner';
@@ -164,8 +160,9 @@ const PALETTE_SOURCE = 'hudTheme.ts';
  *  `HUD_COLORS`: `CONTENT_BANDS` lives in `cellFormat.ts` and the stage's own
  *  hexes live in `visualPalette.ts`, so banning a band's value would have gone
  *  red on the table that defines it. A palette is a palette wherever it is
- *  kept — and three of them are kept in `derives/`, which is exactly why the
- *  reserve matrix found four drifted palettes there at once.
+ *  kept — and two of them are kept in `derives/`, which is exactly why the
+ *  reserve matrix found four drifted palettes there at once (a third, the
+ *  chain's capacity-bar table, retired with that bar).
  *
  *  Membership is not free and the pin below is what charges for it: a file may
  *  only be here if this oracle IMPORTS a colour table out of it. That is the
@@ -182,7 +179,6 @@ const PALETTE_SOURCES: ReadonlySet<string> = new Set([
   'cellFormat.ts',
   'visualPalette.ts',
   'activityFeed.derive.ts',
-  'assetEcosystem.derive.ts',
   'scriptFamilies.derive.ts',
 ]);
 
@@ -226,8 +222,6 @@ const PALETTE_TOKENS: ReadonlyArray<{ token: string; hex: string }> = [
   { token: 'FACET_GLYPH_COLOR', hex: FACET_GLYPH_COLOR },
   ...Object.entries(ACTIVITY_CATEGORY_COLORS).map(([key, hex]) => ({ token: `ACTIVITY_CATEGORY_COLORS.${key}`, hex })),
   { token: 'ACTIVITY_UNLISTED_COLOR', hex: ACTIVITY_UNLISTED_COLOR },
-  ...Object.entries(ECOSYSTEM_CATEGORY_COLORS).map(([key, hex]) => ({ token: `ECOSYSTEM_CATEGORY_COLORS.${key}`, hex })),
-  { token: 'ECOSYSTEM_UNLISTED_COLOR', hex: ECOSYSTEM_UNLISTED_COLOR },
   ...Object.entries(SCRIPT_FAMILY_COLORS).map(([key, hex]) => ({ token: `SCRIPT_FAMILY_COLORS.${key}`, hex })),
   ...Object.entries(CHAIN_ANCHOR_HEX).map(([key, hex]) => ({ token: `CHAIN_ANCHOR_HEX.${key}`, hex })),
   ...Object.entries(PEER_NETWORK_HEX).map(([key, hex]) => ({ token: `PEER_NETWORK_HEX.${key}`, hex })),
@@ -718,7 +712,7 @@ describe('hud discipline', () => {
     expect(unpaid).toEqual([]);
     // …and the pin under the pin: a reader that had stopped finding import
     // clauses would pass the line above by having nothing to complain about.
-    expect(PALETTE_SOURCES.size).toBeGreaterThanOrEqual(6);
+    expect(PALETTE_SOURCES.size).toBeGreaterThanOrEqual(5);
     expect(imported.size).toBeGreaterThanOrEqual(8);
     expect(imported).toContain('hudTheme');
   });
@@ -2149,13 +2143,15 @@ const QUALITATIVE_SLOTS: Readonly<Record<string, string>> = Object.fromEntries(
 /** Every palette that colours DATA rather than state, by the surface it
  *  paints: a lock family, an asset family, a class of the census, a byte
  *  segment, a rate of cells being spent, an activity the chain performed, a
- *  slice of the whole chain's capacity, a bucket of the peer atlas.
+ *  bucket of the peer atlas.
  *
- *  The last three live in `derives/`, and for the life of that directory none
- *  of them was checked by anything. Each drifted the way an unchecked palette
- *  does: the feed disagreed with the bands about five words it shares with
- *  them, the ecosystem bar painted its unnameable bucket in the brightest hue
- *  on the panel, and the atlas ramp opened on a near-chrome orange. A category
+ *  The feed and the atlas ramp live in `derives/`, and for the life of that
+ *  directory nothing there was checked by anything. Each drifted the way an
+ *  unchecked palette does: the feed disagreed with the bands about five words
+ *  it shares with them, the atlas ramp opened on a near-chrome orange, and the
+ *  chain's capacity bar — retired since for a count bar in the census's own
+ *  class hues — painted its unnameable bucket in the brightest hue on the
+ *  panel. A category
  *  is a category wherever it is computed — the matrix does not care which
  *  directory a colour was decided in, and neither does a reader looking at the
  *  bar. */
@@ -2167,9 +2163,10 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
   metabolic: METABOLIC_COLORS,
   // The fallback is folded in as a member rather than left out of the matrix:
   // a category nobody could name is still a category the bar paints, and it was
-  // the single worst offender on both of these surfaces.
+  // the single worst offender here and on the chain's capacity bar (since
+  // retired for a count bar in the census's own class hues, which has no
+  // unnamed bucket to paint).
   activity: { ...ACTIVITY_CATEGORY_COLORS, unlisted: ACTIVITY_UNLISTED_COLOR },
-  ecosystem: { ...ECOSYSTEM_CATEGORY_COLORS, unlisted: ECOSYSTEM_UNLISTED_COLOR },
   atlasBucket: QUALITATIVE_SLOTS,
   // The other bar that reads the ramp, and read as the bar a READER sees rather
   // than as the two tables it is assembled from: six rank slots, then the
@@ -2979,7 +2976,7 @@ describe('chrome is the frame, not the reading', () => {
     // was `nominal`, a health tone, so of three identical headers in one panel
     // the top one appeared to be reporting that it was well and the two under
     // it did not. None of the three is reporting anything of the kind.
-    const sections = ['ChainCapacityReadout.tsx', 'TransactionHorizonReadout.tsx', 'ActivityFeedReadout.tsx'];
+    const sections = ['ChainStateReadout.tsx', 'TransactionHorizonReadout.tsx', 'ActivityFeedReadout.tsx'];
     const accents = sections.map((name) => {
       const source = SOURCES.find((entry) => entry.name === name);
       expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
@@ -4562,7 +4559,7 @@ describe('one alpha for a rule', () => {
 
     // The scope tag is the same role in Latin — a qualifier beside a count —
     // and it wore 0.8 in the two files that draw one.
-    for (const name of ['ChainCapacityReadout.tsx', 'StageCapacityPanel.tsx']) {
+    for (const name of ['ChainStateReadout.tsx', 'StageCapacityPanel.tsx']) {
       const source = SOURCES.find((item) => item.name === name);
       expect(code(source?.text ?? ''), `${name} lost its scope tag`)
         .toContain("textTransform: 'uppercase'");
@@ -5278,7 +5275,7 @@ describe('two names are never one colour', () => {
       'ActivityFeedReadout.tsx': 'stale={stale}',
       'CellByteBudget.tsx': 'OBSERVED',
       'CellDetailPanel.tsx': "proof.read ? '◆' : '◇'",
-      'ChainCapacityReadout.tsx': 'stale={stale}',
+      'ChainStateReadout.tsx': 'stale={stale}',
       'ConsensusIdentityPlate.tsx': 'SPENT INPUTS',
       'DaoStateReadout.tsx': '· STALE',
       'NetworkAtlasReadout.tsx': 'ATLAS STALE',
@@ -6439,7 +6436,8 @@ describe('freshness speaks only when it is wrong', () => {
 // promise: what it names is in the bar, and what it prints adds up to the
 // caption. Two things broke that promise.
 //
-// A segment drawn from a share can round to nothing. CHAIN CAPACITY named
+// A segment drawn from a share can round to nothing. The chain section (CHAIN
+// CAPACITY then, split by capacity; CHAIN STATE now, split by Cell count) named
 // `TOKENS 0.08% · OBJECTS 0.03%` and drew them 0.27 px and 0.10 px wide, so
 // two of its four names were simply not there (report A, A-9). Every
 // proportional segment now has a floor — and the floor is for a segment that
@@ -6484,7 +6482,7 @@ describe('a bar and the legend that names it', () => {
     expect([...drawers].sort()).toEqual([
       'ActivityFeedReadout.tsx',
       'CellByteBudget.tsx',
-      'ChainCapacityReadout.tsx',
+      'ChainStateReadout.tsx',
       'NetworkAtlasReadout.tsx',
       'NetworkPanel.tsx',
       'StageCapacityPanel.tsx',
@@ -6518,7 +6516,7 @@ describe('a bar and the legend that names it', () => {
     expect(offenders).toEqual([]);
     expect(declared.sort()).toEqual([
       'ActivityFeedReadout.tsx qualitative',
-      'ChainCapacityReadout.tsx qualitative',
+      'ChainStateReadout.tsx qualitative',
       'NetworkAtlasReadout.tsx qualitative',
       'StageCapacityPanel.tsx qualitative',
     ]);
