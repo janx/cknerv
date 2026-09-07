@@ -246,6 +246,17 @@ impl ServerState {
         self.mutation_tx.subscribe()
     }
 
+    /// How many live subscribers the mutation broadcast has. Test-only, and
+    /// it exists for one question the outside of a stream handler cannot
+    /// otherwise ask: whether the handler has RETURNED. A stream holds its
+    /// receiver for exactly as long as its task runs, so this count falling
+    /// back to what it was before a client connected is the handler letting
+    /// go — of the socket, the subscription, and everything it had cached.
+    #[cfg(test)]
+    pub(crate) fn mutation_subscriber_count(&self) -> usize {
+        self.mutation_tx.receiver_count()
+    }
+
     pub(crate) fn subscribe_boot_replay_completion(&self) -> watch::Receiver<bool> {
         self.boot_replay_complete_tx.subscribe()
     }

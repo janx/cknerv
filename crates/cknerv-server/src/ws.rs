@@ -272,6 +272,12 @@ pub async fn handle_chain_stream(
         StreamAction::NothingToReplay => {}
     }
 
+    // Catch-up is over, so let go of the ring's contents. The snapshot is up
+    // to `MUTATION_RING_CAP` reference-counted entries, each memoizing its own
+    // wire text; holding it for the life of the connection would keep entries
+    // the ring itself has long since evicted alive once per attached client.
+    drop(ring_snapshot);
+
     // Live loop with dedupe. Application heartbeats let browser clients
     // distinguish a quiet chain from a half-open transport.
     let mut heartbeat = heartbeat_interval();
@@ -310,6 +316,17 @@ pub async fn handle_chain_stream(
                     // with a fresh `since`.
                 }
                 Err(RecvError::Closed) => break,
+            },
+            // Reading the socket is how a departure is heard. Nothing a
+            // client sends is part of this protocol, but a handler that never
+            // read one never saw a Close either: it learned the client was
+            // gone only when a send failed, which on a quiet chain is the next
+            // heartbeat, five seconds later, with the subscription and the
+            // task held open until then. Ping/Pong are answered by tungstenite
+            // as a side effect of this read.
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
             }
         }
     }
@@ -425,6 +442,12 @@ pub async fn handle_projection_stream(
         }
     }
 
+    // Same rule as the entity stream, and the payloads here are the larger
+    // ones: a display delta carries hundreds of cells, and this snapshot can
+    // hold `PROJECTION_DELTA_RING_CAP` of them. Once the catch-up frame is
+    // out, the live loop needs none of it.
+    drop(ring_snapshot);
+
     let mut heartbeat = heartbeat_interval();
     loop {
         tokio::select! {
@@ -462,6 +485,13 @@ pub async fn handle_projection_stream(
                     }
                 }
                 Err(RecvError::Closed) => break,
+            },
+            // The same ear as the entity stream: without it a closed tab kept
+            // this task, its subscription and its cached snapshot bytes alive
+            // until the next heartbeat failed to send.
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
             }
         }
     }
@@ -942,5 +972,144 @@ mod tests {
         assert_eq!(parsed["mutations"][0]["revision"], 1);
         assert_eq!(parsed["mutations"][0]["mutation"]["type"], "block_mined");
         assert_eq!(parsed["mutations"][0]["mutation"]["hash"], "0xblock7");
+    }
+
+    /// Serve the real router on a real loopback port, the way a browser meets
+    /// it — the two tests below are about what happens on the wire, and a
+    /// handler called directly has no socket to close.
+    async fn serve(router: axum::Router) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a loopback port");
+        let addr = listener.local_addr().expect("the bound address");
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        (addr, task)
+    }
+
+    /// A tab that closes must be gone when it says so. The handler used to
+    /// never read its socket, so the Close frame sat there unread and the
+    /// departure was noticed only when the next send failed — on a quiet
+    /// chain, the heartbeat five seconds later, with the task, its broadcast
+    /// subscription and everything it had cached alive until then.
+    ///
+    /// The oracle is the subscriber count, which falls back only when the
+    /// handler returns, and the bound is what makes the test mean anything:
+    /// one second against a five-second [`HEARTBEAT_INTERVAL`], so a pass
+    /// cannot be the old failed-send path arriving late.
+    #[tokio::test]
+    async fn a_closing_client_is_let_go_by_the_entity_stream_before_the_next_heartbeat() {
+        use futures_util::{SinkExt, StreamExt};
+
+        let state = Arc::new(crate::state::ServerState::new());
+        // The sender has to outlive the connection: every handler treats a
+        // dropped shutdown channel as a shutdown.
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (addr, server) = serve(crate::routes::build_router(
+            state.clone(),
+            shutdown_rx,
+            None,
+            None,
+        ))
+        .await;
+
+        let idle = state.mutation_subscriber_count();
+        // A cursor past this process's revision is answered with a snapshot,
+        // so the first frame arrives without waiting for a chain that never
+        // moves here.
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+            "ws://{addr}/api/entities/chain/stream?since=1"
+        ))
+        .await
+        .expect("the stream accepts the upgrade");
+        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("the stream answered the catch-up request")
+            .expect("the stream stayed open")
+            .expect("the frame is readable");
+        let frame: serde_json::Value =
+            serde_json::from_str(frame.to_text().expect("the frame is text"))
+                .expect("the frame is JSON");
+        assert_eq!(frame["kind"], "snapshot", "first frame: {frame}");
+        assert_eq!(
+            state.mutation_subscriber_count(),
+            idle + 1,
+            "the live handler holds a subscription while it runs"
+        );
+
+        // A Close frame and nothing else: the client stays connected at the
+        // TCP level, so a handler that hears this at all heard it by reading.
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .expect("the close frame goes out");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while state.mutation_subscriber_count() != idle {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the handler was still subscribed a second after the client closed");
+
+        server.abort();
+    }
+
+    /// The projection stream's twin. Its runtime hands out no subscriber
+    /// count, so the oracle is the other end of the same event: the handler
+    /// breaks on the Close and drops the socket, which the client sees as the
+    /// connection ending. A socket still waiting a second later belongs to a
+    /// handler that never read one.
+    #[tokio::test]
+    async fn a_closing_client_is_let_go_by_the_projection_stream_before_the_next_heartbeat() {
+        use futures_util::{SinkExt, StreamExt};
+
+        let state = Arc::new(crate::state::ServerState::new());
+        state
+            .projections
+            .write()
+            .unwrap()
+            .register(FrameFixtureProjection);
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (addr, server) = serve(crate::routes::build_router(
+            state.clone(),
+            shutdown_rx,
+            None,
+            None,
+        ))
+        .await;
+
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+            "ws://{addr}/api/projections/frames/stream?since=1"
+        ))
+        .await
+        .expect("the stream accepts the upgrade");
+        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .expect("the stream answered the catch-up request")
+            .expect("the stream stayed open")
+            .expect("the frame is readable");
+        let frame: serde_json::Value =
+            serde_json::from_str(frame.to_text().expect("the frame is text"))
+                .expect("the frame is JSON");
+        assert_eq!(frame["kind"], "snapshot", "first frame: {frame}");
+
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .expect("the close frame goes out");
+
+        let answer = tokio::time::timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("the stream was still holding the connection a second after the close");
+        match answer {
+            // The close reply, the stream ending, or the connection dropping
+            // under it — all three are the handler having acted on the frame.
+            None | Some(Err(_)) | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => {}
+            Some(Ok(other)) => panic!("the stream kept talking past the close: {other:?}"),
+        }
+
+        server.abort();
     }
 }
