@@ -1593,10 +1593,10 @@ The particle multiplier can lower simultaneous active-pulse admission under
 saturation. It may omit bounded transient work, but it cannot reroute an
 admitted pulse or change canonical state.
 
-Several raster passes carry a device-pixel ceiling so a high-DPR buffer or a
-close pose cannot spend fill without bound. Each is byte-identical at its
-reference point, so the reference-DPR (1×) look and the default pose are
-unchanged:
+Several raster passes carry a ceiling — on a footprint in device pixels, or on
+a count — so a high-DPR buffer or a close pose cannot spend fill without bound.
+Each is byte-identical at its reference point, so the reference-DPR (1×) look
+and the overview pose are unchanged:
 
 - the population halo sizes its beads and backbone width at a reference-DPR
   fill budget (`populationFieldFillPixelRatio`, reference DPR 1), so High at
@@ -1608,6 +1608,24 @@ unchanged:
   while the beads and the capsule backbone keep the whole of it. That prefix is
   a sub-prefix of the point prefix, so no strand hangs off an undrawn bead, and
   a dense buffer spends filament density rather than reach or level;
+- the same halo folds the POINT prefix itself toward the detail camera
+  (`populationClosePosePrefixMul`, `POPULATION_CLOSE_POSE_PREFIX_FLOOR` 0.4,
+  tagged `⟨close pose⟩` in `qualityPresets.ts` — `⟨D-3⟩` in that file is the
+  earlier review's fill budget). The multiplier is exactly 1 at the overview
+  pose and travels the straight line to the floor as `cellDetailViewFocus`
+  saturates — the smoothstep of camera-to-target distance between 148 and 82
+  world units that ⟨D-10 · knob b⟩ already reads — so a dolly travels along the
+  curve rather than stepping onto a level, and an unwired or non-finite focus
+  is the overview. A closer pose adds no bead and magnifies every one that is
+  there, so what the fold spends is grain: the field keeps its whole envelope
+  (a prefix of the placement is a complete thinner field), and sprite size,
+  taper, emission and the knob's own thread level are untouched — the sprite
+  still rides the tier cap alone. Measured 2026-09-06, the halo was 5.0 of the
+  7.6 ms scoped pass at the default pose and 8–10 ms at a dolly (k 16–17 ms·GHz,
+  43 fps at 1 GHz). **The halo's three cost laws multiply on one axis in a fixed
+  order** — tier (`populationCapMul`), then pose, then the dense-buffer hairline
+  prefix — and each stage is a prefix of the one before it, so the hairlines are
+  a sub-prefix of the folded bead prefix and are never folded twice;
 - the Cell body sprite caps at `CELL_BODY_MAX_POINT_PX` (256 device px), the
   halo points conserve light on both sides of their existing CSS-pixel ceiling,
   and a measured peer's halo rolls its angular size off below
@@ -1619,9 +1637,14 @@ unchanged:
   and a 2× buffer and a tier's `maxDpr` step leaves the fold unchanged; its
   march decision (whether a mark lenses at all) is therefore display-independent.
 
-These are fill ceilings on quality-owned raster, not membership or nerve
-changes: they conserve the light they clamp and never touch AUTO membership,
-the passive edge budget, or the four-sample curve geometry (§15.4).
+These are ceilings on quality-owned raster, not membership or nerve changes.
+A ceiling that clamps a SIZE dims the light it clamps, so the resting quantity
+is conserved; a ceiling that clamps a COUNT — the halo's prefix chain — spends
+density inside an unchanged envelope instead, which is why every stage of it is
+a prefix and none is a threshold, a cull or a level. None of them touches AUTO
+membership, the passive edge budget, or the four-sample curve geometry (§15.4),
+and the halo's prefix chain is the one place where a quality lever, the camera
+and the buffer meet — they meet by multiplying, never by overriding.
 
 Before the first Canvas mount, AUTO estimates the drawing-buffer load High
 would request. It begins at High below 8 million pixels, Med from 8 million,
@@ -1730,6 +1753,11 @@ has.
 | Default active pulses | 256 before quality multiplier | `nerve/NeuralNetwork.tsx` |
 | Spike object pool | 1,024 | `nerve/NeuralNetwork.tsx` |
 | Planned pulses per link / batch | 6 / 128 | `nerve/pulseRunner.ts`, `nerve/pulseBatch.ts` |
+| Heavy main-thread work per frame | 12 ms shared by the plan slice, the fabric drain and one bridge step, charged per precedence, at most 3 consecutive deferrals | `nerve/frameBudget.ts` |
+| Live-plan slice | 12 % of the last frame interval, 2 ms floor, at least one step | `nerve/livePulseQueue.ts` |
+| Fabric landing drain | 25 % of the last frame interval, 3 ms floor, 256-edge grow chunks | `nerve/fabricLandingQueue.ts` |
+| Origin entry grid build | 2,048 graph nodes a step | `geometry/originEntry.ts` |
+| Block-frame gauge ring | 32 landings, with the maxima kept past it | `nerve/blockFrameStats.ts` |
 | Recent evidence links | 2,048 by default | `@cknerv/cache` `cellsReducer.ts` |
 | Live pulse-link ring | 128 by default | `@cknerv/cache` `cellsReducer.ts` |
 | Canonical rewrite echo | up to 50,000 records in one point draw | `components/CanonicalRewriteEcho.tsx` |
@@ -1781,18 +1809,89 @@ current staged structure.
   as the edges that entered, the keys that left and the merged list's values.
   A whole rebuild is the fallback for a broken generation chain, not the
   steady state.
+- **A block lands as three bounded pieces, never as one task.** A landing used
+  to swap the graph AND apply every fabric stroke that swap implied inside one
+  worker-response microtask, while the bridge class re-selected its hosts inside
+  the React commit that published the new version: measured over 30 blocks on a
+  12,000-member stage, a 34.5 ms landing task beside a 33.3 ms commit, inside a
+  50–83 ms block frame. The three pieces are:
+  1. **the landing task** — the graph swap and the topology commit alone (the
+     worker response applied in place, the version bump, the passive selection,
+     one trunk-tier threshold for the whole selection). It calls no fabric
+     handle and translates no edge key, so it is O(the patch): `landingMs` max
+     34.5 → 11.2 ms on a quiet window, 31–46 → 18–20 under a throttle trough;
+  2. **the fabric landing queue** (`nerve/fabricLandingQueue.ts`) — every kill,
+     grow, stray prune and full reconcile the build implies. The landing
+     enqueues ONE O(1) item holding references; later frames drain it in strict
+     FIFO order under a per-frame wall budget (`fabricLandingBudgetMs`: a
+     quarter of the last frame interval, `FABRIC_LANDING_BUDGET_MS` 3 ms floor,
+     always at least one step), kills before grows within a build so a grow
+     cannot revive a dying edge, grows in `FABRIC_LANDING_GROW_CHUNK` 256-edge
+     chunks. The edge-key translation runs at DRAIN time, not at landing time,
+     so a stroke's `bornAt` is the clock of the frame it enters on rather than a
+     clock already in the past. The queue publishes `fabricLandedVersionRef`
+     only when an item COMPLETES, and a remount drops what is queued, because
+     every queued delta patches a base the rehydrate has replaced;
+  3. **the bridge frame** (`nerve/bridgeSchedule.ts`) — the React commit arms a
+     slot (two ref writes) and the body runs on a frame, and only on the first
+     frame where the fabric of its own build has landed (`bridgeRunDecision`:
+     `landedVersion >= pending.version`). The class picks hosts by DRAWN fabric
+     degree, so selecting inside the commit that publishes the version read a
+     fabric that was provably behind. The slot carries an arm SERIAL rather than
+     a version, because a re-anchored halo placement re-selects at the same
+     version and would otherwise look like a build that had already run; a
+     superseded arm is replaced, not queued, and loses nothing, since the body
+     reads the registry and the drawn fabric at RUN time.
+- **The bridge body is itself three steps, one a frame** — host sync, selection,
+  stroke reconcile (`BRIDGE_STEP_ESTIMATE_MS` 6 / 15 / 3) — because moving a
+  33 ms body out of the React commit and into one frame is not moving it out of
+  the frame: measured as a frame body it was p50 19.7 / max 33.2 ms, and as
+  steps `bridgeStepMaxMs` max 20.7–27.3. The anchor a build selected against is
+  written by the RECONCILE step, not the selection, so a sequence a newer arm
+  replaces between the two cannot make the next build's host-sync skip fire
+  against a selection that never reached a stroke; the strokes the reconcile
+  moves still reach the admission pass on that same frame. A restart carries the
+  spend, so the build that finishes owns what the class paid getting there.
+- The bridge layer's host registry decides whether a build changed anything
+  its selection reads: an unchanged host set runs no selection, and a changed
+  one writes only the strokes that moved — a birth into a parked hole or the
+  end of the prefix, a death retracting in its own span — with the full walk
+  kept for the knob repaint and an allocation overflow.
+- **One heavy-work ledger a frame arbitrates what survives that split**
+  (`nerve/frameBudget.ts`). The owner's priority −1 frame opens it
+  (`beginFrameBudget`); the fabric drain, a bridge step and the live-plan slice
+  each ask before starting and report what they spent, against
+  `FRAME_HEAVY_BUDGET_MS` 12 — a vsync less the frame's ordinary work. The
+  charge is per PRECEDENCE and not one running total: the plan slice ranks
+  first because it alone carries a departure deadline, the drain second, a
+  bridge step last, and a consumer is charged against its own rank and every
+  rank above it. The three do not ASK in that order — the drain rides the
+  owner's priority −1 frame and asks first, a bridge step rides a child's sim
+  frame, the plan slice asks last — so one running total would have let the
+  drain and the bridge spend the plan out of its own frame and raise
+  `forcedByDeadline`. The first heavy grain of a frame always starts whatever it
+  costs (the selection's own estimate exceeds the budget), and a consumer held
+  `MAX_DEFER_FRAMES` 3 frames in a row runs on the fourth: a deferral means
+  "not on a frame that is already busy", never "never". In practice the bridge
+  step is the only one that yields. The ledger is a module singleton with no
+  owner-independent reset, so any scene mounting a consumer without
+  `NeuralNetwork`'s priority −1 frame must call `beginFrameBudget` once a frame
+  or that consumer reads one endless frame and holds itself.
 - Live route planning is sliced across frames (§9.1): a link batch opens the
   instant its delta arrives and its searches run from a FIFO queue on an
   epoch-stamped typed-array scratch under a wall-relative budget (12 % of the
   last frame interval, a 2 ms floor), at least one step a frame. A batch past
   its departure margin is planned under pressure but still yields to the budget,
   deferring its remainder to the next slice rather than draining a whole batch
-  in one frame — no pulse is dropped.
-- The bridge layer's host registry decides whether a build changed anything
-  its selection reads: an unchanged host set runs no selection, and a changed
-  one writes only the strokes that moved — a birth into a parked hole or the
-  end of the prefix, a death retracting in its own span — with the full walk
-  kept for the knob repaint and an allocation overflow.
+  in one frame — no pulse is dropped. A budget spent BETWEEN steps costs the
+  budget plus exactly one grain, so the grain is the tail: a link plans one
+  ORIGIN a step and a dark block rescues one CANDIDATE a step, and the batch's
+  stage-wide entry grid — the one grain that is not a route search — is built at
+  `ORIGIN_ENTRY_BUILD_QUANTUM` nodes a step, with no reader ever handed a
+  partial grid. That last split is a live reading rather than a guess: the pair
+  `maxStepKind` / `maxStepCold` named the 34–47 ms tail `grid`, never cold, with
+  `routeCompactions` 0 over every window — so it was neither the router's
+  neighbour cache nor a route search, and the grid was the piece to chunk.
 - Near-identity admission runs behind a bounding-sphere gate (§7.4): while
   the whole field is beyond the admission radius no spatial index is built or
   refreshed, and inside it a flat typed grid is rebuilt lazily per field
@@ -1823,7 +1922,20 @@ current staged structure.
   count, pick-size epoch, detail epoch, viewport, projection — allocates
   nothing when it does, budgets camera drift against its own envelope, and
   suspends hover probes while the camera is in motion: a drag, the damping
-  tail, or a route flight (§7.5, §11.1).
+  tail, or a route flight (§7.5, §11.1). Two of those inputs no longer cost a
+  whole re-projection. A DETAIL-epoch bump patches instead: the near set that
+  crosses the detail line is capped at twelve identities, so the picker diffs
+  one byte a slot, re-projects only the crossed slots through the index's own
+  snapshot and writes their radius into the bucket their centre already put
+  them in — a repair that would MOVE an entry, or a diff past
+  `CELL_PICK_DETAIL_PATCH_LIMIT`, still hands the raycast back to a rebuild.
+  And a stale camera POSE (`camera`, `spin`) inside the motion window marks the
+  index without re-projecting it, the first at-rest raycast paying for it once,
+  because the drift envelope already bounds that error in pixels. Membership,
+  the coordinate system and `pointerdown` never take that trade (§7.5). Live, a
+  3 s hover tail over the dense core fell from 28 rebuilds to 1 rebuild and 31
+  patches, with no long task left in the tail. The gesture-start press is
+  unchanged by design and still costs its rebuild.
 - Adaptive quality never samples a motion window: frames inside a held
   gesture, the damping tail or a route flight are dropped from the sample the
   way hidden-tab and replay frames are (§13).
@@ -1833,7 +1945,12 @@ current staged structure.
   `trunkTierEdges` on `__fabricStats()`) and the live-plan gauges
   `forcedByDeadline`, `maxStepMs`, `maxStepKind` and `maxStepCold` (on
   `__pulseStats()`), which name the block-churn root and the plan tail — and
-  which grain the tail is — without a profiler attached.
+  which grain the tail is — without a profiler attached. It also includes the
+  block-frame gauge `__blockFrameStats()`: the three pieces of a landing are
+  main-thread tasks a release build otherwise gives no reading of at all, and
+  the landing split, the bridge steps and the frame ledger above were each
+  decided against a number this gauge published rather than against a profile
+  taken by hand.
 
 ### 15.2 GPU strategy
 
@@ -1996,9 +2113,13 @@ test (the old output against the new on realistic input — the same pixels,
 picks, routes and selections) and a gate test that reads the counter proving
 the skipped work was skipped. The counters are the ones the runbook reads
 (§19.5): `__fabricStats().bridge` and `.topology`, `__cellPickStats()`,
-`__colonyStats()`, `__uploadStats()`, `__pulseStats()`, and inside the
-package the modules behind them (§21). A change that silently re-enables the
-work then fails a test rather than a review.
+`__colonyStats()`, `__uploadStats()`, `__pulseStats()`, `__blockFrameStats()`,
+and inside the package the modules behind them (§21). A change that silently
+re-enables the work then fails a test rather than a review. Where the win is
+main-thread time rather than skipped work, the gate reads a gauge and not a
+profile: a task that must not exceed a bound is a number a release build
+publishes, so the equivalence test pins the ORDER and the counts and the gauge
+pins the cost.
 
 ### 19.2 Browser matrix
 
@@ -2053,10 +2174,13 @@ captures, name the changed invariant, and verify every affected quality preset.
   the probe's frame and main-thread samples (§19.5).
 - Read the always-on counters around the same window — `__fabricStats()`
   with its `.bridge` and `.topology` blocks, `__uploadStats()`,
-  `__colonyStats()`, `__cellPickStats()`, `__pulseStats()` — so a saving is
-  attributed to a skip that actually happened, not inferred from a frame
-  time.
-- Prefer multiple steady samples or medians.
+  `__colonyStats()`, `__cellPickStats()`, `__pulseStats()` and
+  `__blockFrameStats()` — so a saving is attributed to a skip that actually
+  happened, not inferred from a frame time.
+- Prefer multiple steady samples or medians, and on a machine whose GPU clock
+  throttles compare `k` in ms·GHz rather than fps, from a mean clock joined
+  over the window (§19.5). Two legs at different points of a power cycle are
+  not a comparison.
 - Treat software-GPU frame times as relative comparisons, not production FPS
   promises.
 - Report deliberate visual-budget increases separately from implementation
@@ -2151,6 +2275,15 @@ Use the same snapshot and capture settings for these minimum scenarios:
   and `cpu.colony.flood` (the App memos). Every span is a
   `beginCpuProbe`/`endCpuProbe` pair or a `measureCpuProbe` around the real
   call site; nothing is sampled on a substitute path.
+- `gpu.state`: facts about the CONTEXT rather than about a measured window, so
+  `__renderPerformanceStatsReset()` deliberately leaves them alone.
+  `availability` and `reason` say whether timer queries exist at all;
+  `samples` is the drawing buffer's multisample count, read once off the live
+  context at Canvas creation (`gl.SAMPLES`) and `null` until one mounts. That
+  one integer decides whether this page's per-draw scopes can be believed
+  (below), and it is also the cheapest probe-free confirmation of what §13's
+  density rule chose on a given window: 4 on a multisampled context, 0 on a
+  buffer that resolved without one.
 
 #### Counters beside the probe
 
@@ -2172,6 +2305,20 @@ router's own cache-cliff count, which the pulse reset deliberately leaves alone)
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;
 production is exact.
+
+`__blockFrameStats()` is the exception to "integer counters": a bounded ring of
+32 wall-clock readings, one per landed topology build, plus the all-time maxima
+that outlive the ring. An entry carries `landingMs` (the worker landing task —
+graph swap and topology commit), `bridgeMs` (the SUM of the bridge build's
+three steps, which is what the class costs a block) and `bridgeStepMaxMs` (its
+longest single step), and `frameGapMs`, the interval between the frames AROUND
+the landing — what a block costs the frame loop, as against what it costs one
+task. Read `bridgeMs` and `bridgeStepMaxMs` together: a sum above 25 ms made of
+three bounded steps is not a long task, and only the second number says whether
+a step is one. `count` and `bridgeCount` should track each other; a gap means
+builds are being armed and not run. This gauge is the only reading of §15.1's
+three pieces a RELEASE build gives, and it costs one `performance.now()` a
+frame with nothing allocated.
 
 #### The off path
 
@@ -2217,6 +2364,46 @@ contexts that still reach it are 1×-ish buffers below the 8-million-pixel
 class; every dense buffer is now unsampled, which is what makes the per-draw
 scopes readable at face value on the maximized 2× window at all.
 
+#### A throttling machine, and the two window classes
+
+On a mobile APU the frame rate reads the GPU clock at least as much as it reads
+the scene. The 890M in the development laptop cycles its package power on its
+own — 40–75 s bursts at 28–30 W against 42–46 s troughs at 14–15 W, a ~2-minute
+period already running before the browser opened — and scene GPU time is very
+nearly proportional to 1/clock (600–2,300 MHz while rendering here). An
+unpaired before/after therefore measures the throttle phase, not the change.
+Two rules follow, and the performance figures quoted in this document were read
+under them.
+
+- **Normalise, or pair at equal clock.** Sample the machine at 1 Hz beside the
+  page — GPU `sclk`, package power, `Tctl`, GPU busy and CPU MHz off sysfs —
+  join the series to the measured window, and report `k = bracket ms × mean
+  clock` in ms·GHz rather than fps. `k` is stable across the cycle where fps is
+  not: fullscreen HIGH at the default pose is ≈ 10 ms·GHz whether it renders
+  3.5 ms at 2.9 GHz or 17 ms at 600 MHz. A leg with no bracket (a probe-free
+  leg has none) cannot be normalised, so run its pair back to back and reject
+  the window when the two mean clocks differ.
+- **Take the clock as a MEAN over the window, never at its endpoints.** Two
+  samples, one at each end, can land on the same phase of a cycle that swung
+  600–2,300 MHz in between, and will then certify a stable clock for a window
+  that had none. The joined 1 Hz series is what makes the mean; the fraction of
+  seconds under 900 MHz is worth reporting beside it, since that is the band the
+  hitches come from.
+
+The window class is the other half of the recipe, because one 2× 4K monitor
+produces two windows that are two different pages (§13). Reproduce both without
+touching the monitor by driving device metrics over CDP: **1920×1080 @2×** is
+the fullscreen class (8.29 million pixels, opens at Med) and **1920×960 @2×**
+is the maximized class (7.37 million, opens at High). A gate that names neither
+geometry is not reproducible on this display.
+
+Some legs must also be **probe-free** — the same URL without `render-stats=1`
+and with GL·08 closed — and the frame rate always comes from one of those. The
+scopes distort the page they measure wherever the buffer is multisampled
+(above), and a probe-free leg is likewise the only honest rate for a gesture,
+where the sampler's own work lands in the very frames under test. Read the
+shape of a profile from the probed leg and the rate from the probe-free one.
+
 #### Costs no on-page probe sees
 
 The scene GPU bracket covers the WebGL main pass only (`frame.gpu` above), so
@@ -2231,7 +2418,7 @@ with the surface present and again with it gone (`display:none` the HUD, or a
 card open versus closed) and read the GpuMain delta. Compare only at equal GPU
 clock — the AMD 890M throttles its DPM clock (600–2,900 MHz) under load, so an
 unpaired before/after is dominated by clock swing, not by the surface; run the
-two legs back to back and reject unequal-clock windows.
+two legs back to back and reject unequal-clock windows (above).
 
 For a live gate against production data without occupying the embedded server,
 run the isolated-backend recipe: the user's node binary on a spare port
@@ -2266,8 +2453,13 @@ Before merging a Canvas change, answer:
    measurement?
 9. Are buffer, pool, upload, and draw bounds explicit under worst-case churn?
 10. Are backfill, missing-data, worker-failure, and reorg paths tested?
-11. Were deterministic idle and active frames reviewed at affected presets?
-12. Were constants, tests, and this document updated together when a contract
+11. Were deterministic idle and active frames reviewed at affected presets,
+    and was every rate claim read from paired or clock-normalised legs on a
+    named window geometry (§19.5)?
+12. Does new per-block or per-gesture main-thread work take a rank in the one
+    frame ledger rather than a private budget, and does it stay a bounded grain
+    a budget can stop between (§15.1)?
+13. Were constants, tests, and this document updated together when a contract
     changed?
 
 ## 21. Implementation Map
@@ -2287,7 +2479,7 @@ Before merging a Canvas change, answer:
 | Cell body, lifecycle, flash, and picking | `packages/ui/src/components/CellGalaxy.tsx` |
 | Staged render cursor and inspection overlay | `packages/ui/src/geometry/cellRenderSet.ts` |
 | Stable Cell GPU slot assignment | `packages/ui/src/geometry/cellSlotAssignment.ts` |
-| Screen-space hit index, drift envelope, and camera-motion gate | `packages/ui/src/geometry/screenSpaceHitIndex.ts`, `packages/ui/src/geometry/cellPickDriftEnvelope.ts`, `ui-app/src/orbit-gesture-state.ts`, `packages/ui/src/nerve/ConsensusRouteCamera.tsx` |
+| Screen-space hit index, its detail patch, drift envelope, and camera-motion gate | `packages/ui/src/geometry/screenSpaceHitIndex.ts`, `packages/ui/src/derives/cellInteraction.derive.ts`, `packages/ui/src/geometry/cellPickDriftEnvelope.ts`, `ui-app/src/orbit-gesture-state.ts`, `packages/ui/src/nerve/ConsensusRouteCamera.tsx` |
 | Staged population and stage census tallies | `packages/cache/src/cellsStats.ts`, `packages/ui/src/derives/cellPopulationField.derive.ts` |
 | Cell visual descriptors and shaders | `packages/ui/src/derives/cellVisual.derive.ts`, `packages/ui/src/materials/cellHybridMaterial.ts`, `packages/ui/src/materials/cellFlareMaterial.ts` |
 | Batched near identity, far-field gate and local LOD index | `packages/ui/src/components/CellNucleus.tsx`, `packages/ui/src/derives/cellNucleusFarField.derive.ts`, `packages/ui/src/derives/cellNucleusSpatialLod.derive.ts` |
@@ -2297,7 +2489,8 @@ Before merging a Canvas change, answer:
 | Passive edge selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |
 | Shared edge curve and route search | `packages/ui/src/geometry/edgeBezier.ts`, `packages/ui/src/geometry/pathRouter.ts` |
 | Neural orchestration and pulse state | `packages/ui/src/nerve/NeuralNetwork.tsx` |
-| Pulse planning, frame slicing, and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts`, `packages/ui/src/nerve/livePulseQueue.ts` |
+| The block landing in three pieces, and the frame that arbitrates them | `packages/ui/src/nerve/fabricLandingQueue.ts`, `packages/ui/src/nerve/bridgeSchedule.ts`, `packages/ui/src/nerve/frameBudget.ts` |
+| Pulse planning, frame slicing, and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts`, `packages/ui/src/nerve/livePulseQueue.ts`, `packages/ui/src/geometry/originEntry.ts` |
 | Memory routes and context damping | `packages/ui/src/nerve/consensusMemoryTrace.ts`, `packages/ui/src/nerve/contextDamp.ts` |
 | Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx`, `packages/ui/src/nerve/recallApertureIndex.ts`, `packages/ui/src/nerve/activeHopCurve.ts`, `packages/ui/src/nerve/fabricOrder.ts` |
 | Secondary nerves (bridges) and their host registry | `packages/ui/src/nerve/CellBridgeNerves.tsx`, `packages/ui/src/geometry/bridgeEdges.ts`, `packages/ui/src/nerve/bridgeStroke.ts` |
@@ -2321,7 +2514,7 @@ Before merging a Canvas change, answer:
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
 | HUD wall clock | `packages/ui/src/components/hud/hudClock.tsx` |
 | Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/nonEmptyGpuProbeCallbacks.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts`, `packages/ui/src/components/hud/RenderStatsPanel.tsx` |
-| Always-on churn counters and their window hook | `packages/ui/src/nerve/fabricStats.ts`, `packages/ui/src/nerve/bridgeStats.ts`, `packages/ui/src/geometry/neighborGraphBuilderStats.ts`, `packages/ui/src/derives/colonyStats.ts`, `packages/ui/src/geometry/cellPickStats.ts`, `packages/ui/src/derives/producerOriginStats.ts`, `packages/ui/src/nerve/pulseStats.ts`, `ui-app/src/pulse-stats-hook.ts` |
+| Always-on churn counters and their window hook | `packages/ui/src/nerve/fabricStats.ts`, `packages/ui/src/nerve/blockFrameStats.ts`, `packages/ui/src/nerve/bridgeStats.ts`, `packages/ui/src/geometry/neighborGraphBuilderStats.ts`, `packages/ui/src/derives/colonyStats.ts`, `packages/ui/src/geometry/cellPickStats.ts`, `packages/ui/src/derives/producerOriginStats.ts`, `packages/ui/src/nerve/pulseStats.ts`, `ui-app/src/pulse-stats-hook.ts` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
 
 ## 22. Glossary
