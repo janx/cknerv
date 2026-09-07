@@ -985,9 +985,32 @@ because there is none to print.
 Optional semantics are bounded in memory and intentionally not persisted. They
 are rehydrated from the configured source, so enabling, disabling, or changing
 ckbadger does not alter the persistence schema and does not require
-`cknerv purge`. Display membership is likewise never persisted: a restart
-re-derives it from the restored canonical Cells and upgrades to composed
-staffing once the first refresh lands.
+`cknerv purge`.
+
+Display membership is not persisted either — but the composition behind it is
+remembered, in a file of its own. Curating a stage costs a source several
+thousand index pages and the node a few hundred batched `get_live_cell` calls,
+roughly a minute of work that every boot used to pay again from nothing, and
+the set it arrives at is neither cheap nor arbitrary: it is the whole of what
+the stage looks like. So the supervisor writes each proved composition record
+to `<workdir>/data/galaxy-composition.json`, atomically (tmp then rename)
+under a schema version of its own, and a resuming boot reads it back.
+
+Reading it back is not a restore of membership. What the file holds is a list
+of outpoints that used to be live — the same shape ckbadger's discovery
+produces, and exactly as untrustworthy, since anything in it may have been
+spent while the process was down. The remembered record therefore goes through
+the same canonical hydrator a fresh composition goes through
+([Architecture and Trust Boundary](#architecture-and-trust-boundary)):
+every outpoint re-read against the node, capacity and class re-checked, dead
+cells dropped, and only survivors staged, delivered on the same event channel a
+fresh composition uses. Two fields keep it honest: `source` gains a
+`(restored)` suffix, so the plane's content dedupe cannot swallow the fresh
+composition that lands a minute later, and `as_of` is the canonical block the
+restore is installed at rather than the one it was curated at, so the record
+sits inside the retained evidence ring and a near-tip reorg can still dislodge
+it. Every way the restore can fail ends in the boot it would otherwise have
+had: canonical staffing, upgraded once the first live refresh lands.
 
 ## Known Limits
 

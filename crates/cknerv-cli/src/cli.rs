@@ -10,7 +10,7 @@ use url::Url;
 #[command(
     name = "cknerv",
     version,
-    about = "CKB chain visualization weather station"
+    about = "Local-first CKB visualization: cells, blocks, transactions, peers"
 )]
 pub struct Cli {
     /// Work directory (holds cknerv.toml + data/). Default: current directory.

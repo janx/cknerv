@@ -1050,12 +1050,12 @@ constraints, optimization order, and acceptance criteria.
 
 ### 12.1 File Format
 
-The server stores one JSON file at
-`<workdir>/data/cknerv-state.json`, currently with `schema_version = 4`:
+The server stores derived state as JSON at
+`<workdir>/data/cknerv-state.json`, currently with `schema_version = 5`:
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "entities": {
     "revision": 0,
     "chain": {},
@@ -1073,6 +1073,12 @@ shutdown — SIGINT (Ctrl-C) or SIGTERM, which a service manager sends and
 which the CLI treats identically. Shutdown saves before stopping background
 tasks.
 
+With optional enrichment configured, a second file sits beside it:
+`<workdir>/data/galaxy-composition.json`, written the moment a source proves a
+curated composition, through the same tmp-then-rename idiom and under a schema
+version of its own (§12.2). `cknerv purge --confirm` removes the whole `data/`
+directory, so both go together.
+
 ### 12.2 Persisted and Ephemeral State
 
 Persisted state includes:
@@ -1084,7 +1090,7 @@ Persisted state includes:
 - hydration target and floor;
 - the persistence blob declared by each registered projection.
 
-The following are deliberately not persisted:
+The following are deliberately not persisted in `cknerv-state.json`:
 
 - live peers;
 - replay progress and reorg limbo;
@@ -1093,6 +1099,21 @@ The following are deliberately not persisted:
 
 These values are transient or can be rebuilt safely from canonical state and
 optional sources.
+
+Display membership has one memory across runs, and it is deliberately not a
+restore. `galaxy-composition.json` holds the exact composition record a source
+last proved; what comes back off disk is a list of outpoints that used to be
+live, which is the shape ckbadger's discovery produces and exactly as
+untrustworthy. So the boot feeds it through the same canonical hydrator a fresh
+composition goes through — every outpoint re-read against the node, capacity
+and class re-checked, dead cells dropped — and stages only what survives, on
+the same event channel a fresh composition uses. The restored record names
+itself: its `source` carries a `(restored)` suffix, and its `as_of` is the
+canonical block the restore is installed at rather than the one it was curated
+at, so it sits inside the retained evidence ring and a near-tip reorg can still
+dislodge it. The restore rides `restore_persisted` with canonical state — a
+boot that rebuilds the chain rebuilds the stage with it, because two memories
+on two switches is how a boot ends up half restored and half rebuilt.
 
 ### 12.3 Restore Eligibility and Bad Files
 
@@ -1146,14 +1167,20 @@ There is no environment-variable configuration layer. Main sections are:
 
 The Cell cap is fixed at 50,000 and is not a user knob. A legacy `cell_cap`
 line is ignored by the tolerant TOML parser, as is a legacy
-`galaxy.snapshot_scope` line (§6.5). Profiles choose recent-link,
-topology, and pulse defaults only:
+`galaxy.snapshot_scope` line (§6.5). Every profile currently resolves to one
+value set, which is the SPA's own bundled `DEFAULT_GALAXY_CONFIG`:
 
-| Profile | Recent links | Neighbor K | Max edge | Max hops | Link ring | Active pulses |
-|---|---:|---:|---:|---:|---:|---:|
-| devnet | 1,024 | 5 | 36 | 50 | 64 | 128 |
-| mainnet | 1,536 | 3 | 25 | 38 | 96 | 192 |
-| auto/testnet/custom | 2,048 | 4 | 28 | 40 | 128 | 256 |
+| Recent links | Neighbor K | Max edge | Max hops | Link ring | Pulses/link | Origins/link | Active pulses |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2,048 | 5 | 42.0 | 80 | 512 | 6 | 2 | 256 |
+
+The payload overrides the SPA's defaults in every embedded deployment while the
+Vite dev harness runs them directly, so a per-profile number that trails a
+frontend retune ships a galaxy nobody visually accepted — which happened twice
+(the gap-fill densification and the link-ring block guarantee both reached only
+dev). `tests/fixtures/runtime_config_galaxy.json` pins the two sides
+together. Reintroduce a
+per-profile delta only as a deliberate divergence carrying its own fixture.
 
 ### 13.3 Embedded SPA
 
@@ -1356,7 +1383,7 @@ coverage, visual composition, and GPU cost respectively.
   multi-tenant design. A changed deployment boundary requires a separate
   security design.
 - Current schema policy favors purge and rebuild over long-lived migration
-  layers for stale v0.1 state.
+  layers for stale local state.
 
 ## 20. Implementation Map
 
@@ -1375,6 +1402,7 @@ coverage, visual composition, and GPU cost respectively.
 | Projection registry | `crates/cknerv-server/src/projection_registry.rs` |
 | HTTP and WebSocket | `crates/cknerv-server/src/routes.rs`, `crates/cknerv-server/src/ws.rs` |
 | Persistence | `crates/cknerv-server/src/persistence.rs` |
+| Cross-run stage memory | `crates/cknerv-server/src/composition_store.rs` |
 | Enrichment scheduler | `crates/cknerv-server/src/enrichment_supervisor.rs` |
 | Task supervision and health | `crates/cknerv-server/src/health.rs` |
 | CLI runtime and config | `crates/cknerv-cli/src/server.rs`, `crates/cknerv-cli/src/config.rs` |

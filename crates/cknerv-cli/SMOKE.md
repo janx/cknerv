@@ -30,8 +30,9 @@ cknerv-server exposes two chain-generic snapshot endpoints. Verify the JSON
 shape before scripting against it — the grep/parse patterns below depend on
 this structure.
 
-`GET /api/entities/chain/snapshot` — envelope `{revision, chain, chain_nodes}`.
-`tip` is **nested under `chain`**, not at the top level:
+`GET /api/entities/chain/snapshot` — envelope
+`{revision, chain, chain_nodes, peers}`. `tip` is **nested under `chain`**, not
+at the top level:
 
 ```json
 {
@@ -47,16 +48,18 @@ this structure.
     "recent_tx_hashes": [ { "block": 19431432, "tx_hash": "0x8cf5…" } ],
     "chain_name": "ckb"
   },
-  "chain_nodes": [ { "id": "ckb:local", "label": "ckb-local", "is_miner": false } ]
+  "chain_nodes": [ { "id": "ckb:local", "label": "ckb-local", "is_miner": false } ],
+  "peers": [ { "node_id": "QmXxxx…", "addr": "/ip4/…/tcp/8115", "direction": "outbound", "version": "0.201.0", "latency_ms": 42, "best_known": 19431450, "connected_ms": 250000 } ]
 }
 ```
 
 `GET /api/projections/cells/snapshot` — envelope `{revision, snapshot}`.
 The rows live under `snapshot.cells` and carry the *staged* set, not the whole
 retained galaxy; whole-galaxy aggregates live under `snapshot.stats`, and
-cumulative counters are `snapshot.total_births` / `snapshot.total_deaths`. This
-procedure's 100-Cell target is far below the 12,000-Cell stage, so every
-retained Cell is staged here and counting rows is exact:
+cumulative counters are `snapshot.total_births` / `snapshot.total_deaths`. The
+reservoir this procedure hydrates (50,000 Cells) is larger than the
+12,000-Cell stage, so counting rows counts the STAGE; the retained live set is
+`snapshot.stats.in_view`:
 
 ```json
 {
@@ -175,14 +178,20 @@ chain entity advances and cells accumulate. Note the `chain.tip` JSON path
 ```bash
 SMOKE_WORKDIR=$(mktemp -d /tmp/cknerv-smoke.XXXXXX)
 ./target/release/cknerv init -C "$SMOKE_WORKDIR"
-# Keep this smoke quick while still exercising target-driven hydration.
-sed -i 's/cell_cap = 20000/cell_cap = 100/' "$SMOKE_WORKDIR/cknerv.toml"
+# There is no quick-hydration knob any more: the reservoir target is the
+# built-in 50,000 and a legacy `cell_cap` line is ignored. Boot hydration
+# therefore runs for real — seconds on a short devnet chain, minutes against
+# a mainnet node while it scans back for 50,000 outputs still live at the
+# anchor. `--backfill-blocks N` bounds that scan, but a run stopped by the
+# limit before the target never records the completion marker (it persists
+# target 0, deliberately), and step 5 below needs that marker to resume — so
+# do not use the flag here.
 ./target/release/cknerv run -C "$SMOKE_WORKDIR" \
   --rpc http://localhost:8114 --no-open --port 17001 \
   > /tmp/cknerv_smoke.log 2>&1 &
 CKNERV_PID=$!
 STATE_FILE="$SMOKE_WORKDIR/data/cknerv-state.json"
-for _ in $(seq 1 60); do
+for _ in $(seq 1 600); do
   test -s "$STATE_FILE" && break
   sleep 1
 done
@@ -207,9 +216,13 @@ echo "tip after 35s: $TIP2"
 # Assert: TIP2 > TIP1 (chain advanced) — unless the chain itself is idle
 
 # 3. Cells accumulated. The cell set is snapshot.cells (an array)
-CELLS=$(curl -s http://localhost:17001/api/projections/cells/snapshot \
+SNAP=$(curl -s http://localhost:17001/api/projections/cells/snapshot)
+STAGED=$(echo "$SNAP" \
   | python3 -c "import sys,json; print(sum(c['death_at_ms'] is None for c in json.load(sys.stdin)['snapshot']['cells']))")
-echo "live cells observed: $CELLS  (target: 100, or fewer only if genesis was reached)"
+RETAINED=$(echo "$SNAP" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['snapshot']['stats']['in_view'])")
+echo "live cells retained: $RETAINED  (target: 50000, or fewer only if genesis was reached)"
+echo "live cells staged:   $STAGED  (the display budget, at most 12000)"
 
 kill -INT $CKNERV_PID
 wait $CKNERV_PID
@@ -223,7 +236,7 @@ HYDRATED_TARGET=$(python3 -c \
   "import json,sys; print(json.load(open(sys.argv[1]))['projections']['cells']['hydrated_cell_target'])" \
   "$STATE_FILE")
 echo "persisted tip: $SAVED_TIP"
-echo "persisted Cell target: $HYDRATED_TARGET  (must be 100)"
+echo "persisted Cell target: $HYDRATED_TARGET  (must be 50000)"
 
 # 5. Restart from the same workdir and confirm resume, not boot backfill.
 ./target/release/cknerv run -C "$SMOKE_WORKDIR" \
@@ -245,9 +258,10 @@ Pass criteria:
 - chain snapshot returns a `chain.tip` matching the node's `get_tip_block_number`
   (cknerv may trail by a block or two — it ingests blocks asynchronously)
 - tip advances over the observation window (if the chain is producing blocks)
-- cells projection reaches the configured 100-live-Cell target, unless the
-  reverse scan reached genesis with fewer globally available Cells
-- persisted `projections.cells.hydrated_cell_target` is `100`
+- `snapshot.stats.in_view` reaches the built-in 50,000-live-Cell reservoir
+  target, unless the reverse scan reached genesis with fewer globally available
+  Cells; `snapshot.cells` holds the staged subset, at most 12,000
+- persisted `projections.cells.hydrated_cell_target` is `50000`
 - after boot replay completes, `data/cknerv-state.json` exists before shutdown
 - no panics in cknerv's stdout (`grep -iE "panic|error|fatal" /tmp/cknerv_smoke.log`)
 - clean SIGINT shutdown persists a non-empty state file, exits, frees the port,

@@ -17,16 +17,20 @@ cknerv is a local-first CKB chain visualization stack:
 
 ## Project Principles
 
-- **CKB Native**: make CKB's cell model tangible. Chain data is the only source
-  of truth; cells, links, HUD values, and pulses are derived from real chain
-  observations.
-- **Local First**: optimize for a local node plus local dashboard. Avoid adding
-  hosted-service assumptions or middleware dependencies to the default path.
-- **Chain Generic**: source-specific code belongs behind adapters. The server,
-  projections, cache reducers, and UI should remain driven by mutations and
-  snapshots.
-- **Agent Friendly**: keep interfaces, fixtures, commands, and verification
-  paths explicit enough for automated agents to inspect and extend safely.
+- **CKB Native**: make CKB's cell model visible. Chain data is the only source
+  of truth; cells, links, HUD values, and pulses are derived from real blocks,
+  transactions, and outpoints.
+- **Local First**: optimize for a local node plus a local dashboard, with a
+  local ckbadger beside them for the full version. Avoid adding hosted-service
+  assumptions or middleware dependencies to either path.
+- **Agent Friendly**: keep wire shapes, routes, fixtures, commands, and
+  verification paths explicit enough for automated agents to inspect and extend
+  safely.
+
+Chain-genericity is no longer a stated principle, but it remains the built
+structure: source-specific code lives behind adapters, and the server,
+projections, cache reducers, and UI stay driven by mutations and snapshots.
+Keep it that way unless a change deliberately retires it.
 
 **Principle Sync Rule**: if project principle wording changes, update both
 `README.md` and `AGENTS.md` in the same change.
@@ -84,10 +88,11 @@ For any non-trivial task summary or PR description, use this shape:
 
 ## Development Status
 
-This is an active v0.1 project, not a production service. Derived state can be
-purged and rebuilt from the configured CKB node. Prefer simple, correct schema
-and projection design over compatibility layers for stale local state. If a
-state shape changes incompatibly, bump the persistence schema, document whether
+This is an actively developed project (workspace version 1.0.0), not a hosted
+production service. Derived state can be purged and rebuilt from the configured
+CKB node. Prefer simple, correct schema and projection design over
+compatibility layers for stale local state. If a state shape changes
+incompatibly, bump the persistence schema, document whether
 `cknerv purge --confirm` is needed, and test bad-file/schema-mismatch behavior.
 
 ## Commands
@@ -137,7 +142,8 @@ cargo build --release -p cknerv-cli
 
 Then verify:
 
-- `GET /api/entities/chain/snapshot` returns `{revision, chain, chain_nodes}`.
+- `GET /api/entities/chain/snapshot` returns
+  `{revision, chain, chain_nodes, peers}`.
 - `GET /api/projections/cells/snapshot` returns `{revision, snapshot}` with
   `snapshot.cells`.
 - The chain tip advances when the node advances.

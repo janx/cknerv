@@ -121,6 +121,10 @@ the bottom-right corner — is documented in
 
 ## Architecture
 
+The full design contract — domain model, server runtime, protocol, browser
+data layer, budgets, and extension guide — is
+[`docs/architecture.md`](docs/architecture.md). In outline:
+
 cknerv keeps source-specific chain ingestion separate from the chain-generic
 dashboard pipeline. The direct CKB adapter remains the sole producer of
 structural chain truth. Optional indexed enrichment is additive and can never
@@ -202,14 +206,15 @@ its architecture, trust boundary, capabilities, and limits are documented in
 
 ```text
 <workdir>/
-├── cknerv.toml              # Sole local config file
+├── cknerv.toml                     # Sole local config file
 └── data/
-    └── cknerv-state.json    # Derived chain/projection state, written on clean shutdown
+    ├── cknerv-state.json           # Derived chain/projection state, written on clean shutdown
+    └── galaxy-composition.json     # With ckbadger only: the curated stage, remembered across runs
 ```
 
-The state file is derived data. If it is stale, corrupt, or no longer matches
-the current schema, delete it with `cknerv purge --confirm` and let cknerv
-rehydrate from the live node.
+Both files hold derived data. If either is stale, corrupt, or no longer
+matches the current schema, delete it with `cknerv purge --confirm` and let
+cknerv rehydrate from the live node.
 
 ## HTTP / WS API
 
@@ -218,12 +223,13 @@ fall back to the SPA.
 
 | Method | Path | Shape |
 |---|---|---|
-| `GET` | `/api/health` | `{ build_version, uptime_s, degraded, revision, tip, tip_age_ms, reducer_alive, adapters, projections, quarantined_projections, enrichment }` |
-| `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes }` |
+| `GET` | `/api/health` | `{ build_version, uptime_s, degraded, revision, tip, tip_age_ms, replay_active, mutation_ring_len, reducer_alive, adapters, projections, quarantined_projections, enrichment }` |
+| `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes, peers }` |
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the staged set, not the whole retained galaxy |
 | `GET` | `/api/projections/cells/snapshot.bin` | Columnar little-endian snapshot (~9x smaller); revision patched into the header and mirrored in `x-snapshot-revision` |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
+| `GET` | `/api/cells/:tx_hash/:output_index/data` | One Cell's complete output data read from the node; canonical, so it answers in every mode; immutable-cached, `413` over 2 MiB |
 | `GET` | `/api/projections/semantics/snapshot` | Optional indexed-enrichment snapshot; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell; `404 enrichment_disabled` when absent |
@@ -330,12 +336,12 @@ profile = "auto" # auto, devnet, testnet, mainnet, custom
 recent_links_cap = 2048
 
 [galaxy.topology]
-neighbor_k = 4
-max_edge_length = 28.0
-max_hops = 40
+neighbor_k = 5
+max_edge_length = 42.0
+max_hops = 80
 
 [galaxy.pulses]
-link_ring_capacity = 128
+link_ring_capacity = 512
 max_pulses_per_link = 6
 max_origins_per_link = 2
 max_active_pulses = 256
@@ -351,10 +357,14 @@ ceiling — not a knob). At an empty boot, the adapter anchors the current tip,
 scans canonical blocks in reverse until it has identified that many outputs
 still live at the anchor (or reaches genesis), then replays the cached window
 once in ascending order.
-`mainnet` also uses sparser topology and lower pulse caps to reduce visual
-noise. Backfill is deliberately absent from `cknerv.toml`; legacy `[backfill]`
-sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
-limit for diagnostics.
+
+`profile` currently selects no numbers: every profile resolves to the one
+value set the SPA's own bundled defaults are pinned to, because a per-profile
+delta that trailed a frontend retune twice shipped a galaxy nobody had
+visually accepted. The seam is kept for a deliberate divergence, which would
+arrive with its own parity fixture. Backfill is deliberately absent from
+`cknerv.toml`; legacy `[backfill]` sections are ignored. Use
+`--backfill-blocks N` only as a one-run hard scan limit for diagnostics.
 
 The dashboard's manual Cell-count controller tops out at the built-in
 50,000-Cell visual ceiling. AUTO renders the server-shipped display budget —
@@ -417,6 +427,17 @@ the derived state from the configured node.
 Optional semantics are intentionally not persisted. They are bounded in memory
 and rehydrated from the configured source, so changing optional enrichment does
 not change the persistence schema or require `cknerv purge`.
+
+The curated stage is the one exception, and it keeps its own file. With
+ckbadger enabled the server writes the composition it last proved to
+`<workdir>/data/galaxy-composition.json`, and a resuming boot feeds those
+outpoints back through the same node revalidation a fresh composition goes
+through — every one re-read against the node, dead ones dropped — so a warm
+boot stages a proven set in seconds instead of curating one from nothing. The
+file carries its own schema version and is discarded when it does not match;
+the trust boundary does not move, because nothing reaches the stage that the
+node has not just re-affirmed. A boot that rebuilds canonical state rebuilds
+the stage with it.
 
 ## Build and Test
 
