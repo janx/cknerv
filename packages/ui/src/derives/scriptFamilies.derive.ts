@@ -306,62 +306,74 @@ export function assetFamilyBuckets(
   );
 }
 
-// ——— The same two bars at chain scope ———————————————————————————————————
+// ——— The chain by the index's own menu ———————————————————————————————
 //
-// The index counts the whole chain's live Cells by family, already named, so
-// there is no identity join to perform: a family IS its name here. What the
-// record cannot place it says so explicitly — bare CKB as `types_absent`, and
-// Cells whose script the index has no family for as the two `*_unlisted`
-// counts — so both bars sum to `live_cells` without a bucket invented on
-// this side.
+// The index counts the whole chain's live Cells by family and says, for each
+// family, which of its Inventory pages the cells are listed under — Tokens,
+// Objects, Identities — by the recognizers it classifies item deltas with.
+// CELL CENSUS draws the chain in that vocabulary rather than family by
+// family: CKB, the three inventories, the DAO, and SCRIPTS for every typed
+// Cell that is none of those. What the record cannot place it says so
+// explicitly — bare CKB as `types_absent`, the DAO from the census's own
+// partition, and the typed Cells the index has no family for as
+// `types_unlisted` — so the bar sums to `live_cells` without a bucket
+// invented on this side.
 
-function chainFamilyBuckets(
-  record: ScriptFamilyCensusRecord,
-  kind: 'type' | 'lock',
-): ScriptFamilyBucket[] {
-  return record.families
-    .filter((family) => family.kind === kind && family.live_cells > 0)
-    .map((family) => ({
-      key: `${kind}:${family.name}`,
-      label: family.name,
-      count: family.live_cells,
-      color: REST_COLOR,
-      named: true,
-      families: 1,
-    }));
-}
+/** One hue per word, and the words are ones the HUD already speaks: the
+ *  activity feed names what a transaction did with the same six, so a token
+ *  is token-coloured whether it moved or merely exists. Spelled through the
+ *  bands rather than by value, so the two surfaces cannot drift on a word
+ *  they share. */
+export const INVENTORY_COLORS: Record<string, string> = {
+  native: CONTENT_BANDS.consensus,
+  token: CONTENT_BANDS.token,
+  object: CONTENT_BANDS.artifact,
+  identity: CONTENT_BANDS.identity,
+  dao: CONTENT_BANDS.value,
+  script: CONTENT_BANDS.script,
+};
 
-/** The whole chain's type families, in the shape the stage's ASSETS bar
- *  takes: CKB first, the families ranked, the fold, and the typed Cells the
- *  index has no family for. */
-export function chainAssetFamilyBuckets(
-  record: ScriptFamilyCensusRecord,
-  limit = SCRIPT_BAR_FAMILIES,
-): ScriptFamilyBucket[] {
-  return assetBar(
-    record.types_absent,
-    (cut) => rankBuckets(chainFamilyBuckets(record, 'type'), cut),
-    limit,
-    0,
-    0,
-    { key: 'unlisted', count: record.types_unlisted },
-  );
-}
+const INVENTORY_LABELS: Record<string, string> = {
+  native: 'CKB',
+  token: 'TOKENS',
+  object: 'OBJECTS',
+  identity: 'IDENTITIES',
+  dao: 'DAO',
+  script: 'SCRIPTS',
+};
 
-/** The whole chain's lock families, ranked, with the Cells under a lock the
- *  index has no family for as the bar's last segment. */
-export function chainLockFamilyBuckets(
-  record: ScriptFamilyCensusRecord,
-  limit = SCRIPT_BAR_FAMILIES,
-): ScriptFamilyBucket[] {
-  const { buckets, restCells, restScripts } = rankBuckets(
-    chainFamilyBuckets(record, 'lock'),
-    limit,
-  );
-  return withRest(buckets, restCells, restScripts, {
-    key: 'unlisted',
-    count: record.locks_unlisted,
+/** The whole chain's live Cells by the index's menu, in a fixed order a
+ *  reader can learn once: CKB, TOKENS, OBJECTS, IDENTITIES, DAO, SCRIPTS.
+ *  The DAO's own family is among the named type families, so its count
+ *  comes off the scripts rather than being drawn twice; the typed Cells the
+ *  index has no family for are scripts too — Cells of some script nobody
+ *  here can name — and join that segment rather than standing as a tail. */
+export function chainInventoryBuckets(record: ScriptFamilyCensusRecord): ScriptFamilyBucket[] {
+  const sums = { token: 0, object: 0, identity: 0, other: 0 };
+  for (const family of record.families) {
+    if (family.kind !== 'type') continue;
+    const inventory = family.inventory === 'token' || family.inventory === 'object' || family.inventory === 'identity'
+      ? family.inventory
+      : 'other';
+    sums[inventory] += family.live_cells;
+  }
+  const scripts = Math.max(0, sums.other - record.types_dao) + record.types_unlisted;
+  const bucket = (key: string, count: number): ScriptFamilyBucket => ({
+    key,
+    label: INVENTORY_LABELS[key],
+    count,
+    color: INVENTORY_COLORS[key],
+    named: true,
+    families: 1,
   });
+  return [
+    bucket('native', record.types_absent),
+    bucket('token', sums.token),
+    bucket('object', sums.object),
+    bucket('identity', sums.identity),
+    bucket('dao', record.types_dao),
+    bucket('script', scripts),
+  ];
 }
 
 /** Three refreshes of the record's two-minute cadence: a composition that

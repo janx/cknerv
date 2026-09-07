@@ -7,9 +7,9 @@ import type {
 } from '@cknerv/types';
 import {
   assetFamilyBuckets,
-  chainAssetFamilyBuckets,
-  chainLockFamilyBuckets,
+  chainInventoryBuckets,
   hasScriptCensus,
+  INVENTORY_COLORS,
   lockFamilyBuckets,
   scriptFamilyCensusVisualState,
   scriptLabel,
@@ -228,89 +228,76 @@ describe('scriptFamilies.derive at chain scope', () => {
     updated_at_ms: 1,
     live_cells: 1_000,
     types_absent: 663,
-    types_unlisted: 17,
+    types_dao: 15,
+    types_unlisted: 16,
     locks_unlisted: 9,
     families: [
-      // Named already — the index counts families, not deployments — and in
-      // the index's own order, which the bar must not inherit.
+      // Named and classified by the index already, in the index's own
+      // order, which the bar must not inherit: its order is the menu's.
       { name: 'Nervos DAO', kind: 'type', live_cells: 15 },
       { name: '.bit Income Cell', kind: 'type', live_cells: 158 },
-      { name: 'xUDT', kind: 'type', live_cells: 39 },
+      { name: 'xUDT', kind: 'type', live_cells: 39, inventory: 'token' },
       { name: 'COTA', kind: 'type', live_cells: 36 },
-      { name: 'M-NFT', kind: 'type', live_cells: 31 },
-      { name: 'Spore', kind: 'type', live_cells: 25 },
-      { name: 'Simple UDT', kind: 'type', live_cells: 3 },
+      { name: 'M-NFT', kind: 'type', live_cells: 31, inventory: 'object' },
+      { name: 'Spore', kind: 'type', live_cells: 25, inventory: 'object' },
+      { name: 'Simple UDT', kind: 'type', live_cells: 3, inventory: 'token' },
       { name: 'Spore Cluster', kind: 'type', live_cells: 1 },
       { name: 'M-NFT Class', kind: 'type', live_cells: 4 },
       { name: '.bit Reverse Record', kind: 'type', live_cells: 8 },
       { name: 'COTA Registry', kind: 'type', live_cells: 0 },
+      { name: 'did:ckb', kind: 'type', live_cells: 1, inventory: 'identity' },
       { name: 'Default Lock', kind: 'lock', live_cells: 604 },
       { name: '.bit Lock', kind: 'lock', live_cells: 175 },
-      { name: 'JoyID', kind: 'lock', live_cells: 109 },
-      { name: 'FlashSigner', kind: 'lock', live_cells: 28 },
-      { name: 'PW Lock', kind: 'lock', live_cells: 20 },
-      { name: 'Force Bridge', kind: 'lock', live_cells: 18 },
-      { name: 'OMNI Lock', kind: 'lock', live_cells: 17 },
-      { name: 'UniPass', kind: 'lock', live_cells: 15 },
-      { name: 'RGB++', kind: 'lock', live_cells: 4 },
-      { name: 'Default Multisig', kind: 'lock', live_cells: 1 },
+      { name: 'JoyID', kind: 'lock', live_cells: 109, inventory: 'identity' },
     ],
   };
 
-  it('takes the shape the stage’s ASSETS bar takes, over the whole chain', () => {
-    const buckets = chainAssetFamilyBuckets(familyRecord);
-    expect(buckets.map((b) => b.label)).toEqual([
+  it('splits every live Cell by the index’s menu, in the menu’s order', () => {
+    const buckets = chainInventoryBuckets(familyRecord);
+    expect(buckets.map((b) => [b.key, b.label, b.count])).toEqual([
       // CKB first: a cell with no type script is not an unnamed family.
-      'CKB',
-      // Ranked by Cell count, never in the index's order; the DAO is the
-      // seventh type family on this chain and folds off a six-slot bar.
-      '.bit Income Cell',
-      'xUDT',
-      'COTA',
-      'M-NFT',
-      'Spore',
-      '+5 more',
-      // Typed Cells the index has no family for: not a gap in cknerv's
-      // records, so not `unidentified` — a different fact under a
-      // different word.
-      'unlisted',
-    ]);
-    expect(buckets.map((b) => b.named))
-      .toEqual([true, true, true, true, true, true, false, false]);
-    // A family counted at zero is no segment, and no member of the fold.
-    expect(buckets.find((b) => b.key === 'rest')?.families).toBe(5);
-    expect(buckets.reduce((n, b) => n + b.count, 0)).toBe(familyRecord.live_cells);
-  });
-
-  it('ranks the lock families and counts the unlisted remainder last', () => {
-    const buckets = chainLockFamilyBuckets(familyRecord);
-    expect(buckets.map((b) => b.label)).toEqual([
-      'Default Lock',
-      '.bit Lock',
-      'JoyID',
-      'FlashSigner',
-      'PW Lock',
-      'Force Bridge',
-      '+4 more',
-      'unlisted',
+      ['native', 'CKB', 663],
+      ['token', 'TOKENS', 42],
+      ['object', 'OBJECTS', 56],
+      ['identity', 'IDENTITIES', 1],
+      ['dao', 'DAO', 15],
+      // Every other typed Cell: protocol state under a named family, plus
+      // the typed Cells the index has no family for — Cells of some script
+      // nobody here can name are scripts too.
+      ['script', 'SCRIPTS', 158 + 36 + 1 + 4 + 8 + 16],
     ]);
     expect(buckets.reduce((n, b) => n + b.count, 0)).toBe(familyRecord.live_cells);
-    // The plain segment and the unnamed tail wear the hues the stage's bars
-    // wear for the same two facts; the ranks walk the same qualitative ramp.
-    const assets = chainAssetFamilyBuckets(familyRecord);
-    expect(assets[0].color).toBe(CONTENT_BANDS.consensus);
-    expect(assets[1].color).toBe(QUALITATIVE_BUCKET_COLORS[1]);
-    expect(buckets[0].color).toBe(QUALITATIVE_BUCKET_COLORS[0]);
-    expect(buckets[buckets.length - 1].color).toBe(SCRIPT_FAMILY_COLORS.unidentified);
+    expect(buckets.every((b) => b.named)).toBe(true);
   });
 
-  it('omits a remainder the record does not carry', () => {
-    const clean = chainLockFamilyBuckets({ ...familyRecord, locks_unlisted: 0 });
-    expect(clean.map((b) => b.key)).not.toContain('unlisted');
-    const bare = chainAssetFamilyBuckets({ ...familyRecord, types_absent: 0, types_unlisted: 0 });
-    expect(bare[0].label).toBe('.bit Income Cell');
-    // Without CKB on the bar the sixth slot goes back to a family.
-    expect(bare.map((b) => b.label)).toContain('+4 more');
+  it('takes the DAO off the scripts once, and never reads a lock as inventory', () => {
+    // The DAO's own family is among the named type families; its count is
+    // the census's and comes off the scripts rather than being drawn twice.
+    const withoutDao = chainInventoryBuckets({ ...familyRecord, types_dao: 0 });
+    expect(withoutDao.find((b) => b.key === 'script')?.count).toBe(158 + 36 + 1 + 4 + 8 + 16 + 15);
+    // JoyID is a lock the index files under identities for its own reasons;
+    // the type bar counts type scripts only.
+    expect(chainInventoryBuckets(familyRecord).find((b) => b.key === 'identity')?.count).toBe(1);
+    // A kind this bar has no word for is a script, not a guess at a word.
+    const odd = chainInventoryBuckets({
+      ...familyRecord,
+      families: familyRecord.families.map((f) => (f.name === 'xUDT' ? { ...f, inventory: 'voucher' } : f)),
+    });
+    expect(odd.find((b) => b.key === 'token')?.count).toBe(3);
+    expect(odd.find((b) => b.key === 'script')?.count).toBe(158 + 36 + 1 + 4 + 8 + 16 + 39);
+  });
+
+  it('paints each word in the band the HUD already speaks it in', () => {
+    const buckets = chainInventoryBuckets(familyRecord);
+    expect(buckets.map((b) => b.color)).toEqual([
+      CONTENT_BANDS.consensus,
+      CONTENT_BANDS.token,
+      CONTENT_BANDS.artifact,
+      CONTENT_BANDS.identity,
+      CONTENT_BANDS.value,
+      CONTENT_BANDS.script,
+    ]);
+    expect(INVENTORY_COLORS.native).toBe(CONTENT_BANDS.consensus);
   });
 
   it('exposes the record only while its source and anchor still hold', () => {

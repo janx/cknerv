@@ -56,9 +56,10 @@ in [ckbadger.md](ckbadger.md), including their independent revision,
 canonical-anchor checks, refresh intervals, UI behavior, and failure isolation.
 One of its records, `script_registry`, names the identities that census counts;
 the browser joins the two planes on `(code_hash, hash_type)`. Another,
-`script_family_census`, counts the whole chain's live Cells by script family —
-the same two taxonomies, at chain scope — so the chain panel's `CELL CENSUS`
-bars and the stage panel's split their populations by one vocabulary.
+`script_family_census`, counts the whole chain's live Cells by script family
+with the index's own inventory verdict on each, so the chain panel's `CELL
+CENSUS` bar splits the chain by what ckbadger's Inventory pages call a token,
+an object and an identity.
 
 Both WebSocket routes emit
 `{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds

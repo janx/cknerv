@@ -15,15 +15,15 @@ function share(count: number, total: number): string {
  *  name into a list of things the bar does not show; those collapse into one
  *  honest tail count, with the full breakdown on the bar's tooltip.
  *
- *  `scope` is the population, and it is not optional: this bar has been fed
- *  by two different ones, and the whole failure it was built to end is a
- *  distribution over the retained window drawn under a panel that says
- *  STAGE. It draws the chain too now — the same shape over the whole chain's
- *  families, so STAGE·07 and CELL CENSUS split their populations by one
- *  taxonomy and a reader can hold the two bars side by side. */
+ *  `scope` is the population, wherever the bar is not the panel's own: this
+ *  bar has been fed by two different ones, and the whole failure it was
+ *  built to end is a distribution over the retained window drawn under a
+ *  panel that says STAGE. Under CELL CENSUS the population IS the panel's —
+ *  the chain — and a tag saying so was noise; the slot there carries only
+ *  the one word a reader must not miss, STALE, and nothing otherwise. */
 export default function TaxonomyBar({ title, scope, buckets }: {
   title: string;
-  scope: string;
+  scope?: string;
   buckets: ScriptFamilyBucket[];
 }) {
   const total = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
@@ -44,7 +44,7 @@ export default function TaxonomyBar({ title, scope, buckets }: {
           the funnel rows follow, and for the same reason. */}
       <div style={{ ...SUBHEAD, display: 'flex', alignItems: 'baseline', gap: 6 }}>
         <span>{title}</span>
-        <span data-taxonomy-scope={title} style={SCOPE_TAG}>{scope}</span>
+        {scope ? <span data-taxonomy-scope={title} style={SCOPE_TAG}>{scope}</span> : null}
       </div>
       <div style={{ display: 'flex', height: 6, border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`, background: HUD_COLORS.trackGround }}>
         {nonZero.map((bucket) => (

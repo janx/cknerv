@@ -6,19 +6,14 @@ import type {
 } from '@cknerv/types';
 import { assetEcosystemVisualState } from '../../derives/assetEcosystem.derive';
 import {
-  chainAssetFamilyBuckets,
-  chainLockFamilyBuckets,
+  chainInventoryBuckets,
   scriptFamilyCensusVisualState,
 } from '../../derives/scriptFamilies.derive';
 import { formatCkb, formatExactCkb } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
 import { ReadoutHeader, SCOPE_TAG, StatRow } from './primitives';
 import TaxonomyBar from './TaxonomyBar';
-import {
-  POPULATION_SCOPE,
-  chainLiveRow,
-  formatPopulationCount,
-} from './cellPopulation.presentation';
+import { chainLiveRow } from './cellPopulation.presentation';
 
 function formatCkbAmount(shannons: string): string {
   try {
@@ -45,25 +40,30 @@ function formatBytes(bytes: number): string {
  * which is why the section is named for the census and the panel for the
  * sample.
  *
- * It was CHAIN CAPACITY, named for its first row, with the index's capacity
- * split drawn under the count — DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER
- * 85%, true of the CKB and silent about the Cells. Then, briefly, CHAIN STATE, with
- * the count split three ways, DAO · TYPED · PLAIN, which is the partition
- * and not the composition: a third of the chain's Cells are typed, and
- * "typed" says nothing about which of thirty families they belong to. The
- * bars are now the stage's own two taxonomies at chain scope — type families
- * with bare CKB beside them, and lock families — read from the index's
- * whole-chain family counts, so the ASSETS bar here and the ASSETS bar on
- * STAGE·07 name the same things and a reader can hold the two side by side.
+ * Four rulings shaped the bar. It was CHAIN CAPACITY, named for its first
+ * row, with the index's capacity split drawn under the count — DAO 14%,
+ * TOKENS 0.08%, OBJECTS 0.03%, OTHER 85%, true of the CKB and silent about
+ * the Cells. Then, briefly, CHAIN STATE with the count split three ways,
+ * DAO · TYPED · PLAIN, which is the partition and not the composition: a
+ * third of the chain's Cells are typed, and "typed" says nothing about
+ * which of thirty families they belong to. Then the stage's two
+ * script-family taxonomies at chain scope, six families named and the rest
+ * folded, with a LOCKS bar beside them. The user struck the lock bar and
+ * asked for the index's own inventory instead: the ASSETS bar is now the
+ * chain by ckbadger's menu — CKB, then TOKENS · OBJECTS · IDENTITIES as its
+ * Inventory pages classify them, the DAO, and SCRIPTS for every other typed
+ * Cell — read from the index's whole-chain family counts and its own
+ * verdict on which inventory each family is.
  *
  * Three independent measurements meet here: the indexed asset-ecosystem
  * record, the validated Cell census, and the index's family census. Each is
- * exact at its own anchor. The section header states the first anchor it
- * has once; the census row and the family bars each carry their own anchor
- * and their own staleness whenever those differ, because a count must never
- * inherit an anchor that is not its own. Any of the three can be missing;
- * the section renders when at least one exists, and renders nothing sooner
- * than a number it cannot prove.
+ * exact at its own anchor, and the section header states the first anchor
+ * it has, once. Neither the count nor the bar repeats a scope word or an
+ * anchor of its own — the section is the chain's, and the user struck those
+ * tags as noise — but each still says STALE when its own record has gone
+ * stale, because that is the one thing a reader must not miss. Any of the
+ * three can be missing; the section renders when at least one exists, and
+ * renders nothing sooner than a number it cannot prove.
  */
 export default function CellCensusReadout({
   source,
@@ -103,20 +103,8 @@ export default function CellCensusReadout({
   // verdict about the section rather than as the section's own colour.
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
   const headerAnchor = usableRecord?.as_of ?? census?.as_of ?? families!.as_of;
-  const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
-  // The family bars follow the census row's rule: the scope always, the
-  // anchor only when the header's is not their own, and STALE when the
-  // count was exact somewhere it no longer is.
+  const liveCells = chainLiveRow(census, censusStale);
   const familyStale = familyState === 'stale';
-  const familyScope = families === null
-    ? null
-    : [
-      POPULATION_SCOPE.chain,
-      families.as_of.block === headerAnchor.block
-        ? null
-        : `AS OF #${formatPopulationCount(families.as_of.block)}`,
-      familyStale ? 'STALE' : null,
-    ].filter((part) => part !== null).join(' · ');
 
   if (folded) {
     // Header and the one count the section is read for. `LIVE n` rather than
@@ -200,14 +188,17 @@ export default function CellCensusReadout({
           {liveCells.value}
         </span>
       </div>
-      {families && familyScope !== null ? (
-        // The chain's composition in the stage's own two taxonomies. Indexed
-        // context, like the capacity rows: it dims on its own record's
-        // staleness, never on the census row's, and it is absent — never a
-        // guess — until the index has counted every family.
+      {families ? (
+        // The chain by the index's own menu. Indexed context, like the
+        // capacity rows: it dims on its own record's staleness, never on the
+        // census row's, and it is absent — never a guess — until the index
+        // has counted every family and said which inventory each one is.
         <div data-indexed-context data-chain-taxonomy style={{ opacity: familyStale ? STALE_OPACITY : 1 }}>
-          <TaxonomyBar title="ASSETS" scope={familyScope} buckets={chainAssetFamilyBuckets(families)} />
-          <TaxonomyBar title="LOCKS" scope={familyScope} buckets={chainLockFamilyBuckets(families)} />
+          <TaxonomyBar
+            title="ASSETS"
+            scope={familyStale ? 'STALE' : undefined}
+            buckets={chainInventoryBuckets(families)}
+          />
         </div>
       ) : null}
       {usableRecord && usableRecord.top_assets.length > 0 ? (

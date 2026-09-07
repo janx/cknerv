@@ -7,7 +7,7 @@ import type {
   ScriptFamilyCensusRecord,
 } from '@cknerv/types';
 import CellCensusReadout from '../../../src/components/hud/CellCensusReadout';
-import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
+import { INVENTORY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { STALE_OPACITY } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
@@ -51,10 +51,12 @@ function census(overrides: Partial<ChainCensus> = {}): ChainCensus {
   };
 }
 
-/** Mainnet's shape on 2026-09-07, to the Cell: two thirds bare CKB, one
- *  keeper's income cells as the largest type family, the DAO seventh among
- *  the types and so folded off a six-slot bar, and one lock holding most of
- *  the chain. The remainders make both taxonomies partition `live_cells`. */
+/** Mainnet's shape on 2026-09-07, to the Cell: two thirds bare CKB, the
+ *  keeper's income cells as the largest type family, tokens and objects a
+ *  few percent each, six thousand identities, the DAO at one and a half —
+ *  and the index's own verdict on which inventory each family is, which is
+ *  what the bar splits the typed Cells by. The remainders make the type
+ *  families, bare CKB and the unlisted tail partition `live_cells`. */
 function familyCensus(overrides: Partial<ScriptFamilyCensusRecord> = {}): ScriptFamilyCensusRecord {
   return {
     source: 'ckbadger',
@@ -62,24 +64,22 @@ function familyCensus(overrides: Partial<ScriptFamilyCensusRecord> = {}): Script
     updated_at_ms: Date.now(),
     live_cells: 1_471_373,
     types_absent: 972_811,
-    types_unlisted: 42_981,
+    types_dao: 22_690,
+    types_unlisted: 36_622,
     locks_unlisted: 10_916,
     families: [
       { name: 'Nervos DAO', kind: 'type', live_cells: 22_690 },
       { name: '.bit Income Cell', kind: 'type', live_cells: 233_849 },
-      { name: 'xUDT', kind: 'type', live_cells: 57_748 },
+      { name: 'xUDT', kind: 'type', live_cells: 57_748, inventory: 'token' },
       { name: 'COTA', kind: 'type', live_cells: 53_892 },
-      { name: 'M-NFT', kind: 'type', live_cells: 45_994 },
-      { name: 'Spore', kind: 'type', live_cells: 37_275 },
-      { name: 'Simple UDT', kind: 'type', live_cells: 4_133 },
+      { name: 'M-NFT', kind: 'type', live_cells: 45_994, inventory: 'object' },
+      { name: 'Spore', kind: 'type', live_cells: 37_275, inventory: 'object' },
+      { name: 'Simple UDT', kind: 'type', live_cells: 4_133, inventory: 'token' },
+      { name: '.bit Account', kind: 'type', live_cells: 6_245, inventory: 'identity' },
+      { name: 'did:ckb', kind: 'type', live_cells: 114, inventory: 'identity' },
       { name: 'Default Lock', kind: 'lock', live_cells: 893_139 },
       { name: '.bit Lock', kind: 'lock', live_cells: 259_569 },
       { name: 'JoyID', kind: 'lock', live_cells: 161_443 },
-      { name: 'FlashSigner', kind: 'lock', live_cells: 42_047 },
-      { name: 'PW Lock', kind: 'lock', live_cells: 29_251 },
-      { name: 'Force Bridge', kind: 'lock', live_cells: 27_197 },
-      { name: 'OMNI Lock', kind: 'lock', live_cells: 25_858 },
-      { name: 'UniPass', kind: 'lock', live_cells: 21_953 },
     ],
     ...overrides,
   };
@@ -145,93 +145,85 @@ describe('CellCensusReadout', () => {
     expect(text).not.toContain('Rendered');
   });
 
-  it('splits the chain by the stage’s own two taxonomies, by Cell count', () => {
-    // Not the index's capacity split (DAO 14.5%, TOKENS 0.1%, by CKB), and
-    // not the census's three classes (DAO · TYPED · PLAIN): the ASSETS and
-    // LOCKS bars STAGE·07 draws, over the whole chain's families.
+  it('splits the chain by the index’s own inventory, by Cell count', () => {
+    // Not the index's capacity split (DAO 14.5%, TOKENS 0.1%, by CKB), not
+    // the census's three classes (DAO · TYPED · PLAIN), and not thirty
+    // families ranked: the words ckbadger's own menu uses — its Inventory
+    // pages, the DAO, Scripts — over every live Cell, with CKB first.
     const { container } = render(
       <CellCensusReadout source={source} record={record} census={census()} scriptFamilyCensus={familyCensus()} />,
     );
     const text = container.textContent ?? '';
     expect(text).not.toContain('14.5%');
-    expect(text).not.toContain('TOKENS');
     expect(text).not.toContain('TYPED');
     expect(text).not.toContain('PLAIN');
+    expect(text).not.toContain('.bit Income Cell');
+    expect(container.querySelector('[data-taxonomy-bar="LOCKS"]')).toBeNull();
 
-    // ASSETS: bare CKB first, five families ranked by Cell count, the DAO
-    // and sUDT folded past the six-slot cut, and last the typed Cells the
-    // index has no family for.
     expect(segments(container, 'ASSETS').map((segment) => segment.dataset.taxonomySegment)).toEqual([
       'native',
-      'type:.bit Income Cell',
-      'type:xUDT',
-      'type:COTA',
-      'type:M-NFT',
-      'type:Spore',
-      'rest',
-      'unlisted',
+      'token',
+      'object',
+      'identity',
+      'dao',
+      'script',
     ]);
+    // Identities are 0.43% of the chain: a real six thousand Cells, so a
+    // segment, but under the legend's half-percent floor, so a count in the
+    // tail rather than a name claiming to be absent. SCRIPTS is every other
+    // typed Cell — the keeper's income cells, COTA, the typed Cells the
+    // index has no family for — with the DAO's own family taken off it.
     expect(legend(container, 'ASSETS')).toBe(
-      'CKB 66% · .bit Income Cell 16% · xUDT 4% · COTA 4% · M-NFT 3% · Spore 3% · +2 more 2% · unlisted 3%',
+      'CKB 66% · TOKENS 4% · OBJECTS 6% · DAO 2% · SCRIPTS 22% · +1 <1%',
     );
-    // …and every segment is a share of the whole census, so the bar sums to
-    // every live Cell rather than to the families the index happened to name.
+    expect(bar(container, 'ASSETS')?.title).toBe(
+      'CKB 66% · TOKENS 4% · OBJECTS 6% · IDENTITIES <1% · DAO 2% · SCRIPTS 22%',
+    );
     const widths = segments(container, 'ASSETS').map((segment) => parseFloat(segment.style.width));
     expect(widths.reduce((sum, width) => sum + width, 0)).toBeCloseTo(100, 6);
     expect(widths[0]).toBeCloseTo((972_811 / 1_471_373) * 100, 3);
+    expect(widths[5]).toBeCloseTo((324_363 / 1_471_373) * 100, 3);
 
-    // LOCKS: six named, two folded, and the unlisted tail — a real 10,916
-    // Cells — named at its rounded share rather than folded into a count.
-    expect(segments(container, 'LOCKS').map((segment) => segment.dataset.taxonomySegment)).toEqual([
-      'lock:Default Lock',
-      'lock:.bit Lock',
-      'lock:JoyID',
-      'lock:FlashSigner',
-      'lock:PW Lock',
-      'lock:Force Bridge',
-      'rest',
-      'unlisted',
-    ]);
-    expect(legend(container, 'LOCKS')).toBe(
-      'Default Lock 61% · .bit Lock 18% · JoyID 11% · FlashSigner 3% · PW Lock 2% · Force Bridge 2% · +2 more 3% · unlisted 1%',
-    );
-    // The unnamed tails wear the hue the stage's `unidentified` wears — both
-    // are the part of a bar nobody here can name — and the plain segment is
-    // CKB's own.
+    // One hue per word, the words the activity feed already wears.
     const hue = (hex: string) => {
       const probe = document.createElement('span');
       probe.style.backgroundColor = hex;
       return probe.style.backgroundColor;
     };
     const asset = segments(container, 'ASSETS');
-    expect(asset[0].style.backgroundColor).toBe(hue(SCRIPT_FAMILY_COLORS.native));
-    expect(asset[asset.length - 1].style.backgroundColor).toBe(hue(SCRIPT_FAMILY_COLORS.unidentified));
+    expect(asset.map((segment) => segment.style.backgroundColor)).toEqual(
+      ['native', 'token', 'object', 'identity', 'dao', 'script'].map((key) => hue(INVENTORY_COLORS[key])),
+    );
   });
 
-  it('gives the bars their own scope, anchor and staleness', () => {
-    // Anchors agree: the scope alone, the header having said the anchor once.
+  it('carries no scope word and no anchor of its own, only STALE', () => {
+    // The section is the chain's and its header states the anchor once:
+    // `CHAIN`, `CHAIN · AS OF #n` on the count and on the bar were struck as
+    // noise. What survives is the one word a reader must not miss.
     const agreed = render(
       <CellCensusReadout source={source} record={record} census={census()} scriptFamilyCensus={familyCensus()} />,
     );
-    expect(agreed.container.querySelector('[data-taxonomy-scope="ASSETS"]')?.textContent).toBe('CHAIN');
-    expect(agreed.container.querySelector('[data-taxonomy-scope="LOCKS"]')?.textContent).toBe('CHAIN');
+    expect(agreed.container.querySelector('[data-taxonomy-scope]')).toBeNull();
+    expect(agreed.container.querySelector('[data-population-scope]')).toBeNull();
+    expect(agreed.container.textContent).not.toContain('CHAIN');
     cleanup();
 
-    // The family count trails the record: it says where it was exact.
+    // The family count trailing the record is not a fact a reader acts on.
     const trailing = render(
       <CellCensusReadout
         source={source}
         record={record}
-        census={census()}
+        census={census({ as_of: { block: 98, hash: '0xblock98' } })}
         scriptFamilyCensus={familyCensus({ as_of: { block: 97, hash: '0xblock97' } })}
       />,
     );
-    expect(trailing.container.querySelector('[data-taxonomy-scope="ASSETS"]')?.textContent)
-      .toBe('CHAIN · AS OF #97');
+    expect(trailing.container.textContent).not.toContain('AS OF #97');
+    expect(trailing.container.textContent).not.toContain('AS OF #98');
+    expect(trailing.container.textContent).toContain('AS OF #100');
     cleanup();
 
-    // Its own refresh has stopped while the source is fine: the bars dim and
-    // say so, and the capacity rows beside them stay at full strength.
+    // Its own refresh has stopped while the source is fine: the bar dims and
+    // says so, and the capacity rows beside it stay at full strength.
     const stale = render(
       <CellCensusReadout
         source={source}
@@ -240,7 +232,7 @@ describe('CellCensusReadout', () => {
         scriptFamilyCensus={familyCensus({ updated_at_ms: Date.now() - 400_000 })}
       />,
     );
-    expect(stale.container.querySelector('[data-taxonomy-scope="LOCKS"]')?.textContent).toBe('CHAIN · STALE');
+    expect(stale.container.querySelector('[data-taxonomy-scope="ASSETS"]')?.textContent).toBe('STALE');
     expect(stale.container.querySelector<HTMLElement>('[data-chain-taxonomy]')?.style.opacity)
       .toBe(String(STALE_OPACITY));
     expect(stale.container.querySelector('[data-readout-title]')?.parentElement?.textContent)
@@ -288,28 +280,24 @@ describe('CellCensusReadout', () => {
     expect(counted.container.querySelector('[data-taxonomy-bar]')).toBeNull();
   });
 
-  it('anchors the census to the header when the anchors agree', () => {
-    const { container } = render(
+  it('prints the count bare, whatever the census’s own anchor', () => {
+    // One anchor stated once, on the header; the row wore `CHAIN` and its own
+    // `AS OF #n` for a while and the user struck both as noise.
+    const agreed = render(
       <CellCensusReadout source={source} record={record} census={census()} />,
     );
-    const row = container.querySelector('[data-population-row="Chain live"]');
-    // One anchor stated once: a second identical anchor on the row would read
-    // as a second measurement. The SCOPE stays — three counts on this screen
-    // carry the word "live" and each one names the scope it is true in.
-    expect(row?.querySelector('[data-population-scope]')?.textContent).toBe('CHAIN');
-  });
-
-  it('gives the census its own anchor when it trails the record', () => {
-    const { container } = render(
+    expect(agreed.container.querySelector('[data-population-row="Chain live"] [data-population-scope]')).toBeNull();
+    cleanup();
+    const trailing = render(
       <CellCensusReadout
         source={source}
         record={record}
         census={census({ as_of: { block: 98, hash: '0xblock98' } })}
       />,
     );
-    const row = container.querySelector('[data-population-row="Chain live"]');
-    expect(row?.querySelector('[data-population-scope]')?.textContent)
-      .toBe('CHAIN · AS OF #98');
+    const row = trailing.container.querySelector('[data-population-row="Chain live"]');
+    expect(row?.querySelector('[data-population-scope]')).toBeNull();
+    expect(row?.textContent).toContain('1,471,373');
   });
 
   it('keeps a stale census, labeled and dimmed', () => {
@@ -318,7 +306,7 @@ describe('CellCensusReadout', () => {
     );
     const row = container.querySelector<HTMLElement>('[data-population-row="Chain live"]');
     expect(row?.textContent).toContain('1,471,373');
-    expect(row?.textContent).toContain('STALE');
+    expect(row?.querySelector('[data-population-scope]')?.textContent).toBe('STALE');
     expect(row?.style.opacity).toBe('0.6');
   });
 
@@ -385,6 +373,6 @@ describe('CellCensusReadout folded', () => {
     expect(section.dataset.cellCensusFolded).toBeUndefined();
     expect(section.textContent).toContain('Live capacity');
     expect(section.textContent).toContain('Knowledge');
-    expect(section.querySelectorAll('[data-taxonomy-bar]').length).toBe(2);
+    expect(section.querySelectorAll('[data-taxonomy-bar]').length).toBe(1);
   });
 });

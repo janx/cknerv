@@ -422,14 +422,16 @@ Chain-scope and stage-scope readings live on two surfaces, and they are a
 census and a sample of one population. **CELL CENSUS** is a fused readout
 inside `COMMON KNOWLEDGE BASE`, in the same header system as `TX HORIZON` and
 `ACTIVITY`: everything true of the whole chain — indexed live capacity,
-knowledge bytes, the validated live-Cell count, the chain's `ASSETS` and
-`LOCKS` bars, top assets — under one stated anchor, with the count and the two
-bars each carrying their own anchor and staleness whenever those differ from
-the record's. The bars are the stage's own two taxonomies at chain scope,
-drawn from the `script_family_census` record below: type families with bare
-`CKB` beside them, and lock families, ranked by live-Cell count, six named,
-the rest folded, and an `unlisted` tail for Cells whose script the index has
-no family for. The asset record's basis-point capacity shares are validated on
+knowledge bytes, the validated live-Cell count, the chain's `ASSETS` bar, top
+assets — under one stated anchor. Neither the count nor the bar repeats a scope
+word or an anchor of its own (the section is the chain's, and the header says
+the anchor once); each says only `STALE` when its own record has gone stale.
+The bar is the chain by ckbadger's own menu, drawn from the
+`script_family_census` record below: `CKB` first, then `TOKENS · OBJECTS ·
+IDENTITIES` exactly as the Inventory pages classify them, the `DAO`, and
+`SCRIPTS` for every other typed Cell — protocol state under a named family and
+the typed Cells the index has no family for — every segment a share of the
+live-Cell count. The asset record's basis-point capacity shares are validated on
 the wire but not drawn: split by capacity the chain reads DAO 14%, TOKENS
 0.08%, OBJECTS 0.03%, OTHER 85%, which is true of the CKB and says nothing
 about the Cells — a token Cell holds close to the minimum capacity, a balance
@@ -891,28 +893,36 @@ names, not counts: the bars still show the true distribution, spelled in hashes.
 
 With `script_family_census`, cknerv asks the index for the whole chain's
 live Cells by script family, at most once every two minutes: the bounded
-`scripts` catalogue — every family the index tracks, its `scriptKind` and its
-chain-wide `liveCellsCount`, read page by page to at most 256 families — and
-`cells/live-summary` for the totals the families are cut against, both under
-one validated anchor that is rechecked after the two reads. The record carries
-the count of live Cells, the bare-CKB count from the summary's class partition,
-every family that holds at least one live Cell, and two explicit remainders:
-typed Cells outside every listed type family and Cells under a lock outside
-every listed lock family. A family the index places on neither bar is skipped;
-a catalogue that names families without counting them withholds the record
-rather than counting zero; a summary without a class partition withholds it
-too. The two requests are a block apart at most, so family totals up to 256
-Cells past the census are read as skew and the remainder floors at zero, while
-anything past that is refused naming both figures.
+`scripts` catalogue — every family the index tracks, its `scriptKind`, its
+chain-wide `liveCellsCount` and its `assetType`, read page by page to at most
+256 families — and `cells/live-summary` for the totals the families are cut
+against, both under one validated anchor that is rechecked after the two
+reads. `assetType` is the index's own verdict on which Inventory page a
+family's cells are listed under — `token`, `object` or `identity`, decided by
+the recognizers its indexer classifies item deltas with — and it rides each
+family as `inventory`. The record carries the count of live Cells, the
+bare-CKB and DAO counts from the summary's class partition, every family that
+holds at least one live Cell, and two explicit remainders: typed Cells outside
+every listed type family and Cells under a lock outside every listed lock
+family. A family the index places on neither slot is skipped; a catalogue that
+names families without counting them withholds the record rather than counting
+zero, and so does one that counts them but names no inventory for any (an
+index that predates the field — a bar drawn from it would read every token as
+a script); a summary without a class partition withholds it too; an inventory
+kind this dashboard has no word for is refused. The two requests are a block
+apart at most, so family totals up to 256 Cells past the census are read as
+skew and the remainder floors at zero, while anything past that is refused
+naming both figures.
 
 This is the chain-scope twin of the cells projection's script census: that one
-counts the stage's identities and refuses to name them, this one arrives named
-and counts the chain. `CELL CENSUS` draws it as the same `ASSETS` and `LOCKS`
-bars `STAGE SAMPLE` draws, so the two surfaces split their populations by one
-taxonomy. The bars carry the record's own anchor whenever it differs from the
-section's, dim when the source is stale or the record is more than six minutes
-old, and are absent — never a guess from the census's three classes — until the
-index has counted every family.
+counts the stage's identities and refuses to name them, this one arrives named,
+classified and counted. `CELL CENSUS` draws it as one `ASSETS` bar in the
+index's own vocabulary — `CKB · TOKENS · OBJECTS · IDENTITIES · DAO · SCRIPTS`,
+the DAO's family taken off the scripts once, the unlisted typed Cells counted
+as scripts — so a dashboard reading "inventory" means what ckbadger means by
+it. The bar dims and says `STALE` when the source is stale or the record is
+more than six minutes old, and is absent — never a guess from the census's
+three classes — until the index has counted and classified every family.
 
 ### Producer Ledger
 

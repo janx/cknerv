@@ -840,12 +840,13 @@ and its own anchor discipline, and the browser performs the join on
 projection reads.
 
 The same index answers the inverse question too: the `script_family_census`
-capability reads the whole catalogue's chain-wide live-Cell counts under one
-validated anchor and publishes them as their own anchored record, so `CELL
-CENSUS` on CKB·01 can draw the chain's `ASSETS` and `LOCKS` bars in the very
-taxonomy STAGE·07 draws the stage's. Named at the source and counted at the
-source; the browser performs no join for it and invents no bucket — bare CKB
-and the two unlisted remainders arrive as figures.
+capability reads the whole catalogue's chain-wide live-Cell counts, each family
+with the index's own inventory verdict, under one validated anchor and
+publishes them as their own anchored record, so `CELL CENSUS` on CKB·01 can
+draw the chain as `CKB · TOKENS · OBJECTS · IDENTITIES · DAO · SCRIPTS` — the
+index's menu, by Cell count. Named, classified and counted at the source; the
+browser performs no join for it and invents no bucket — bare CKB, the DAO and
+the two unlisted remainders arrive as figures.
 
 The request is bounded by what cknerv observed rather than by what the index
 knows. An empty observed set asks nothing at all; otherwise the deduplicated

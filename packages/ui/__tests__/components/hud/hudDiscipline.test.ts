@@ -107,7 +107,7 @@ import {
   ACTIVITY_CATEGORY_COLORS,
   ACTIVITY_UNLISTED_COLOR,
 } from '../../../src/derives/activityFeed.derive';
-import { SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
+import { INVENTORY_COLORS, SCRIPT_FAMILY_COLORS } from '../../../src/derives/scriptFamilies.derive';
 import { replayPresentation } from '../../../src/components/hud/replayPresentation';
 import { streamHealthPresentation } from '../../../src/components/hud/StreamHealthBanner';
 import {
@@ -223,6 +223,7 @@ const PALETTE_TOKENS: ReadonlyArray<{ token: string; hex: string }> = [
   ...Object.entries(ACTIVITY_CATEGORY_COLORS).map(([key, hex]) => ({ token: `ACTIVITY_CATEGORY_COLORS.${key}`, hex })),
   { token: 'ACTIVITY_UNLISTED_COLOR', hex: ACTIVITY_UNLISTED_COLOR },
   ...Object.entries(SCRIPT_FAMILY_COLORS).map(([key, hex]) => ({ token: `SCRIPT_FAMILY_COLORS.${key}`, hex })),
+  ...Object.entries(INVENTORY_COLORS).map(([key, hex]) => ({ token: `INVENTORY_COLORS.${key}`, hex })),
   ...Object.entries(CHAIN_ANCHOR_HEX).map(([key, hex]) => ({ token: `CHAIN_ANCHOR_HEX.${key}`, hex })),
   ...Object.entries(PEER_NETWORK_HEX).map(([key, hex]) => ({ token: `PEER_NETWORK_HEX.${key}`, hex })),
   ...Object.entries(CELL_GALAXY_PALETTE)
@@ -2179,6 +2180,11 @@ const CATEGORY_PALETTES: Readonly<Record<string, Readonly<Record<string, string>
   // longhand, and the tail sat 32.5 from the remainder it shares an edge with
   // while its own comment claimed the two were kept apart.
   scriptFamily: SCRIPT_FAMILY_COLORS,
+  // The chain by the index's menu — CELL CENSUS's one bar: six words the
+  // activity feed already speaks, in the bands it speaks them in. Registered
+  // as its own surface because it is one stacked strip a reader sees whole,
+  // and a matrix that only checked the feed would never see these six touch.
+  inventory: INVENTORY_COLORS,
   // A RAMP rather than a set of bands, and registered here for the half of it
   // that is the same question: an ordinal still names a fact about a Cell, so
   // no rung of it may sit on a reserved hue. It shipped with four of them on
@@ -2223,6 +2229,10 @@ const SANCTIONED_BORROWS: ReadonlySet<string> = new Set([
   // one that names something.
   'scriptFamily.native → cyanWire',
   'scriptFamily.native → peerWire',
+  // A fifth time, on the CELL CENSUS bar: bare CKB is bare CKB on the chain
+  // as on the stage, and it wears the consensus's own colour there too.
+  'inventory.native → cyanWire',
+  'inventory.native → peerWire',
 ]);
 
 describe('the colour reserve', () => {

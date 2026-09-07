@@ -24,10 +24,14 @@ import {
  * and STAGE·07 calling the SAME window as CELL·03 `REPLAY WINDOW` (report A,
  * A-13). Four words for three scopes, and two of them for one scope.
  *
- * The three labels stay — each one reads correctly where it stands — but the
- * SCOPE WORD inside them comes from here, so a reader who learns `OBSERVED` on
- * one panel meets the same word on the other, and no surface can invent a
- * fourth name for a scope that already has one.
+ * The labels stay — each one reads correctly where it stands — but the SCOPE
+ * WORD inside them comes from here, so a reader who learns `OBSERVED` on one
+ * panel meets the same word on the other, and no surface can invent a fourth
+ * name for a scope that already has one. The chain's count no longer wears
+ * its word at all: it sits under CELL CENSUS, whose whole section is the
+ * chain, and the user struck the tag as noise (2026-09-08). `chain` stays in
+ * the table for the day a chain count stands somewhere the section does not
+ * already say so.
  *
  * The stage funnel's other scopes (`ADDRESSABLE`, `MEMBERS`, `RECEIVED ROWS`,
  * `LOCAL WINDOW`) are distinctions INSIDE the stage rather than one of these
@@ -127,41 +131,27 @@ export interface ChainLiveRow {
   dim: boolean;
 }
 
-/** The chain's own live-Cell count for the chain block.
+/** The chain's own live-Cell count for CELL CENSUS.
  *
- *  `headerAnchorBlock` is the anchor the surrounding block already states.
- *  The census is an independent measurement and may anchor to a different
- *  block; when it does, the row says so rather than inheriting a header that
- *  is not its own. Without a census the row says UNAVAILABLE — never a number
- *  the dashboard cannot prove, and never the retained count wearing the
- *  chain's label. */
-export function chainLiveRow(
-  census: ChainCensus | null,
-  censusStale: boolean,
-  headerAnchorBlock?: number,
-): ChainLiveRow {
+ *  The row carried `CHAIN · AS OF #n` for a while — the scope word this
+ *  module keeps for every other live count, and the census's own anchor
+ *  whenever it trailed the header's. Under CELL CENSUS both were noise: the
+ *  section is the chain's, its header states an anchor once, and a block or
+ *  two of lag on a count of a million and a half is not a fact a reader acts
+ *  on. What the row still says is the one thing a reader must not miss —
+ *  STALE, when the count was exact somewhere it no longer is — and, without
+ *  a census, UNAVAILABLE: never a number the dashboard cannot prove, and
+ *  never the retained count wearing the chain's label. */
+export function chainLiveRow(census: ChainCensus | null, censusStale: boolean): ChainLiveRow {
   if (!census) {
     return { value: 'UNAVAILABLE', tag: 'NO VALIDATED CENSUS', dim: true };
   }
-  // The scope first, then the provenance: `CHAIN · AS OF #n`. The anchor is
-  // dropped when the section header already states it (the panel says it once),
-  // but the SCOPE is never dropped — an unqualified count is the mistake this
-  // module exists to stop making.
-  const anchored = `${POPULATION_SCOPE.chain} · AS OF #${formatPopulationCount(census.as_of.block)}`;
   if (censusStale) {
     // Kept and labeled rather than dropped: the count was exact where it
     // says it was.
-    return {
-      value: formatPopulationCount(census.live_cells),
-      tag: `${anchored} · STALE`,
-      dim: true,
-    };
+    return { value: formatPopulationCount(census.live_cells), tag: 'STALE', dim: true };
   }
-  return {
-    value: formatPopulationCount(census.live_cells),
-    tag: headerAnchorBlock === census.as_of.block ? POPULATION_SCOPE.chain : anchored,
-    dim: false,
-  };
+  return { value: formatPopulationCount(census.live_cells), tag: null, dim: false };
 }
 
 export interface CompositionMix {

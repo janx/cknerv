@@ -575,9 +575,14 @@ pub struct ScriptRegistryRecord {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScriptFamilyCount {
     pub name: String,
-    /// `"type"` or `"lock"`: which of the two bars the family belongs on.
+    /// `"type"` or `"lock"`: which script slot of a Cell the family fills.
     pub kind: String,
     pub live_cells: u64,
+    /// `"token"`, `"object"` or `"identity"` — the index's Inventory page
+    /// the family's cells are listed under — or absent for a family whose
+    /// cells are none of those: the DAO, protocol state, every lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<String>,
 }
 
 /// The most families one record may carry. Mainnet's index catalogues 66;
@@ -602,6 +607,8 @@ pub struct ScriptFamilyCensusRecord {
     pub live_cells: u64,
     /// Live Cells carrying no type script at all.
     pub types_absent: u64,
+    /// Live Cells in the Nervos DAO, from the census's own class partition.
+    pub types_dao: u64,
     /// Typed live Cells outside every listed type family.
     pub types_unlisted: u64,
     /// Live Cells whose lock is outside every listed lock family.
@@ -2558,6 +2565,7 @@ mod tests {
             updated_at_ms: block,
             live_cells: 1_000,
             types_absent: 700,
+            types_dao: 0,
             types_unlisted: 10,
             locks_unlisted: 4,
             families: vec![
@@ -2565,11 +2573,13 @@ mod tests {
                     name: "xUDT".into(),
                     kind: "type".into(),
                     live_cells: 290,
+                    inventory: Some("token".into()),
                 },
                 ScriptFamilyCount {
                     name: "Default Lock".into(),
                     kind: "lock".into(),
                     live_cells: 996,
+                    inventory: None,
                 },
             ],
         }

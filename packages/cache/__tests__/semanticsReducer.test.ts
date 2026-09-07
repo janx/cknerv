@@ -269,10 +269,11 @@ function scriptFamilyCensus(block: number): ScriptFamilyCensusRecord {
     updated_at_ms: block,
     live_cells: 1_000,
     types_absent: 700,
+    types_dao: 0,
     types_unlisted: 10,
     locks_unlisted: 4,
     families: [
-      { name: 'xUDT', kind: 'type', live_cells: 290 },
+      { name: 'xUDT', kind: 'type', live_cells: 290, inventory: 'token' },
       { name: 'Default Lock', kind: 'lock', live_cells: 996 },
     ],
   };

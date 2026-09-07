@@ -631,6 +631,7 @@
       "updated_at_ms": 1700000000005,
       "live_cells": 1000,
       "types_absent": 663,
+      "types_dao": 15,
       "types_unlisted": 10,
       "locks_unlisted": 6,
       "families": [
@@ -647,7 +648,8 @@
         {
           "name": "xUDT",
           "kind": "type",
-          "live_cells": 39
+          "live_cells": 39,
+          "inventory": "token"
         },
         {
           "name": "COTA",
@@ -657,17 +659,20 @@
         {
           "name": "M-NFT",
           "kind": "type",
-          "live_cells": 31
+          "live_cells": 31,
+          "inventory": "object"
         },
         {
           "name": "Spore",
           "kind": "type",
-          "live_cells": 25
+          "live_cells": 25,
+          "inventory": "object"
         },
         {
           "name": "Simple UDT",
           "kind": "type",
-          "live_cells": 3
+          "live_cells": 3,
+          "inventory": "token"
         },
         {
           "name": "Spore Cluster",
@@ -687,7 +692,8 @@
         {
           "name": "did:ckb",
           "kind": "type",
-          "live_cells": 1
+          "live_cells": 1,
+          "inventory": "identity"
         },
         {
           "name": "Bitcoin SPV Type Lock",
@@ -697,12 +703,14 @@
         {
           "name": "Stable++ Asset",
           "kind": "type",
-          "live_cells": 1
+          "live_cells": 1,
+          "inventory": "token"
         },
         {
           "name": "ccBTC Asset",
           "kind": "type",
-          "live_cells": 1
+          "live_cells": 1,
+          "inventory": "token"
         },
         {
           "name": "M-NFT Class",
@@ -717,7 +725,8 @@
         {
           "name": ".bit Account",
           "kind": "type",
-          "live_cells": 1
+          "live_cells": 1,
+          "inventory": "identity"
         },
         {
           "name": "Default Lock",
@@ -1347,6 +1356,7 @@
         "updated_at_ms": 1700000000005,
         "live_cells": 1000,
         "types_absent": 663,
+        "types_dao": 15,
         "types_unlisted": 10,
         "locks_unlisted": 6,
         "families": [
@@ -1363,7 +1373,8 @@
           {
             "name": "xUDT",
             "kind": "type",
-            "live_cells": 39
+            "live_cells": 39,
+            "inventory": "token"
           },
           {
             "name": "COTA",
@@ -1373,17 +1384,20 @@
           {
             "name": "M-NFT",
             "kind": "type",
-            "live_cells": 31
+            "live_cells": 31,
+            "inventory": "object"
           },
           {
             "name": "Spore",
             "kind": "type",
-            "live_cells": 25
+            "live_cells": 25,
+            "inventory": "object"
           },
           {
             "name": "Simple UDT",
             "kind": "type",
-            "live_cells": 3
+            "live_cells": 3,
+            "inventory": "token"
           },
           {
             "name": "Spore Cluster",
@@ -1403,7 +1417,8 @@
           {
             "name": "did:ckb",
             "kind": "type",
-            "live_cells": 1
+            "live_cells": 1,
+            "inventory": "identity"
           },
           {
             "name": "Bitcoin SPV Type Lock",
@@ -1413,12 +1428,14 @@
           {
             "name": "Stable++ Asset",
             "kind": "type",
-            "live_cells": 1
+            "live_cells": 1,
+            "inventory": "token"
           },
           {
             "name": "ccBTC Asset",
             "kind": "type",
-            "live_cells": 1
+            "live_cells": 1,
+            "inventory": "token"
           },
           {
             "name": "M-NFT Class",
@@ -1433,7 +1450,8 @@
           {
             "name": ".bit Account",
             "kind": "type",
-            "live_cells": 1
+            "live_cells": 1,
+            "inventory": "identity"
           },
           {
             "name": "Default Lock",

@@ -112,22 +112,25 @@ describe('chainLiveRow', () => {
     });
   });
 
-  it('drops the anchor the header already states, and never the scope', () => {
-    // The panel says the anchor once; the SCOPE it never drops, because an
-    // unqualified live-Cell count beside two other live-Cell counts is the
-    // mistake this module exists to stop making.
+  it('carries no scope word and no anchor of its own', () => {
+    // The row wore `CHAIN` and, when the census trailed the header, its own
+    // `AS OF #n`; the user struck both as noise (2026-09-08). Under CELL
+    // CENSUS the section is the chain's and the header states the anchor
+    // once, so the count prints bare — the scope word stays in
+    // `POPULATION_SCOPE` for a chain count that stands anywhere else.
     const census = scenario('chain-scope-mainnet').model.chainCensus!;
-    expect(chainLiveRow(census, false, census.as_of.block).tag)
-      .toBe(POPULATION_SCOPE.chain);
-    expect(chainLiveRow(census, false, census.as_of.block + 2).tag)
-      .toBe(`${POPULATION_SCOPE.chain} · AS OF #${census.as_of.block.toLocaleString('en-US')}`);
+    expect(chainLiveRow(census, false)).toEqual({
+      value: census.live_cells.toLocaleString('en-US'),
+      tag: null,
+      dim: false,
+    });
+    expect(POPULATION_SCOPE.chain).toBe('CHAIN');
   });
 
   it('keeps a stale census, labeled and dimmed', () => {
     const model = scenario('stale-census').model;
-    const row = chainLiveRow(model.chainCensus, model.censusStale, model.chainCensus!.as_of.block);
-    expect(row.tag).toContain('STALE');
-    expect(row.tag).toContain('AS OF #');
+    const row = chainLiveRow(model.chainCensus, model.censusStale);
+    expect(row.tag).toBe('STALE');
     expect(row.dim).toBe(true);
   });
 });

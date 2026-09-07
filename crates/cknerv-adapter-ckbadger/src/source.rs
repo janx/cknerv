@@ -2767,6 +2767,7 @@ fn map_script_family_census(
     let mut counted = Vec::with_capacity(families.len());
     let mut type_sum = 0u64;
     let mut lock_sum = 0u64;
+    let mut inventoried = 0usize;
     for family in families {
         // A family the index places on neither bar has no bar to be counted
         // on; it is not an error, and it is not "unlisted" either — those are
@@ -2800,6 +2801,18 @@ fn map_script_family_census(
                 "ckbadger script catalogue returned duplicate {kind} family {name}"
             ));
         }
+        let inventory = match family.asset_type.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(kind @ ("token" | "object" | "identity")) => Some(kind.to_string()),
+            Some(other) => {
+                return Err(anyhow!(
+                    "ckbadger script catalogue returned unsupported inventory kind {other:?}"
+                ));
+            }
+        };
+        if inventory.is_some() {
+            inventoried += 1;
+        }
         if live == 0 {
             continue;
         }
@@ -2815,7 +2828,15 @@ fn map_script_family_census(
             name: name.to_string(),
             kind: kind.to_string(),
             live_cells: live,
+            inventory,
         });
+    }
+    // An index that counts families but names no inventory for any of them
+    // predates the field. The bar drawn from this record splits the chain by
+    // that inventory, and one that read every token as a script would be the
+    // exact wrong reading the record exists to end. Withhold.
+    if inventoried == 0 {
+        return Ok(None);
     }
 
     let types_unlisted = script_family_remainder(typed, type_sum, "type")?;
@@ -2826,6 +2847,7 @@ fn map_script_family_census(
         updated_at_ms: now_ms(),
         live_cells,
         types_absent: plain,
+        types_dao: dao,
         types_unlisted,
         locks_unlisted,
         families: counted,
@@ -8206,10 +8228,10 @@ mod tests {
 
     fn mainnet_like_families() -> serde_json::Value {
         serde_json::json!([
-            { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "liveCellsCount": 893, "deprecated": false },
-            { "familyId": "joyid", "name": "JoyID", "scriptKind": "lock", "liveCellsCount": 100, "deprecated": false },
-            { "familyId": "nervos-dao", "name": "Nervos DAO", "scriptKind": "type", "liveCellsCount": 22, "deprecated": false },
-            { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "liveCellsCount": 57, "deprecated": false },
+            { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "assetType": null, "liveCellsCount": 893, "deprecated": false },
+            { "familyId": "joyid", "name": "JoyID", "scriptKind": "lock", "assetType": null, "liveCellsCount": 100, "deprecated": false },
+            { "familyId": "nervos-dao", "name": "Nervos DAO", "scriptKind": "type", "assetType": null, "liveCellsCount": 22, "deprecated": false },
+            { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "assetType": "token", "liveCellsCount": 57, "deprecated": false },
             // Counted at zero: a family the index knows and no Cell carries
             // is not a segment, so it is not in the record either.
             { "familyId": "cota-registry", "name": "COTA Registry", "scriptKind": "type", "liveCellsCount": 0, "deprecated": false },
@@ -8245,9 +8267,10 @@ mod tests {
         assert_eq!(record.as_of.block, 100);
         assert_eq!(record.live_cells, 1_000);
         assert_eq!(record.types_absent, 908);
+        assert_eq!(record.types_dao, 22);
         assert_eq!(record.types_unlisted, 13);
         assert_eq!(record.locks_unlisted, 7);
-        let names: Vec<(&str, &str, u64)> = record
+        let names: Vec<(&str, &str, u64, Option<&str>)> = record
             .families
             .iter()
             .map(|family| {
@@ -8255,16 +8278,17 @@ mod tests {
                     family.name.as_str(),
                     family.kind.as_str(),
                     family.live_cells,
+                    family.inventory.as_deref(),
                 )
             })
             .collect();
         assert_eq!(
             names,
             vec![
-                ("Default Lock", "lock", 893),
-                ("JoyID", "lock", 100),
-                ("Nervos DAO", "type", 22),
-                ("xUDT", "type", 57),
+                ("Default Lock", "lock", 893, None),
+                ("JoyID", "lock", 100, None),
+                ("Nervos DAO", "type", 22, None),
+                ("xUDT", "type", 57, Some("token")),
             ]
         );
         server.abort();
@@ -8344,6 +8368,43 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+        server.abort();
+
+        // …and one that counts them but names no inventory for any predates
+        // the field: a bar drawn from it would read every token as a script.
+        let (api_base, server) = spawn_script_family_census_api(
+            serde_json::json!([
+                { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "liveCellsCount": 57 },
+                { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "liveCellsCount": 900 }
+            ]),
+            family_census_summary(1_000, 22, 70, 908),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        assert!(source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .is_none());
+        server.abort();
+
+        // A kind this dashboard has no word for is refused, not folded away.
+        let (api_base, server) = spawn_script_family_census_api(
+            serde_json::json!([
+                { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "assetType": "voucher", "liveCellsCount": 57 }
+            ]),
+            family_census_summary(1_000, 22, 70, 908),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let error = source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported inventory kind"), "{error}");
         server.abort();
     }
 

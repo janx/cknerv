@@ -679,6 +679,12 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(familyCells('lock') + familyCensus!.locks_unlisted).toBe(familyCensus!.live_cells);
     expect(familyCensus!.families.map((family) => family.kind))
       .toEqual(expect.arrayContaining(['type', 'lock']));
+    // The index's own inventory verdict rides each family, and the DAO count
+    // is the census's: together they are what the CELL CENSUS bar splits
+    // the typed Cells by, so the fixture carries every kind the bar names.
+    expect(new Set(familyCensus!.families.map((family) => family.inventory).filter(Boolean)))
+      .toEqual(new Set(['token', 'object', 'identity']));
+    expect(familyCensus!.types_dao).toBeLessThanOrEqual(familyCells('type'));
     expect(sample.deltas.script_family_census_replace.type).toBe(
       'script_family_census_replace',
     );

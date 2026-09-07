@@ -351,10 +351,12 @@ With a local ckbadger service configured:
       `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does not overlap
       `PULSE`
 - [ ] `COMMON KNOWLEDGE BASE` carries a `CELL CENSUS` section: live capacity,
-      knowledge, the validated live-Cell count, `ASSETS` and `LOCKS` bars in
-      the stage panel's own taxonomy over the whole chain (script families by
-      live-Cell COUNT, never by capacity; `CKB` first, six named, the rest
-      folded, an `unlisted` tail), and a bounded top-asset list
+      knowledge, the validated live-Cell count printed bare (no `CHAIN`, no
+      `AS OF` of its own — `STALE` only when stale), one `ASSETS` bar over the
+      whole chain by ckbadger's menu (`CKB · TOKENS · OBJECTS · IDENTITIES ·
+      DAO · SCRIPTS`, by live-Cell COUNT, never by capacity; absent until the
+      index names each family's inventory), no `LOCKS` bar, and a bounded
+      top-asset list
 - [ ] `PEER MESH` appends the reach bar and the country and client-version
       strips as plain rows of the panel — no `NETWORK ATLAS` heading, no strip
       captioned as a sample, the bar's own total in its caption rather than the

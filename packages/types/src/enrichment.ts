@@ -381,9 +381,13 @@ export interface ScriptRegistryRecord {
  *  the family. */
 export interface ScriptFamilyCount {
   name: string;
-  /** `'type'` or `'lock'`: which of the two bars the family belongs on. */
+  /** `'type'` or `'lock'`: which script slot of a Cell the family fills. */
   kind: string;
   live_cells: number;
+  /** `'token'`, `'object'` or `'identity'` — the index's Inventory page the
+   *  family's cells are listed under — or absent for a family whose cells
+   *  are none of those: the DAO, protocol state, every lock. */
+  inventory?: string;
 }
 
 /** The whole chain's live Cells partitioned by script family, in the two
@@ -399,6 +403,8 @@ export interface ScriptFamilyCensusRecord {
   live_cells: number;
   /** Live Cells carrying no type script at all. */
   types_absent: number;
+  /** Live Cells in the Nervos DAO, from the census's own class partition. */
+  types_dao: number;
   /** Typed live Cells outside every listed type family. */
   types_unlisted: number;
   /** Live Cells whose lock is outside every listed lock family. */

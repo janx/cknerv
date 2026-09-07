@@ -1011,6 +1011,13 @@ pub(crate) struct ScriptFamilyResponse {
     /// is nothing without it, withholds rather than counting zero.
     #[serde(default)]
     pub live_cells_count: Option<i64>,
+    /// Which Inventory page the family's cells are listed under — `token`,
+    /// `object` or `identity` — by the index's own recognizers. Optional on
+    /// the wire: an index that predates the field names and counts families
+    /// but cannot say which inventory they are, and the family census then
+    /// withholds rather than calling every family a script.
+    #[serde(default)]
+    pub asset_type: Option<String>,
 }
 
 /// One page of the catalogue. The index caps a page at 100 and mainnet's
