@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc, watch, Semaphore};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 
 use cknerv_core::projection::display_plane::DISPLAY_CURATED_FIELD;
 use cknerv_core::{
@@ -594,6 +594,27 @@ struct RefreshCompletion {
     result: anyhow::Result<Option<EnrichmentEvent>>,
 }
 
+/// What a spawned probe hands back: the status, and the canonical context
+/// it was taken against. The context travels with the status because the
+/// dispatch that follows must use the proof the probe actually validated,
+/// not whatever the tip has become while the probe was in flight.
+type ProbeOutcome = (CanonicalContext, EnrichmentSourceStatus);
+
+/// Await the probe the supervisor is holding, or nothing at all.
+///
+/// `select!` evaluates every branch's expression even when its precondition
+/// is false, so the arm cannot reach into the option and unwrap it. Parking
+/// forever on the empty case is what makes "no probe in flight" mean "this
+/// arm cannot fire" rather than a panic on the tick after one lands.
+async fn awaited_probe(
+    probe: &mut Option<JoinHandle<ProbeOutcome>>,
+) -> Result<ProbeOutcome, JoinError> {
+    match probe.as_mut() {
+        Some(handle) => handle.await,
+        None => std::future::pending().await,
+    }
+}
+
 pub(crate) fn spawn(
     source: Arc<dyn EnrichmentSource>,
     state: Arc<ServerState>,
@@ -630,6 +651,11 @@ async fn run(
     let limiter = Arc::new(Semaphore::new(cadence.max_concurrent.max(1)));
     let top_up_limiter = Arc::new(Semaphore::new(1));
     let mut refreshes = JoinSet::new();
+    // The probe the loop is waiting on, if any. At most one is ever in
+    // flight: the loop holds its handle rather than its result, which is
+    // what keeps a source that has stopped answering from stopping the
+    // supervisor with it.
+    let mut probe: Option<JoinHandle<ProbeOutcome>> = None;
     let mut network_atlas_present = false;
     let mut network_roster_present = false;
     let mut producer_ledger_present = false;
@@ -637,8 +663,43 @@ async fn run(
     'supervisor: loop {
         tokio::select! {
             _ = interval.tick() => {
+                if probe.is_some() {
+                    // One at a time. The answer this tick wants is already
+                    // on its way, and a source slower than the cadence
+                    // would otherwise be asked again before it has managed
+                    // to say anything at all.
+                    continue;
+                }
+                // Spawned, not awaited here. A probe is one HTTP round trip
+                // to a source that may be gone, which on the shipped
+                // ckbadger client is a 4 s timeout — and that timeout used
+                // to be paid INSIDE this arm, with refresh completions, the
+                // canonical-evidence retry and the shutdown signal all
+                // waiting behind it. Off the loop it costs nothing but
+                // itself.
                 let context = state.canonical_context();
-                let status = source.probe(&context).await;
+                let source = source.clone();
+                probe = Some(tokio::spawn(async move {
+                    let status = source.probe(&context).await;
+                    (context, status)
+                }));
+            }
+            probed = awaited_probe(&mut probe), if probe.is_some() => {
+                probe = None;
+                let (context, status) = match probed {
+                    Ok(probed) => probed,
+                    Err(error) => {
+                        // The policy the refresh tasks already get: a probe
+                        // that died learned nothing about the source, so
+                        // nothing is published for it and the next tick
+                        // asks again.
+                        tracing::warn!(
+                            target: "cknerv-server",
+                            "optional enrichment probe task failed: {error}"
+                        );
+                        continue;
+                    }
+                };
                 let changed = last_status.as_ref().is_none_or(|previous| {
                     status_materially_changed(previous, &status)
                 });
@@ -675,12 +736,16 @@ async fn run(
                         limiter.clone().try_acquire_owned()
                     };
                     let Ok(permit) = permit else {
-                        if kind == RefreshKind::GalaxyTopUp {
-                            continue;
-                        }
-                        // Do not queue a request with this tick's canonical
-                        // context. A later probe will retry it with fresh proof.
-                        break;
+                        // A full pool skips this kind and nothing else. The
+                        // request is not queued — a later probe retries it
+                        // with fresh proof rather than dispatching it
+                        // against a canonical context that has since moved
+                        // — but the skip cannot end the round, because the
+                        // pools are separate: `GalaxyTopUp` carries its own
+                        // permit and is LAST in `REFRESH_KINDS`, so
+                        // stopping here left three slow aggregates able to
+                        // hide the top-up entirely for as long as they ran.
+                        continue;
                     };
                     if kind == RefreshKind::GalaxyTopUp {
                         tracker.note_top_up_dispatch(demand);
@@ -845,6 +910,12 @@ async fn run(
         }
     }
 
+    // A probe in flight is a request nobody will read the answer to, and
+    // on a source that has stopped answering it is a task that would sit
+    // out its whole timeout after the server has otherwise gone.
+    if let Some(probe) = probe.take() {
+        probe.abort();
+    }
     refreshes.abort_all();
 }
 
@@ -1593,6 +1664,138 @@ mod tests {
         let _ = handle.await;
     }
 
+    /// A source that offers one bounded aggregate beside the composition
+    /// feature, and whose aggregate never finishes inside a test. With the
+    /// shared pool sized to one, that aggregate holds the pool for the
+    /// whole run — which is exactly the position R5 is about.
+    struct PoolHoggingSource {
+        ecosystem_calls: Arc<AtomicUsize>,
+        top_up_asks: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for PoolHoggingSource {
+        fn name(&self) -> &'static str {
+            "pool-hogging-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec![
+                "asset_ecosystem".to_string(),
+                "galaxy_composition".to_string(),
+            ]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_asset_ecosystem(
+            &self,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
+            self.ecosystem_calls.fetch_add(1, Ordering::Relaxed);
+            // Far past the test's patience on purpose. Shutdown aborts it,
+            // so the wait is never paid — it only has to outlast the window
+            // in which the top-up must have been reached.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(None)
+        }
+
+        async fn enrich_galaxy_top_up(
+            &self,
+            _context: &CanonicalContext,
+            _demand: CompositionDemand,
+        ) -> anyhow::Result<Option<cknerv_core::GalaxyCompositionTopUp>> {
+            self.top_up_asks.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+    }
+
+    /// R5 — a full shared pool is not the end of the round.
+    ///
+    /// The top-up takes a permit of its own and is the LAST kind in
+    /// `REFRESH_KINDS`, so a dispatch loop that stopped at the first kind
+    /// it could not seat never reached it: for as long as slow aggregates
+    /// held the shared pool, the stage's shortfall went unasked about,
+    /// which is the one thing the top-up exists to close.
+    #[tokio::test]
+    async fn top_up_is_dispatched_while_the_shared_pool_is_full() {
+        let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        let state = Arc::new(state);
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+            producer_key: None,
+            producer_message: None,
+        });
+        // A shortfall small enough that no round can arm a burst: what is
+        // under test is being reached at all, not being hurried.
+        sink.publish(CompositionDemand {
+            curated: true,
+            dao: 40,
+            typed: 0,
+        });
+
+        let ecosystem_calls = Arc::new(AtomicUsize::new(0));
+        let top_up_asks = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(PoolHoggingSource {
+            ecosystem_calls: ecosystem_calls.clone(),
+            top_up_asks: top_up_asks.clone(),
+        });
+        let (out, _events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        // `top_up_cadence` already sizes the shared pool to one, which is
+        // the whole setup: one aggregate in flight is a full pool.
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, top_up_cadence(), None));
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while top_up_asks.load(Ordering::Relaxed) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the top-up carries its own permit and must still be reached");
+
+        assert_eq!(
+            ecosystem_calls.load(Ordering::Relaxed),
+            1,
+            "the shared pool is held by the aggregate that took it, and still is"
+        );
+
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervisor stops")
+            .unwrap();
+    }
+
     // ── the boot burst ────────────────────────────────────────────
 
     /// A source whose top-up lands cells for its first `fruitful` rounds
@@ -2039,6 +2242,143 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("supervisor stops")
+            .unwrap();
+    }
+
+    /// A source that answers its first probe and then goes silent: every
+    /// probe after the first parks on a signal nobody ever sends. It stands
+    /// in for a ckbadger that accepts the connection and then says nothing
+    /// until the client's own 4 s timeout fires — except that here the
+    /// timeout never comes, so a supervisor that awaits the probe inside
+    /// its loop can be seen to stop dead rather than merely to stutter.
+    struct StallingProbeSource {
+        probes: Arc<AtomicUsize>,
+        stall: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for StallingProbeSource {
+        fn name(&self) -> &'static str {
+            "stalling-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["activity_feed".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            if self.probes.fetch_add(1, Ordering::Relaxed) > 0 {
+                self.stall.notified().await;
+            }
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_activity_feed(
+            &self,
+            context: &CanonicalContext,
+        ) -> anyhow::Result<Option<ActivityFeedRecord>> {
+            // Longer than the probe cadence on purpose: by the time this
+            // completion is ready the second probe has already stalled, so
+            // the event it produces can only reach the channel on a loop
+            // that went on running without that probe.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            let block = context.recent_blocks.last().expect("canonical block");
+            Ok(Some(ActivityFeedRecord {
+                source: self.name().to_string(),
+                as_of: ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                },
+                updated_at_ms: 1,
+                activities: vec![ActivityFeedItem {
+                    tx_hash: format!("0x{}", "22".repeat(32)),
+                    block: block.number,
+                    timestamp_ms: 1,
+                    category: "transfer".to_string(),
+                    label: None,
+                    participant_count: 2,
+                }],
+            }))
+        }
+    }
+
+    /// R4 — the loop is not the place to wait for a source.
+    ///
+    /// Awaited inside the tick arm, a source that stops answering takes the
+    /// whole supervisor with it for the length of its timeout: the refresh
+    /// that finished while it hung is never published, and the shutdown
+    /// signal is never read either. Spawned, the stall costs exactly the
+    /// one probe it belongs to.
+    #[tokio::test]
+    async fn a_stalled_probe_does_not_hold_up_completions() {
+        let state = Arc::new(ServerState::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+            producer_key: None,
+            producer_message: None,
+        });
+
+        let probes = Arc::new(AtomicUsize::new(0));
+        // Never notified, by anybody, for the whole test.
+        let stall = Arc::new(tokio::sync::Notify::new());
+        let source: Arc<dyn EnrichmentSource> = Arc::new(StallingProbeSource {
+            probes: probes.clone(),
+            stall,
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cadence = RefreshCadence {
+            probe: Duration::from_millis(20),
+            ..top_up_cadence()
+        };
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence, None));
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match events.recv().await {
+                    Some(EnrichmentEvent::ActivityFeedReplace(_)) => break,
+                    Some(_) => {}
+                    None => panic!("the supervisor dropped the event channel"),
+                }
+            }
+        })
+        .await
+        .expect("a finished refresh must be published while a probe is stalled");
+
+        assert!(
+            probes.load(Ordering::Relaxed) >= 2,
+            "the probe that is holding nothing up has to actually be in flight"
+        );
+
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("shutdown must not wait for a probe that never answers")
             .unwrap();
     }
 
