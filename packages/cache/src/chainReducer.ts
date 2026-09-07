@@ -6,7 +6,11 @@
 // ckbloom peer-id) stays in simulator. This module only knows about
 // chain mutations and the singleton `ChainEntry`.
 
-import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
+import {
+  DATA_HEX_TRUNCATION_MARKER,
+  RECENT_BLOCKS_CAP,
+  RECENT_TX_CAP,
+} from '@cknerv/types';
 import type {
   BlockProducer,
   ChainEntry,
@@ -381,7 +385,9 @@ function applyToChain(
       }
       ownRing(chain, 'recent_blocks', owned);
       chain.recent_blocks.push({ number: m.number, hash: m.hash });
-      while (chain.recent_blocks.length > 50) chain.recent_blocks.shift();
+      while (chain.recent_blocks.length > RECENT_BLOCKS_CAP) {
+        chain.recent_blocks.shift();
+      }
       // The key is the identity; the declared message is decoration the
       // producer wrote about itself. The adapter reads both from one witness
       // and sends them together, but a frame carrying only a key still names a
@@ -402,7 +408,9 @@ function applyToChain(
       chain.total_txs += 1;
       ownRing(chain, 'recent_tx_hashes', owned);
       chain.recent_tx_hashes.push({ tx_hash: m.tx_hash, block: m.block });
-      while (chain.recent_tx_hashes.length > 50) chain.recent_tx_hashes.shift();
+      while (chain.recent_tx_hashes.length > RECENT_TX_CAP) {
+        chain.recent_tx_hashes.shift();
+      }
       return;
     }
     case 'chain_mempool_updated': {

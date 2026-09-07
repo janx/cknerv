@@ -116,10 +116,17 @@ const _: () = assert!(
 /// Matches simulator's `MUTATION_CHANNEL_CAPACITY`.
 const MUTATION_CHANNEL_CAPACITY: usize = 4096;
 
-/// Bound on `Chain.recent_blocks`. Matches simulator's `RECENT_BLOCKS_CAP`.
+/// Bound on `Chain.recent_blocks`. Matches simulator's `RECENT_BLOCKS_CAP`,
+/// and its client twin `RECENT_BLOCKS_CAP` in `packages/types/src/entity.ts`,
+/// which `packages/cache`'s chain reducer trims the same ring by. One number
+/// on both sides because a client takes the chain entity once, already cut to
+/// this window, and keeps it up to date from `block_mined` deltas afterwards:
+/// a one-sided retune changes the ring's length partway through a session.
 const RECENT_BLOCKS_CAP: usize = 50;
 
-/// Bound on `Chain.recent_tx_hashes`. Matches simulator's `RECENT_TX_CAP`.
+/// Bound on `Chain.recent_tx_hashes`. Matches simulator's `RECENT_TX_CAP` and
+/// the client twin `RECENT_TX_CAP` in `packages/types/src/entity.ts`, for
+/// exactly the reason the block cap above is one number.
 const RECENT_TX_CAP: usize = 50;
 
 /// Chain-generic entity store. cknerv-server owns the [`Chain`] singleton

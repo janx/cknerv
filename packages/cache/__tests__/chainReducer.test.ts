@@ -8,7 +8,11 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
+import {
+  DATA_HEX_TRUNCATION_MARKER,
+  RECENT_BLOCKS_CAP,
+  RECENT_TX_CAP,
+} from '@cknerv/types';
 import type {
   ChainEntry,
   Mutation,
@@ -437,6 +441,45 @@ describe('cross-language wire-shape parity', () => {
     expect(chain.recent_block_intervals_ms).toHaveLength(RECENT_INTERVAL_CAP);
     expect(chain.recent_block_tx_counts).toHaveLength(RECENT_INTERVAL_CAP);
     expect(chain.recent_block_sizes).toHaveLength(RECENT_INTERVAL_CAP);
+  });
+
+  it('the recent rings are cut at the same caps the server cuts them', () => {
+    // Twins of `RECENT_BLOCKS_CAP` / `RECENT_TX_CAP` in
+    // `crates/cknerv-server/src/state.rs`. Both sides used to write `50` down
+    // — the server in a named constant, this reducer as a literal in two
+    // `while` conditions — so the ring a session opened on and the ring it
+    // kept were only the same length by coincidence.
+    expect(RECENT_BLOCKS_CAP).toBe(50);
+    expect(RECENT_TX_CAP).toBe(50);
+    let chain = emptyChainCache();
+    for (let n = 1; n <= RECENT_BLOCKS_CAP + 7; n += 1) {
+      chain = applyChainMutation(chain, {
+        type: 'block_mined',
+        number: n,
+        hash: `0xb${n}`,
+        tx_count: 1,
+        size: 512,
+        at: n * 1000,
+      });
+      chain = applyChainMutation(chain, {
+        type: 'tx_landed',
+        tx_hash: `0xt${n}`,
+        block: n,
+        at: n * 1000,
+        inputs: [],
+        outputs: [],
+      });
+    }
+    expect(chain.recent_blocks).toHaveLength(RECENT_BLOCKS_CAP);
+    expect(chain.recent_tx_hashes).toHaveLength(RECENT_TX_CAP);
+    // The window is the LATEST of them, which is the half a length check on
+    // its own cannot say.
+    expect(chain.recent_blocks[RECENT_BLOCKS_CAP - 1].number).toBe(
+      RECENT_BLOCKS_CAP + 7,
+    );
+    expect(chain.recent_tx_hashes[RECENT_TX_CAP - 1].block).toBe(
+      RECENT_TX_CAP + 7,
+    );
   });
 
   /** A block that names a producer. */

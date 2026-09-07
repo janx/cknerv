@@ -14,6 +14,23 @@ export interface RecentTx {
   block: number;
 }
 
+/** How many entries `ChainEntry.recent_blocks` keeps. Twin of
+ *  `RECENT_BLOCKS_CAP` in `crates/cknerv-server/src/state.rs`, which trims the
+ *  same ring server-side.
+ *
+ *  It lives with the wire type rather than with either reducer because the two
+ *  sides have to agree for a reason neither can see alone: a client is handed
+ *  the chain entity ONCE, already cut to this window, and then only
+ *  `block_mined` deltas — so the server's cap decides what a session opens on
+ *  and the client's decides what it holds a minute later. Two numbers here is
+ *  a ring that silently changes length partway through a session. */
+export const RECENT_BLOCKS_CAP = 50;
+
+/** How many entries `ChainEntry.recent_tx_hashes` keeps. Twin of
+ *  `RECENT_TX_CAP` in `crates/cknerv-server/src/state.rs`, and one number for
+ *  exactly the reason the block cap above is. */
+export const RECENT_TX_CAP = 50;
+
 export interface MempoolStats {
   pending: number;
   proposed: number;
