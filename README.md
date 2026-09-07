@@ -112,3 +112,8 @@ cknerv rehydrate from the live node.
 ## License
 
 GPL-3.0. See [`LICENSE`](LICENSE).
+
+The HUD fonts bundled under `packages/ui/src/fonts/` are separately
+licensed — six faces under the SIL Open Font License 1.1, plus one
+public-domain face. Their notices and the full license text are in
+[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).

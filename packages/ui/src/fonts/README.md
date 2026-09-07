@@ -1,5 +1,10 @@
 # HUD font subsets
 
+These files are not under the repository's GPL-3.0 license. Six are SIL
+Open Font License 1.1 and one is public domain; the per-file copyright
+notices and the full license text live in
+[`THIRD_PARTY_LICENSES.md`](../../../../THIRD_PARTY_LICENSES.md).
+
 `HuiwenMincho-subset.woff2` is a 32-glyph subset of 汇文明朝体
 (`Huiwen-mincho`) for the Chinese text used by the HUD:
 
