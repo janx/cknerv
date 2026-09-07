@@ -13,6 +13,26 @@
 // with the linear scan — including the smaller-id tie-break — is asserted
 // directly in the tests, so this module is an accelerator and never a second
 // opinion.
+//
+// THE BUILD IS RESUMABLE, because it is one batch-sized grain otherwise. The
+// collect pass is ~95 % of the cost and it is memory traffic, not arithmetic:
+// one `cells.get` per graph key plus a second dereference to `pos_seed`, i.e.
+// ~24,000 scattered touches over a 12,000-node stage, on a map the block churn
+// has long since reordered away from the allocation order. Measured whole it is
+// 1.4–3.7 ms on an idle desktop and 18–47 ms on a throttled laptop — the
+// longest single step the live planner takes, and one no wall budget can cut,
+// since a budget is only ever spent BETWEEN steps. So `createOriginEntryIndexBuilder`
+// walks the stage under a work quantum and the planner spends one chunk a frame,
+// while `buildOriginEntryIndex` is that same builder drained in one call and is
+// byte-for-byte the index it always was.
+//
+// Two invariants make the slicing safe. NO READER EVER SEES A PARTIAL GRID:
+// `index()` is the only way to reach one and it finishes the build first, so a
+// query arriving mid-build costs the old single grain and never a wrong answer.
+// And the collected arrays are PREALLOCATED to the graph's node count (growing
+// only if the Map itself grows under the walk, which a sliced build allows and
+// a drained one cannot), so the build stops churning ~3 MB of doubling
+// `number[]` per block — the allocation peak a scavenge used to be charged to.
 
 import type { NeighborAdjacency } from './neighborGraph';
 
@@ -72,82 +92,226 @@ export interface OriginEntryIndex {
   ): number | null;
 }
 
+/** Graph nodes one {@link OriginEntryIndexBuilder.step} may examine. The live
+ *  planner spends one chunk a frame, so this is the grain the frame budget can
+ *  finally cut the grid down to: at ~1.5 µs a node on a throttled laptop (the
+ *  47 ms trough reading over a 12,000-node stage) a chunk is ~3 ms, against a
+ *  whole-build grain no budget could touch. Smaller would only buy a finer
+ *  grain at the price of more frames before the batch may plan at all, and a
+ *  batch's departure slack — 2.2 s, ~130 frames — is what pays for those.
+ *
+ *  It is a COST knob only: the index a resumed build produces is the index a
+ *  drained one produces, at any quantum, which the tests assert differentially
+ *  rather than argue. */
+export const ORIGIN_ENTRY_BUILD_QUANTUM = 2048;
+
+/** Fuel a collected node costs: a Map walk step, a `cells.get` into a
+ *  scattered Cell and a second dereference to `pos_seed`. */
+const COLLECT_COST = 8;
+
+/** Fuel one typed-array element of the bucket passes costs. The bench puts
+ *  those passes ~37x below the collect pass per element (0.10 ms for 24,600
+ *  elements against 1.80 ms for 12,000 nodes), so charging them at an eighth
+ *  is deliberately conservative: it can only end a step early. */
+const PACK_COST = 1;
+
+const PHASE_COLLECT = 0;
+const PHASE_COUNT = 1;
+const PHASE_PREFIX = 2;
+const PHASE_SCATTER = 3;
+const PHASE_DONE = 4;
+
 /**
- * Build the per-batch entry index over `graph`'s eligible nodes.
+ * The build of one {@link OriginEntryIndex} as a resumable machine, so a
+ * stage-wide rebuild is a sequence of bounded grains instead of one.
+ *
+ * The index is only reachable through {@link OriginEntryIndexBuilder.index},
+ * which finishes the build first — a caller can never read a half-built grid,
+ * and the worst case of asking early is the single grain this exists to split.
+ */
+export interface OriginEntryIndexBuilder {
+  /** The whole stage has been walked and bucketed. */
+  readonly done: boolean;
+  /** Graph nodes examined so far — the collect cursor, for the gauges. */
+  readonly visited: number;
+  /**
+   * Advance by at most `quantum` graph nodes of collecting (and the
+   * proportionally cheaper bucket work), then return {@link done}. Always
+   * makes progress while work remains; a non-finite quantum drains.
+   */
+  step(quantum?: number): boolean;
+  /** The finished index, draining whatever is left of the build first. */
+  index(): OriginEntryIndex;
+}
+
+const EMPTY_I32 = new Int32Array(0);
+
+/**
+ * Open a resumable build of the entry index over `graph`'s eligible nodes.
  *
  * LIFETIME: one build per `planLinkBatch`, then one query per origin. The
- * index snapshots eligible positions at build time and keeps the `cells` /
+ * index snapshots eligible positions as it walks and keeps the `cells` /
  * `graph` references for the adjacency fast path, so it is only valid for
  * the batch it was built for — both churn every block, and a cached index
- * would answer with a stage that no longer exists.
+ * would answer with a stage that no longer exists. A SLICED build spans
+ * frames, so the snapshot is taken across a window rather than at an instant:
+ * the Map iterator skips a node deleted before it is reached and visits one
+ * inserted behind it, which is the same staleness the batch already accepts
+ * for the rest of its life (and why the frame loop validates every hop).
  */
-export function buildOriginEntryIndex(
+export function createOriginEntryIndexBuilder(
   cells: ReadonlyMap<number, OriginEntryPositioned>,
   graph: NeighborAdjacency,
   options: OriginEntryOptions = {},
-): OriginEntryIndex {
-  const ids: number[] = [];
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const zs: number[] = [];
+): OriginEntryIndexBuilder {
+  // Preallocated to the graph's node count: the eligible set is a subset of
+  // it, so the common build never copies. `ids` is a Float64Array because a
+  // cell id spans the sequential-small and 2^52 families and both are exact
+  // doubles — the same value the boxed array held, so every comparison and
+  // every tie-break below reads identically.
+  let capacity = graph.adjacency.size;
+  let ids = new Float64Array(capacity);
+  let xs = new Float64Array(capacity);
+  let ys = new Float64Array(capacity);
+  let zs = new Float64Array(capacity);
+  let n = 0;
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let minZ = Number.POSITIVE_INFINITY;
   let maxZ = Number.NEGATIVE_INFINITY;
-  for (const [id, neighbours] of graph.adjacency) {
-    if (neighbours.size === 0) continue;
-    const cell = cells.get(id);
-    if (cell === undefined) continue;
-    const x = cell.pos_seed[0];
-    const z = cell.pos_seed[2];
-    ids.push(id);
-    xs.push(x);
-    ys.push(cell.pos_seed[1]);
-    zs.push(z);
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (z < minZ) minZ = z;
-    if (z > maxZ) maxZ = z;
-  }
-  const n = ids.length;
+  // The cursor over the stage. A Map iterator survives insertion and deletion
+  // under it, which is what makes it resumable across frames at all.
+  const walk = graph.adjacency.entries();
 
-  // Grid origin is the field's own corner, not the world origin: the ring
-  // walk's distance floor is stated in bucket sides from the QUERY's bucket,
-  // and that holds for any lattice offset as long as one lattice is used.
-  const originX = n === 0 ? 0 : minX;
-  const originZ = n === 0 ? 0 : minZ;
-  const spanX = n === 0 ? 0 : maxX - minX;
-  const spanZ = n === 0 ? 0 : maxZ - minZ;
-  let bucketSize =
-    options.bucketSize !== undefined && options.bucketSize > 0
-      ? options.bucketSize
-      : ORIGIN_ENTRY_BUCKET_SIZE;
-  let nx = Math.floor(spanX / bucketSize) + 1;
-  let nz = Math.floor(spanZ / bucketSize) + 1;
-  while (nx * nz > MAX_BUCKETS) {
-    bucketSize *= 2;
+  let originX = 0;
+  let originZ = 0;
+  let bucketSize = ORIGIN_ENTRY_BUCKET_SIZE;
+  let nx = 1;
+  let nz = 1;
+  let buckets = 1;
+  let starts: Int32Array = EMPTY_I32;
+  let bucketOf: Int32Array = EMPTY_I32;
+  let slots: Int32Array = EMPTY_I32;
+  let cursor: Int32Array = EMPTY_I32;
+
+  let phase = PHASE_COLLECT;
+  let at = 0;
+  let view: OriginEntryIndex | null = null;
+
+  /** Only reachable when the Map grew under a sliced walk. */
+  function grow(): void {
+    const next = capacity === 0 ? 64 : capacity * 2;
+    const wider = (from: Float64Array): Float64Array<ArrayBuffer> => {
+      const to = new Float64Array(next);
+      to.set(from);
+      return to;
+    };
+    ids = wider(ids);
+    xs = wider(xs);
+    ys = wider(ys);
+    zs = wider(zs);
+    capacity = next;
+  }
+
+  /** Grid origin is the field's own corner, not the world origin: the ring
+   *  walk's distance floor is stated in bucket sides from the QUERY's bucket,
+   *  and that holds for any lattice offset as long as one lattice is used. */
+  function layout(): void {
+    originX = n === 0 ? 0 : minX;
+    originZ = n === 0 ? 0 : minZ;
+    const spanX = n === 0 ? 0 : maxX - minX;
+    const spanZ = n === 0 ? 0 : maxZ - minZ;
+    bucketSize =
+      options.bucketSize !== undefined && options.bucketSize > 0
+        ? options.bucketSize
+        : ORIGIN_ENTRY_BUCKET_SIZE;
     nx = Math.floor(spanX / bucketSize) + 1;
     nz = Math.floor(spanZ / bucketSize) + 1;
+    while (nx * nz > MAX_BUCKETS) {
+      bucketSize *= 2;
+      nx = Math.floor(spanX / bucketSize) + 1;
+      nz = Math.floor(spanZ / bucketSize) + 1;
+    }
+    buckets = nx * nz;
+    // CSR bucket layout: one Int32Array of bucket starts plus one of node
+    // slots, so the whole grid is two allocations instead of a Map of arrays
+    // rebuilt every block. Both are bulk zero-fills, not per-element JS work,
+    // which is why the quantum does not charge for them.
+    starts = new Int32Array(buckets + 1);
+    bucketOf = new Int32Array(n);
   }
 
-  // CSR bucket layout: one Int32Array of bucket starts plus one of node
-  // slots, so the whole grid is two allocations instead of a Map of arrays
-  // rebuilt every block.
-  const starts = new Int32Array(nx * nz + 1);
-  const bucketOf = new Int32Array(n);
-  for (let i = 0; i < n; i++) {
-    const gx = Math.floor((xs[i] - originX) / bucketSize);
-    const gz = Math.floor((zs[i] - originZ) / bucketSize);
-    const b = gz * nx + gx;
-    bucketOf[i] = b;
-    starts[b + 1] += 1;
-  }
-  for (let b = 0; b < nx * nz; b++) starts[b + 1] += starts[b];
-  const slots = new Int32Array(n);
-  const cursor = starts.slice(0, nx * nz);
-  for (let i = 0; i < n; i++) {
-    slots[cursor[bucketOf[i]]] = i;
-    cursor[bucketOf[i]] += 1;
+  function step(quantum: number = ORIGIN_ENTRY_BUILD_QUANTUM): boolean {
+    let fuel = Math.max(1, quantum) * COLLECT_COST;
+    while (fuel > 0 && phase !== PHASE_DONE) {
+      if (phase === PHASE_COLLECT) {
+        while (fuel > 0) {
+          const entry = walk.next();
+          if (entry.done === true) {
+            layout();
+            phase = PHASE_COUNT;
+            at = 0;
+            break;
+          }
+          // Charged per node EXAMINED, not per node kept: the Map step and the
+          // `cells.get` are the cost, and a skipped node has already paid them.
+          fuel -= COLLECT_COST;
+          const id = entry.value[0];
+          if (entry.value[1].size === 0) continue;
+          const cell = cells.get(id);
+          if (cell === undefined) continue;
+          const pos = cell.pos_seed;
+          const x = pos[0];
+          const z = pos[2];
+          if (n === capacity) grow();
+          ids[n] = id;
+          xs[n] = x;
+          ys[n] = pos[1];
+          zs[n] = z;
+          n += 1;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (z < minZ) minZ = z;
+          if (z > maxZ) maxZ = z;
+        }
+      } else if (phase === PHASE_COUNT) {
+        while (fuel > 0 && at < n) {
+          const gx = Math.floor((xs[at] - originX) / bucketSize);
+          const gz = Math.floor((zs[at] - originZ) / bucketSize);
+          const b = gz * nx + gx;
+          bucketOf[at] = b;
+          starts[b + 1] += 1;
+          at += 1;
+          fuel -= PACK_COST;
+        }
+        if (at >= n) {
+          phase = PHASE_PREFIX;
+          at = 0;
+        }
+      } else if (phase === PHASE_PREFIX) {
+        while (fuel > 0 && at < buckets) {
+          starts[at + 1] += starts[at];
+          at += 1;
+          fuel -= PACK_COST;
+        }
+        if (at >= buckets) {
+          slots = new Int32Array(n);
+          cursor = starts.slice(0, buckets);
+          phase = PHASE_SCATTER;
+          at = 0;
+        }
+      } else {
+        while (fuel > 0 && at < n) {
+          const b = bucketOf[at];
+          slots[cursor[b]] = at;
+          cursor[b] += 1;
+          at += 1;
+          fuel -= PACK_COST;
+        }
+        if (at >= n) phase = PHASE_DONE;
+      }
+    }
+    return phase === PHASE_DONE;
   }
 
   function nearest(
@@ -262,5 +426,31 @@ export function buildOriginEntryIndex(
     return nearest(pos, anchorId);
   }
 
-  return { size: n, nearest, entryFor };
+  return {
+    get done() {
+      return phase === PHASE_DONE;
+    },
+    get visited() {
+      return n;
+    },
+    step,
+    index(): OriginEntryIndex {
+      while (phase !== PHASE_DONE) step(Number.POSITIVE_INFINITY);
+      return (view ??= { size: n, nearest, entryFor });
+    },
+  };
+}
+
+/**
+ * Build the per-batch entry index over `graph`'s eligible nodes in one call —
+ * {@link createOriginEntryIndexBuilder} drained. Callers that can afford to
+ * spread the walk across frames take the builder instead; this is the answer
+ * either of them produces, and the tests hold the two to each other.
+ */
+export function buildOriginEntryIndex(
+  cells: ReadonlyMap<number, OriginEntryPositioned>,
+  graph: NeighborAdjacency,
+  options: OriginEntryOptions = {},
+): OriginEntryIndex {
+  return createOriginEntryIndexBuilder(cells, graph, options).index();
 }

@@ -745,11 +745,19 @@ SEARCH — the smallest work the planner cannot subdivide, 2–7 ms warm over a
 12,000-node stage and ~9 ms on the first traversal of a freshly published graph,
 since the router's per-node neighbour cache is built as it walks. The budget is
 only ever spent between steps and a slice must always take at least one, so a
-planning frame costs the budget plus exactly one grain: the batch's entry grid is
-a step of its own, a link is planned one ORIGIN per step (a link may carry
-`MAX_ORIGINS_PER_LINK` of them), and a block boundary's rescue pass is one
-CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each paying a
-scored search of its own). Each slice also reports WHICH of those its longest
+planning frame costs the budget plus exactly one grain: a link is planned one
+ORIGIN per step (a link may carry `MAX_ORIGINS_PER_LINK` of them), and a block
+boundary's rescue pass is one CANDIDATE per step (a dark block may hold
+`MAX_RESCUE_ATTEMPTS`, each paying a scored search of its own). The batch's entry
+grid is the exception that is not a search at all — a stage-wide walk that looks
+every graph key up in the staged map — and it was the biggest grain of the lot
+(18 ms in a burst, 47 ms in a trough over a 12,000-node stage, against ~9 ms for
+a cold search), so it is BUILT ACROSS STEPS too: `ORIGIN_ENTRY_BUILD_QUANTUM`
+nodes a step, collected into preallocated typed arrays rather than four doubling
+`number[]`s. Nothing plans and nothing reads the grid until the build finishes —
+`index()` is the only way to a queryable one and it drains what is left first, so
+a reader never sees a partial grid and the batch simply waits a few more frames
+out of its 2.2 s of departure slack. Each slice also reports WHICH of those its longest
 step was (`maxStepKind`: `link` / `rescue` / `grid` / `other`) and whether the
 router walked it cold (`maxStepCold` — the neighbour cache empty when it began,
 or emptied by a slot-registry compaction while it ran), so an outlier grain on

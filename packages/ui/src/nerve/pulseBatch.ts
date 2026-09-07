@@ -8,8 +8,9 @@
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborAdjacency } from '../geometry/neighborGraph';
 import {
-  buildOriginEntryIndex,
+  createOriginEntryIndexBuilder,
   type OriginEntryIndex,
+  type OriginEntryIndexBuilder,
 } from '../geometry/originEntry';
 import {
   anchorProximityScore,
@@ -195,12 +196,14 @@ export function openLinkBatch(
  * smallest work the planner cannot subdivide — 2–7 ms warm, ~9 ms on the first
  * traversal of a freshly published graph — and the frame-sliced live driver
  * checks its wall budget BETWEEN steps, so whatever a step holds is the grain
- * the budget cannot cut. So: the batch's entry grid is a step of its own (the
- * memo stays lazy; the step merely fills it early when an anchored link
- * guarantees it will be read), a link is planned ONE ORIGIN per step (a link
- * may carry `MAX_ORIGINS_PER_LINK` of them), and a finished block's rescue pass
- * is ONE CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each
- * paying a scored BFS of its own). Nothing else changes: `observeLink` still
+ * the budget cannot cut. So: a link is planned ONE ORIGIN per step (a link may
+ * carry `MAX_ORIGINS_PER_LINK` of them), and a finished block's rescue pass is
+ * ONE CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each
+ * paying a scored BFS of its own). The batch's entry grid is not a search at
+ * all but a stage-wide walk, and the only grain bigger than a search, so it is
+ * spread over as many steps as it takes at `ORIGIN_ENTRY_BUILD_QUANTUM` nodes
+ * each (the memo stays lazy; the steps merely fill it early when an anchored
+ * link guarantees it will be read). Nothing else changes: `observeLink` still
  * fires once per link in link order, on the step that finishes it, and every
  * pulse of a link is still emitted before the next link's first.
  */
@@ -248,9 +251,18 @@ export function createLinkBatchPlanner(
   // memo: the grid is stage-wide, while most blocks carry only a cellbase
   // link, which names no origin — so a batch that never queries it must
   // not pay the build (backfill-suppressed links never pay it either).
+  //
+  // The build is RESUMABLE (`grid` steps below spend one chunk each), and
+  // `entryIndex` is the only way to a queryable grid: it finishes whatever is
+  // left before answering. So a reader never sees a partial grid, and the one
+  // path that can still reach a whole-build grain — a rescue substituting a
+  // destination on a batch no link predicted would query the grid — pays
+  // exactly what it always paid, under its own `rescue` label.
   let originIndex: OriginEntryIndex | null = null;
-  const entryIndex = () =>
-    (originIndex ??= buildOriginEntryIndex(cells, graph));
+  let originBuilder: OriginEntryIndexBuilder | null = null;
+  const entryBuilder = (): OriginEntryIndexBuilder =>
+    (originBuilder ??= createOriginEntryIndexBuilder(cells, graph));
+  const entryIndex = () => (originIndex ??= entryBuilder().index());
   const batchOpts: PulsePlanningOptions = { ...opts, entryIndex };
   // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
   // the planned count so rescues are budget-NEUTRAL, not merely exempt — a
@@ -327,9 +339,14 @@ export function createLinkBatchPlanner(
         return [];
       }
       if (!prepared) {
+        // The stage-wide grid, ONE CHUNK a step. Whole, it is the longest
+        // grain the live planner takes (18 ms in a burst, 47 in a trough over
+        // a 12,000-node stage) and the budget cannot cut it, because a budget
+        // is only ever spent between steps. Nothing is planned and nothing
+        // queries the grid until the build finishes — the batch waits the few
+        // extra frames out of its 2.2 s of departure slack, and no pulse moves.
         lastStepKind = 'grid';
-        prepared = true;
-        entryIndex();
+        if (entryBuilder().step()) prepared = true;
         return [];
       }
       // A link in flight owns the step: its remaining origins are planned

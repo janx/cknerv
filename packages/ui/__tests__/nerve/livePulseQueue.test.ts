@@ -15,6 +15,7 @@ import {
   planLinkBatch,
   type PulseBatchStats,
 } from '../../src/nerve/pulseBatch';
+import { ORIGIN_ENTRY_BUILD_QUANTUM } from '../../src/geometry/originEntry';
 import {
   LIVE_PLAN_BUDGET_MS,
   LIVE_PLAN_BUDGET_FRAME_FRACTION,
@@ -107,12 +108,16 @@ interface Admitted { pulse: Pulse; startSec: number; batch: LivePulseBatch }
  *  units the test controls. `originCostMs` charges the same clock per ROUTE
  *  SEARCH instead — `bumpOrigin` fires once per (origin, destination) pair —
  *  which is the grain a step actually holds. `rescueCostMs` charges the scored
- *  search a rescue candidate pays, so a frame's worst grain can be a RESCUE. */
+ *  search a rescue candidate pays, so a frame's worst grain can be a RESCUE.
+ *  `cellCostMs` charges one staged-map LOOKUP, which is what the stage-wide
+ *  entry-grid walk is made of — wrap a fixture's map in `driver.costing(...)`
+ *  to spend it. */
 function makeDriver(
   stepCostMs: number,
   budgetMs: number,
   originCostMs = 0,
   rescueCostMs = 0,
+  cellCostMs = 0,
 ) {
   let wallMs = 0;
   let clockReads = 0;
@@ -147,8 +152,20 @@ function makeDriver(
     admit: (pulse, batch) => admitted.push({ pulse, startSec: batch.startSec, batch }),
     complete: (guaranteed) => { watermark = guaranteed; completed.push(guaranteed); },
   };
+  /** The same map, with every lookup charged to the driver's clock. */
+  const costing = (
+    base: ReadonlyMap<number, Cell>,
+  ): ReadonlyMap<number, Cell> => {
+    const wrapped = new Map(base);
+    const inner = wrapped.get.bind(wrapped);
+    wrapped.get = (id: number) => {
+      wallMs += cellCostMs;
+      return inner(id);
+    };
+    return wrapped;
+  };
   return {
-    ctx, stats, admitted, completed,
+    ctx, stats, admitted, completed, costing,
     get watermark() { return watermark; },
     get clockReads() { return clockReads; },
     get linkSteps() { return linkSteps; },
@@ -415,6 +432,69 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     expect(queue.batches).toHaveLength(0);
     expect(driver.admitted).toHaveLength(2);
     expect(driver.admitted[1].pulse.rescue).toBe('rim');
+  });
+
+  it('no longer lands the stage-wide entry grid whole on one frame', () => {
+    // The grid is the only planner grain that is not a route search, and the
+    // biggest: it walks every graph key into the staged map. Whole, it set the
+    // window's max (18 ms in a burst, 47 in a trough) and no budget could cut
+    // it. Chunked, its worst step is a fraction of itself and the frame's
+    // longest grain goes back to being a route search.
+    const size = ORIGIN_ENTRY_BUILD_QUANTUM * 3;
+    const rawCells = new Map<number, Cell>();
+    const edges: [number, number][] = [];
+    for (let i = 0; i < size; i++) {
+      const id = 1000 + i;
+      rawCells.set(id, mkCell(id, [i % 97, 0, Math.floor(i / 97)]));
+      if (i > 0) edges.push([id - 1, id]);
+    }
+    const graph = mkGraph(edges);
+    // A route search costs 9 ms (T6's cold-grain bench); one staged-map lookup
+    // costs 0.002, so the WHOLE grid is 3 x 2048 x 0.002 = 12.288 ms — bigger
+    // than the search, which is exactly the reading the coordinator took.
+    const CELL_COST = 0.002;
+    const driver = makeDriver(0, 0, 9, 0, CELL_COST);
+    const cells = driver.costing(rawCells);
+    // The anchor sits on the address of node 1390, ten hops down the chain
+    // from the output — one route search, well inside the hop ceiling.
+    const at = (i: number): [number, number, number] =>
+      [i % 97, 0, Math.floor(i / 97)];
+    const link = mkLink({
+      seq: 1, block: 7, tx_hash: '0xspend', to_ids: [1400],
+      endpoint_anchors: [{ id: 999999, pos_seed: at(390), content_hash: CH, resolved: true }],
+    });
+    const queue = createLivePulseQueue();
+    const { toFire } = openLinkBatch([link], 0, false, driver.stats);
+    enqueueLivePulseBatch(queue, toFire, cells, graph, OPTS, 100, {});
+
+    const reports = [];
+    for (let frame = 0; frame < 40 && queue.batches.length > 0; frame++) {
+      reports.push(stepLivePulseQueue(queue, driver.ctx));
+    }
+    expect(queue.batches).toHaveLength(0);
+    expect(driver.admitted).toHaveLength(1);
+
+    // THE READING: the window's longest grain is a route search again. Whole,
+    // the grid was 12.288 ms against the search's 9 and named itself.
+    const worst = reports.reduce((a, b) => (b.maxStepMs > a.maxStepMs ? b : a));
+    expect(worst.maxStepKind).toBe('link');
+    expect(worst.maxStepMs).toBeCloseTo(9, 9);
+
+    const gridFrames = reports.filter((r) => r.maxStepKind === 'grid');
+    // The build really is spread over frames, and every chunk of it is bounded
+    // by the quantum — never by the size of the stage.
+    expect(gridFrames.length).toBeGreaterThan(1);
+    for (const report of gridFrames) {
+      expect(report.maxStepMs).toBeLessThanOrEqual(
+        ORIGIN_ENTRY_BUILD_QUANTUM * CELL_COST + 1e-9,
+      );
+    }
+    // Nothing was skipped: the chunks add up to the whole walk.
+    const gridMs = gridFrames.reduce((sum, r) => sum + r.maxStepMs, 0);
+    expect(gridMs).toBeCloseTo(size * CELL_COST, 9);
+    // No packet was planned against a half-built grid.
+    expect(reports.findIndex((r) => r.admitted > 0))
+      .toBeGreaterThan(gridFrames.length - 1);
   });
 });
 

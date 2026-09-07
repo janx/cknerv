@@ -861,3 +861,76 @@ describe('createLinkBatchPlanner — the rescue pass takes one candidate a step'
     expect(planner.lastGuaranteedBlock).toBe(0);
   });
 });
+
+// ── the entry grid is a sequence of chunks, not one grain ────────────
+//
+// The grid is stage-wide and it is not a search: it walks every graph key,
+// looks each up in the staged map and dereferences `pos_seed`. Whole, that is
+// the longest single step the live planner takes (18 ms in a burst, 47 in a
+// trough), and the budget cannot cut it because a budget is only ever spent
+// BETWEEN steps. So the planner spends it a chunk at a time — and nothing may
+// be planned, and no reader may see the grid, until the chunks are finished.
+
+import { ORIGIN_ENTRY_BUILD_QUANTUM } from '../../src/geometry/originEntry';
+
+/** A stage of `size` nodes on a chain, the shape the grid actually walks. */
+function bigStage(size: number) {
+  const cells = new Map<number, Cell>();
+  const edges: [number, number][] = [];
+  for (let i = 0; i < size; i++) {
+    const id = 1000 + i;
+    cells.set(id, mkCell(id, `0x${id}`, [i % 97, 0, Math.floor(i / 97)]));
+    if (i > 0) edges.push([id - 1, id]);
+  }
+  return { cells, graph: mkGraph(edges) };
+}
+
+describe('createLinkBatchPlanner — the stage-wide entry grid spans steps', () => {
+  it('builds the grid a chunk at a time, plans nothing until it is finished, and lands the same batch', () => {
+    const size = ORIGIN_ENTRY_BUILD_QUANTUM * 3 + 500;
+    const { cells, graph } = bigStage(size);
+    // Each anchor sits on the address of a node ten hops from its output, so
+    // both links route and neither block falls through to a rescue.
+    const at = (i: number): [number, number, number] =>
+      [i % 97, 0, Math.floor(i / 97)];
+    const links = [
+      mkLink({
+        seq: 1, block: 7, tx_hash: '0xspend', to_ids: [1400],
+        endpoint_anchors: [mkAnchor(DERIVED_ID, at(390))],
+      }),
+      mkLink({
+        seq: 2, block: 8, tx_hash: '0xspend2', to_ids: [1900],
+        endpoint_anchors: [mkAnchor(DERIVED_ID + 1, at(890))],
+      }),
+    ];
+    const oneShot = planLinkBatch(links, 0, false, cells, graph, OPTS, pulseStats, 0);
+    const oneShotStats = snapshotPulseStats();
+    resetPulseStats();
+    expect(oneShot.planned.length).toBe(2);
+    expect(oneShot.planned.every((p) => p.rescue === undefined)).toBe(true);
+
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells, graph, OPTS, pulseStats, 0);
+    const kinds: PlannerStepKind[] = [];
+    const stepped: ReturnType<typeof planner.step> = [];
+    while (!planner.done) {
+      const pulses = planner.step();
+      kinds.push(planner.lastStepKind);
+      stepped.push(...pulses);
+    }
+    const gridSteps = kinds.filter((k) => k === 'grid').length;
+    // The collect pass alone cannot fit in fewer, and the whole build is
+    // bounded well away from one grain either way.
+    expect(gridSteps).toBeGreaterThanOrEqual(Math.ceil(size / ORIGIN_ENTRY_BUILD_QUANTUM));
+    expect(gridSteps).toBeLessThanOrEqual(3 * Math.ceil(size / ORIGIN_ENTRY_BUILD_QUANTUM) + 4);
+    // Every one of them is a leading step that plans nothing: the batch waits
+    // out of its departure slack rather than reading a half-built grid.
+    expect(kinds.slice(0, gridSteps).every((k) => k === 'grid')).toBe(true);
+    expect(kinds[gridSteps]).toBe('link');
+
+    // And the batch is the batch: same pulses, same stats, same watermark.
+    expect(stepped).toEqual(oneShot.planned);
+    expect(planner.lastGuaranteedBlock).toBe(oneShot.lastGuaranteedBlock);
+    expect(snapshotPulseStats()).toEqual(oneShotStats);
+  });
+});
