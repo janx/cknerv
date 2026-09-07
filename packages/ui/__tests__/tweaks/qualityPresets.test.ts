@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  POPULATION_CLOSE_POSE_PREFIX_FLOOR,
   POPULATION_FIELD_FILL_REF_DPR,
   POPULATION_HAIRLINE_DENSE_PREFIX,
   QUALITY_PRESETS,
   getQualityRuntimeSnapshot,
+  populationClosePosePrefixMul,
   populationFieldFillPixelRatio,
   populationHairlinePrefix,
   populationSpriteMulForCap,
@@ -325,5 +327,79 @@ describe('⟨D-2⟩ the hairline pass takes half the point prefix on a dense buf
     // `resolvePointSpritePixelRatio` already guards the call site; a lever that
     // can only ever REMOVE filaments must not be armed by a NaN either way.
     expect(populationHairlinePrefix(105_000, Number.NaN)).toBe(105_000);
+  });
+});
+
+describe('⟨close pose⟩ the halo folds its point prefix on the detail camera', () => {
+  it('draws the whole prefix at the overview — the default pose is byte-identical', () => {
+    // The fold's own reference point, and the one the eye judges the layer at:
+    // focus 0 is every pose the review's default captures were taken from.
+    expect(populationClosePosePrefixMul(0)).toBe(1);
+    // An unwired caller reads 0 through the prop's `?? 0`, and a curve that has
+    // not been written yet reads the same. Both are the overview.
+    expect(populationClosePosePrefixMul(-0.5)).toBe(1);
+    expect(populationClosePosePrefixMul(Number.NaN)).toBe(1);
+    expect(populationClosePosePrefixMul(Number.NEGATIVE_INFINITY)).toBe(1);
+  });
+
+  it('reaches the floor at the detail camera and saturates there', () => {
+    expect(POPULATION_CLOSE_POSE_PREFIX_FLOOR).toBe(0.4);
+    expect(populationClosePosePrefixMul(1)).toBe(POPULATION_CLOSE_POSE_PREFIX_FLOOR);
+    expect(populationClosePosePrefixMul(1.4)).toBe(POPULATION_CLOSE_POSE_PREFIX_FLOOR);
+  });
+
+  it('is the straight line between them, so a dolly travels rather than steps', () => {
+    // `cellDetailViewFocus` is already a smoothstep of camera distance, so the
+    // fold needs no easing of its own — it inherits the curve's. What it may
+    // not have is a knee: a step in the count is a step in the picture.
+    expect(populationClosePosePrefixMul(0.5)).toBeCloseTo(0.7, 12);
+    expect(populationClosePosePrefixMul(0.25)).toBeCloseTo(0.85, 12);
+    expect(populationClosePosePrefixMul(0.75)).toBeCloseTo(0.55, 12);
+    let previous = populationClosePosePrefixMul(0);
+    for (let step = 1; step <= 100; step += 1) {
+      const mul = populationClosePosePrefixMul(step / 100);
+      expect(mul).toBeLessThanOrEqual(previous);
+      expect(mul).toBeGreaterThanOrEqual(POPULATION_CLOSE_POSE_PREFIX_FLOOR);
+      expect(mul).toBeLessThanOrEqual(1);
+      previous = mul;
+    }
+  });
+
+  it('takes its floor as an argument, so a re-ruling is one number', () => {
+    // The floor is art direction under an eye gate: D-3 option (B) is a
+    // different number in the same law, never a second law.
+    expect(populationClosePosePrefixMul(1, 0.7)).toBe(0.7);
+    expect(populationClosePosePrefixMul(0.5, 0.7)).toBeCloseTo(0.85, 12);
+    expect(populationClosePosePrefixMul(0, 0.7)).toBe(1);
+  });
+
+  it('composes with the tier and with ⟨D-2⟩ as ONE prefix chain', () => {
+    // The layer's cost levers multiply on the same axis and in this order:
+    // tier → pose → (dense buffer). Each stage is a prefix of the last, so the
+    // hairline range stays a sub-prefix of the beads at every combination and
+    // no strand can hang off a bead that is not drawn.
+    for (const capMul of [1, 0.5, 0.25, 0.03]) {
+      for (const focus of [0, 0.25, 0.5, 1]) {
+        const tierPoints = Math.round(105_000 * capMul);
+        const points = Math.round(
+          tierPoints * populationClosePosePrefixMul(focus),
+        );
+        expect(points).toBeLessThanOrEqual(tierPoints);
+        for (const dpr of [1, 2]) {
+          const hairline = populationHairlinePrefix(points, dpr);
+          expect(hairline).toBeGreaterThanOrEqual(0);
+          expect(hairline).toBeLessThanOrEqual(points);
+        }
+      }
+    }
+  });
+
+  it('leaves the sprite compensation to the TIER, which is the only thing that claims an amount', () => {
+    // ⟨D-9⟩: a tier draws a quarter of the field from the SAME camera, so the
+    // sprite pays the level back or the halo states a smaller amount. A close
+    // pose is the reader moving in, and the fold has no business in that
+    // channel — `populationSpriteMulForCap` reads the tier and only the tier.
+    expect(populationSpriteMulForCap(0.25)).toBeCloseTo(0.25 ** -0.25, 12);
+    expect(populationSpriteMulForCap(1)).toBe(1);
   });
 });

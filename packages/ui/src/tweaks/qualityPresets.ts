@@ -299,6 +299,70 @@ export function populationHairlinePrefix(
   return Math.round(points * POPULATION_HAIRLINE_DENSE_PREFIX);
 }
 
+/**
+ * ⟨close pose⟩ The share of the point prefix the halo draws at the DETAIL
+ * camera. (The 2026-09-07 sustain plan's decision D-3. The ⟨D-3⟩ tag above is
+ * an EARLIER review's fill budget and keeps it — two reviews, one letter, and
+ * they are different laws on the same layer.)
+ *
+ * The two ceilings above bound this layer at a pose that does not move: the
+ * fill budget holds the beads' and the capsules' device-pixel footprint to the
+ * reference monitor's, and ⟨D-2⟩ holds the one-pixel hairline's COUNT on a
+ * dense buffer. Neither is a function of where the camera is, and the camera is
+ * the other half of what this layer costs. Measured at HIGH fullscreen: the
+ * three halo draws are 5.0 of the 7.6 ms scoped scene pass at the default pose
+ * (fibres 2.5 + points 1.9 + backbone 0.6, 65 % of it), and ten wheel notches
+ * in — or the cohort dolly — lift them to 8–10 ms and the pass to 16–17 ms·GHz,
+ * which is 43 fps at 1 GHz; at MED the same pose is 9–12 (review B3 / B-9).
+ * A nearer camera adds no primitive. It magnifies the ones already there, so
+ * every bead covers more pixels and the same count writes more fill.
+ *
+ * So the count folds along the curve this layer ALREADY takes — ⟨D-10 · knob
+ * b⟩'s overview↔detail focus, the ref `NeuralFabric`, `NetworkColony` and
+ * `CellBridgeNerves` read too — and along no other. A second, camera-DISTANCE
+ * law here would be exactly the second camera-keyed rule the field's own D-10
+ * note forbids, on the one channel that file spent four rounds reducing to one.
+ *
+ *   overview (focus 0)   the whole prefix. Byte-identical to the pre-fold path.
+ *   detail   (focus 1)   this floor of it, linear in between — and the focus is
+ *                        already a smoothstep of camera distance, so a dolly
+ *                        travels along the fold instead of stepping onto it.
+ *
+ * ONE multiplier, on the POINT prefix, and both stroke classes follow it as
+ * they already do: the hairlines take ⟨D-2⟩'s share of the folded prefix and
+ * the capsules take the folded prefix itself, so the sub-prefix guarantee —
+ * no strand hanging off a bead that is not drawn — is unchanged and needs no
+ * second argument.
+ *
+ * 0.4, and the sprite is deliberately NOT compensated the way
+ * `populationSpriteMulForCap` compensates a tier. D-9's argument is about a
+ * TIER: from one camera, a quarter-prefix at the same sprite size draws a
+ * SMALLER CLAIM about how much of the chain is unresolved, so the sprite pays
+ * the level back. A close pose is not a smaller claim — it is the reader moving
+ * in, and the field's envelope grows on screen as they do, so the same beads at
+ * the same size already cover more of it. The fold spends FILL at a pose. It
+ * never restates the amount, and REACH — which is what a reader reads as amount
+ * — is untouched: a prefix of the placement is a complete thinner field,
+ * because the walk finished every filament it emitted.
+ */
+export const POPULATION_CLOSE_POSE_PREFIX_FLOOR = 0.4;
+
+/** The share of the point prefix a camera at `focus` draws: 1 at the overview
+ *  (byte-identical to the pre-fold path — the default pose of every display),
+ *  {@link POPULATION_CLOSE_POSE_PREFIX_FLOOR} at the detail camera, linear
+ *  between. Pure; a non-finite or negative focus reads as the overview and a
+ *  focus past 1 saturates at the floor. */
+export function populationClosePosePrefixMul(
+  focus: number,
+  floor: number = POPULATION_CLOSE_POSE_PREFIX_FLOOR,
+): number {
+  // `!(focus > 0)` rather than `<= 0`, so a NaN focus falls to the untouched
+  // path: a lever that can only ever REMOVE beads must not be armed by one.
+  if (!(focus > 0)) return 1;
+  const detail = focus > 1 ? 1 : focus;
+  return 1 + (floor - 1) * detail;
+}
+
 /** Shared Leva input. `auto` owns only the effective rendering preset; selecting
  * high/med/low is an explicit manual override. */
 export const QUALITY_MODE_CONTROL = {

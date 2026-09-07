@@ -21,6 +21,7 @@ import {
   reportBootPopulationReady,
 } from '../boot/nerveRestGate';
 import {
+  populationClosePosePrefixMul,
   populationFieldFillPixelRatio,
   populationHairlinePrefix,
   populationSpriteMulForCap,
@@ -335,6 +336,11 @@ export default function CellPopulationField({
   // ratio arrives by ref rather than as an argument — `applyTrim` stays a
   // function of the tier alone, which is what its ramp calls it with.
   const trimPixelRatioRef = useRef(1);
+  // ⟨close pose⟩ The camera's place on the overview↔detail curve the last trim
+  // was cut at, by REF for the same reason the ratio is: the trim's argument is
+  // the tier and nothing else. Mirrored out of the prop ref every frame, so the
+  // value the trim folds by is exactly the one the key below compared.
+  const trimFocusRef = useRef(0);
   const populationCapMul = QUALITY_PRESETS[quality].populationCapMul;
 
   // Placement, off the main thread. Walking 105K points of filament against a
@@ -475,10 +481,29 @@ export default function CellPopulationField({
     if (placed === null) return;
     const counts = placementRef.current;
     if (!counts) return;
-    const points = Math.max(0, Math.min(
+    const tierPoints = Math.max(0, Math.min(
       counts.count,
       Math.round(counts.count * capMul),
     ));
+    // ⟨close pose⟩ …and the whole prefix folds along the overview↔detail curve
+    // this layer already takes. The two ceilings this file carries are pose-
+    // blind — the fill budget bounds a footprint, ⟨D-2⟩ bounds a count on a
+    // dense buffer — and a close camera magnifies the beads that are there
+    // rather than adding any, so the three halo draws went 5.0 → 8–10 ms and
+    // the scene pass 7.6 → 16–17 ms·GHz at a dolly (review B3).
+    //
+    // ONE multiplier, on the POINT prefix, keyed on the ref and on nothing
+    // else: the file's ⟨D-10⟩ note below forbids a second camera-keyed law on
+    // the stroke classes, and it does not need one — both classes are cut from
+    // this prefix, so the hairlines take ⟨D-2⟩'s share OF the folded prefix
+    // and the capsules take the folded prefix itself. The sub-prefix
+    // guarantee below is unchanged, and so is the sprite: the level is the
+    // TIER's business (`populationSpriteMulForCap` reads `capMul`, never
+    // this), because a tier claims a smaller amount from one camera while a
+    // close pose is the reader moving in.
+    const points = Math.round(
+      tierPoints * populationClosePosePrefixMul(trimFocusRef.current),
+    );
     const index = placed.fibres.getIndex();
     // ⟨D-2⟩ …and the hairlines trim against a prefix OF that prefix on a buffer
     // denser than the reference: the one-device-pixel pass is the element
@@ -543,6 +568,11 @@ export default function CellPopulationField({
   // `maxDpr`, so `high → low` on a 2× display walks 2 → 1). `null` until the
   // first trim, so the opening cut is never mistaken for a settled state.
   const denseApplied = useRef<boolean | null>(null);
+  // ⟨close pose⟩ The third term of the key, and the one that never settles on
+  // its own: the tier is a ramp that ends and the density is a boolean, while
+  // the focus travels for as long as a hand is on the wheel. `-1` is outside
+  // the curve's range, so the first frame always cuts.
+  const focusApplied = useRef(-1);
   useEffect(() => {
     const ramp = capRamp.current;
     if (ramp.to === capTarget) return;
@@ -563,6 +593,7 @@ export default function CellPopulationField({
     if (placed === null) return;
     capApplied.current = -1;
     denseApplied.current = null;
+    focusApplied.current = -1;
   }, [placed]);
 
   useEffect(() => () => { material.dispose(); }, [material]);
@@ -651,12 +682,24 @@ export default function CellPopulationField({
     // change to re-cut for, and a settled page still does nothing at all.
     const denseBuffer = fillPixelRatio < pixelRatio;
     trimPixelRatioRef.current = pixelRatio;
+    // ⟨close pose⟩ The third term. The focus moves CONTINUOUSLY along a dolly,
+    // so it is keyed the way the tier is — an epsilon on the applied value,
+    // never raw equality — and on the same 0.0005, which through the fold's own
+    // slope (1 − floor = 0.6) is a finer step than the tier's, never a coarser
+    // one. A settled camera holds it exactly, so a settled page is still three
+    // draws and no work: unlike the ramp this term never ends on its own, and
+    // equality on a float that a smoothstep writes every frame would re-cut for
+    // the last bit of the mantissa.
+    const focus = cellDetailViewFocusRef?.current ?? 0;
+    trimFocusRef.current = focus;
     if (
       Math.abs(capMul - capApplied.current) > 0.0005
       || denseBuffer !== denseApplied.current
+      || Math.abs(focus - focusApplied.current) > 0.0005
     ) {
       capApplied.current = capMul;
       denseApplied.current = denseBuffer;
+      focusApplied.current = focus;
       applyTrim(capMul);
       const spriteMul = populationSpriteMulForCap(capMul);
       spriteMulRef.current = spriteMul;
@@ -699,9 +742,17 @@ export default function CellPopulationField({
     // widths two different claims. D-8's line is "state the halo's amount in
     // LEVEL, not in reach", so this is the only thing it touches — the
     // placement, the extent and the beads are untouched. Default 1.
+    // …untouched BY THE KNOB, which is what the paragraph above is about. The
+    // ⟨close pose⟩ fold in the trim rides this same ref and does cut beads, and
+    // the two are not in conflict: the knob is a CLAIM about the halo's amount,
+    // so it may only ever spend a level, while the fold is a fill ceiling that
+    // claims nothing — the field keeps its whole envelope because a prefix of
+    // the placement is a complete thinner field. One curve, two laws, and this
+    // is the SAME `focus` the trim folded on, read once a frame: a second read
+    // could only ever let them disagree about where the camera is.
     const threadLevel = haloThreadViewLevel(
       LIVE.cell.haloThreadOverview,
-      cellDetailViewFocusRef?.current ?? 0,
+      focus,
     );
     const fibreEmission = populationFibreEmissionForGain(
       gain,
