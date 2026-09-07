@@ -657,6 +657,16 @@ the reorg, rebuild, and replay behavior a consumer has to handle.
 | `GET /runtime-config.js` | JavaScript | CLI-injected build, galaxy, and enrichment config |
 | Other extensionless paths | Embedded SPA | Dashboard client-side routes |
 
+- Every `/api/*` row above, the WebSocket upgrades included, is served only
+  to loopback. An `Origin` or a `Host` naming anything but `localhost`, a
+  `*.localhost` name, an address in `127.0.0.0/8`, or `::1` is refused with
+  `403 forbidden_origin` / `403 forbidden_host`; an absent `Origin` is
+  allowed, because non-browser clients send none and the header cannot be
+  forged by the page the rule exists to stop. Binding `127.0.0.1` keeps the
+  LAN out but not the operator's own browser: CORS does not apply to
+  WebSockets, and DNS rebinding reaches the plain routes. The SPA fallback
+  and `/runtime-config.js` are public bytes and stay outside the guard.
+
 The Cell data route is canonical rather than enrichment — its bytes come from
 the node, the live cell or the transaction that created a spent one, so it
 answers in every mode — and it returns 404 for an outpoint the chain does not

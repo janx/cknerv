@@ -32,8 +32,12 @@
 //!   * `GET /api/cells/:tx_hash/:output_index/data` — one Cell's complete
 //!     output data, read from chain truth rather than from an index, and
 //!     immutable by outpoint.
+//!
+//! Every one of them is served only to loopback origins and hosts; see
+//! `browser_guard` for what a listener on `127.0.0.1` alone does not stop.
 
 pub mod adapter;
+mod browser_guard;
 pub mod cell_data;
 mod composition_store;
 pub mod enrichment;

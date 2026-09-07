@@ -90,6 +90,15 @@ pub fn build_router(
             "/api/cells/:tx_hash/:output_index/data",
             get(cell_output_data),
         )
+        // Applied here rather than per handler so it covers every route above
+        // and only those: a caller that merges its own routes onto this
+        // router — the CLI adds `/runtime-config.js` and the SPA fallback —
+        // adds them after the layer and is not wrapped by it. See
+        // `crate::browser_guard` for why a loopback listener still needs a
+        // guard against the browser on the same machine.
+        .layer(axum::middleware::from_fn(
+            crate::browser_guard::loopback_only,
+        ))
         .with_state(RouterState {
             state,
             shutdown_rx,

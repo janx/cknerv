@@ -8,6 +8,18 @@ contract is
 The CLI serves the API and embedded SPA on one localhost port. Non-API paths
 fall back to the SPA.
 
+Every `/api/*` route, the WebSocket upgrades included, is served only to
+loopback. A request whose `Origin` header names anything but `localhost`, a
+`*.localhost` name, an address in `127.0.0.0/8`, or `::1` is answered
+`403 {"error":"forbidden_origin"}`; one whose `Host` header names anything
+else is answered `403 {"error":"forbidden_host"}`. Browsers apply no CORS to
+WebSockets, so without this any page the operator has open could read the
+chain and cell streams, and a rebound DNS name could reach the plain routes.
+A client that sends no `Origin` at all — curl, a monitor, the crate's own
+smoke tests — is unaffected, and so is the Vite dev proxy, which rewrites the
+host to `localhost:7001` and forwards `Origin: http://localhost:5173`. The
+SPA bytes and `/runtime-config.js` are outside the guard.
+
 | Method | Path | Shape |
 |---|---|---|
 | `GET` | `/api/health` | `{ build_version, uptime_s, degraded, revision, tip, tip_age_ms, replay_active, mutation_ring_len, reducer_alive, adapters, projections, quarantined_projections, enrichment }` |

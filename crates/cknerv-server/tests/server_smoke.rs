@@ -22,6 +22,7 @@ use cknerv_server::{
 };
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
+use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 
 /// A live `get_peers` id, base58 as CKB prints it. The fixture source knows
 /// this one node and nothing else.
@@ -308,7 +309,13 @@ impl Projection for EveryMutationPulses {
 /// the 5s application heartbeat, whose arrival must never be mistaken for an
 /// answer to the catch-up request.
 async fn first_frame(url: &str) -> serde_json::Value {
-    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+    first_frame_of(url.into_client_request().expect("the url is a ws url")).await
+}
+
+/// The same, for a handshake that had to be built by hand because a bare url
+/// has nowhere to carry the `Origin` a browser puts on it.
+async fn first_frame_of(request: tungstenite::handshake::client::Request) -> serde_json::Value {
+    let (mut socket, _) = tokio_tungstenite::connect_async(request)
         .await
         .expect("the stream accepts the upgrade");
     let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
@@ -317,6 +324,16 @@ async fn first_frame(url: &str) -> serde_json::Value {
         .expect("the stream closed without sending a frame")
         .expect("the frame is readable");
     serde_json::from_str(message.to_text().expect("the frame is text")).expect("the frame is JSON")
+}
+
+/// A stream handshake that names the page asking for it.
+fn stream_request(url: &str, origin: &str) -> tungstenite::handshake::client::Request {
+    let mut request = url.into_client_request().expect("the url is a ws url");
+    request.headers_mut().insert(
+        "origin",
+        origin.parse().expect("the origin is a header value"),
+    );
+    request
 }
 
 /// An adapter that returns the instant it is spawned — a source that died
@@ -1371,6 +1388,99 @@ async fn a_server_without_a_cell_data_reader_is_an_isolated_404() {
         .await
         .expect("canonical route remains available");
     assert_eq!(canonical.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+/// The browser guard on the plain routes. A page cannot set `Origin` itself,
+/// so a request that carries a foreign one is a page that is not ours; a
+/// request that carries a foreign `Host` is the shape DNS rebinding arrives
+/// in, the address being loopback while the name is not. Neither may read
+/// the node's telemetry, and the clients that are not browsers at all — no
+/// origin, addressed to loopback — must go on being answered.
+#[tokio::test]
+async fn a_foreign_origin_or_host_is_refused_on_the_plain_routes() {
+    let (router, handle) = ServerBuilder::new().build().expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/api/health");
+
+    let foreign_host = client
+        .get(&url)
+        .header("host", "evil.example:7001")
+        .send()
+        .await
+        .expect("GET succeeds");
+    assert_eq!(foreign_host.status(), 403);
+    let body: serde_json::Value = foreign_host.json().await.unwrap();
+    assert_eq!(body["error"], "forbidden_host");
+
+    let foreign_origin = client
+        .get(&url)
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .expect("GET succeeds");
+    assert_eq!(foreign_origin.status(), 403);
+    let body: serde_json::Value = foreign_origin.json().await.unwrap();
+    assert_eq!(body["error"], "forbidden_origin");
+
+    // The dashboard's own request, and the dev proxy's: origin and host are
+    // both loopback under different names.
+    let dev_proxy = client
+        .get(&url)
+        .header("origin", "http://localhost:5173")
+        .send()
+        .await
+        .expect("GET succeeds");
+    assert_eq!(dev_proxy.status(), 200);
+
+    // curl, a monitor, this test harness: no origin at all.
+    let no_origin = reqwest::get(&url).await.expect("GET succeeds");
+    assert_eq!(no_origin.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+/// The same guard on the upgrade, which is the reason it exists: browsers
+/// apply no CORS to a WebSocket, so a foreign page's `new WebSocket(...)`
+/// would otherwise be answered with every frame the stream has.
+#[tokio::test]
+async fn a_foreign_origin_cannot_open_a_stream_and_a_loopback_page_can() {
+    let (router, handle) = ServerBuilder::new().build().expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let since = 50_000_000u64;
+    let url = format!("ws://{addr}/api/entities/chain/stream?since={since}");
+
+    let refusal = tokio_tungstenite::connect_async(stream_request(&url, "https://evil.example"))
+        .await
+        .expect_err("a foreign page is refused the upgrade");
+    match refusal {
+        tungstenite::Error::Http(response) => assert_eq!(response.status(), 403),
+        other => panic!("the upgrade failed for some other reason: {other}"),
+    }
+
+    // The dev proxy forwards the Vite origin verbatim; a cursor from nowhere
+    // is answered with a snapshot, so the frame proves the handshake got past
+    // the guard rather than merely completing.
+    let frame = first_frame_of(stream_request(&url, "http://localhost:5173")).await;
+    assert_eq!(frame["kind"], "snapshot", "chain frame: {frame}");
 
     handle.shutdown().await;
     server_task.abort();
