@@ -1228,7 +1228,7 @@ The following must change together:
 | Helix positioning | `crates/cknerv-core/src/helix.rs` | `packages/ui/src/helix.ts` |
 | Columnar Cell snapshot | `cells_columnar.rs` | `packages/cache/src/cellsColumnar.ts` |
 | Aggregate view statistics and script census | `cells_stats.rs` | `packages/types/src/cell.ts`, `packages/cache/src/cellsStats.ts` |
-| Config shape and defaults | CLI config and TOML template | `ui-app/src/runtime-config.ts` and README |
+| Config shape and defaults | CLI config and TOML template | `ui-app/src/runtime-config.ts` and [configuration.md](configuration.md) |
 | API route and frame shape | `cknerv-server` routes/WS | `packages/cache` connectors |
 | Persistence shape | Server/core persisted structs | `SCHEMA_VERSION`, purge docs, and tests |
 | Project principles | `AGENTS.md` | `README.md` |

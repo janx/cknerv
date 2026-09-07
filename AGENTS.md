@@ -1,11 +1,12 @@
 # AGENTS.md
 
 Operational instructions for AI agents working in this repository. Read
-`README.md` first; it contains the project overview, API shapes, runtime
-configuration, and an index of the documents under `docs/`, where the
-architecture, the tech stack, the repository layout, and the development
-commands live — `docs/development.md` and `docs/architecture.md` in
-particular.
+`README.md` first; it carries the project overview, the quick start, and an
+index of the documents under `docs/`, which hold everything else:
+`docs/development.md` for the checkout workflow, build gate, tech stack,
+repository layout, persistence, and known limits, `docs/architecture.md` for
+the design contract, `docs/api.md` for the wire shapes, and
+`docs/configuration.md` for `cknerv.toml`.
 
 ## Project Summary
 
@@ -82,7 +83,8 @@ For any non-trivial task summary or PR description, use this shape:
 - Deterministic helix positioning in `crates/cknerv-core/src/helix.rs` and
   `packages/ui/src/helix.ts`.
 - Config shape across `crates/cknerv-cli/src/config.rs`, the
-  `CKNERV_TOML_TEMPLATE`, `ui-app/src/runtime-config.ts`, and README docs.
+  `CKNERV_TOML_TEMPLATE`, `ui-app/src/runtime-config.ts`, and
+  `docs/configuration.md`.
 - Server API route shapes consumed by `packages/cache/` and bootstrapped by
   `ui-app/src/main.tsx`.
 - Persistence schema in `crates/cknerv-server/src/persistence.rs`; bump

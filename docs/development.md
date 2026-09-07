@@ -35,14 +35,31 @@ time it fires). Never set it when producing a release binary.
 CKNERV_SKIP_UI_BUILD=1 cargo clippy --workspace --all-targets
 ```
 
-The full gate — formatting, clippy, both test suites, and the release build —
-is in the [Build and Test](../README.md#build-and-test) section of the README.
-
 The normative Canvas visual, quality, performance, and acceptance contract is
 documented in [Canvas Design and Rendering Architecture](canvas-rendering.md).
 
 The dashboard's optional SoundCloud Jukebox — the floating `SND·06` chip in
 the bottom-right corner — is documented in [Jukebox](jukebox.md).
+
+## Build and Test
+
+```bash
+pnpm install --frozen-lockfile
+
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
+
+pnpm test
+pnpm typecheck
+
+cargo build --release -p cknerv-cli
+```
+
+Cross-language contracts are covered by paired Rust and TypeScript tests that
+read shared fixtures under `tests/fixtures/`. When a wire shape, mutation,
+snapshot, or deterministic helix output changes, update the Rust type, the TS
+twin, the fixtures, and both sides of the tests together.
 
 ## Tech Stack
 
@@ -138,3 +155,77 @@ its architecture, trust boundary, capabilities, and limits are documented in
 
 The layer-by-layer dependency direction, including what each directory must
 *not* own, is [Design and Architecture §3](architecture.md#3-repository-layers-and-dependency-direction).
+
+## Persistence
+
+When boot replay completes, and again on any graceful stop — SIGINT (Ctrl-C)
+or the SIGTERM `systemctl stop` and `docker stop` send — `cknerv-server`
+persists the chain entity and registered projections to:
+
+```text
+<workdir>/data/cknerv-state.json
+```
+
+On the next boot, the CLI first peeks at the saved tip and completed Cell target.
+It restores the file only when that target satisfies the built-in reservoir
+target; otherwise it starts a fresh hydration and replaces the checkpoint when
+that replay completes. A valid restored tip skips historical hydration, and the
+normal forward poll processes the complete downtime gap.
+
+Persistence is best-effort: unreadable, corrupt, or schema-mismatched state is
+discarded and the server starts empty. `cknerv purge --confirm` deletes derived
+`data/` state while preserving `cknerv.toml`.
+
+Persistence schema v5 adds canonical per-component Cell morphology seeds and
+the complete output-data byte length. Existing schema-v4 state is incompatible;
+run `cknerv purge --confirm` before the first v5 launch, then let cknerv rebuild
+the derived state from the configured node.
+
+Optional semantics are intentionally not persisted. They are bounded in memory
+and rehydrated from the configured source, so changing optional enrichment does
+not change the persistence schema or require `cknerv purge`.
+
+The curated stage is the one exception, and it keeps its own file. With
+ckbadger enabled the server writes the composition it last proved to
+`<workdir>/data/galaxy-composition.json`, and a resuming boot feeds those
+outpoints back through the same node revalidation a fresh composition goes
+through — every one re-read against the node, dead ones dropped — so a warm
+boot stages a proven set in seconds instead of curating one from nothing. The
+file carries its own schema version and is discarded when it does not match;
+the trust boundary does not move, because nothing reaches the stage that the
+node has not just re-affirmed. A boot that rebuilds canonical state rebuilds
+the stage with it.
+
+## Known Limits
+
+- The cell galaxy tracks a bounded reservoir of the newest observed live Cells,
+  not the full global live-cell set. Startup scans a recent canonical suffix
+  deep enough to fill the 50,000-Cell reservoir (or all the way to genesis); a
+  complete global
+  live set beyond that cap would require an indexer. `--backfill-blocks` can
+  impose a smaller diagnostic hard limit. After a deep-reorg rebuild, Cell
+  TOTAL/DEAD counters are likewise reconstructed from the hydrated observation
+  window.
+- Which Cells are on stage is decided server-side in every mode and streamed as
+  the cells projection's display membership, so the browser runs one code path
+  whatever the source situation. Without enrichment the server stages the
+  newest live Cells and keeps sliding with the chain tip; with optional
+  ckbadger enrichment it holds a 1,200-Cell tip window of the newest births
+  beside a 10,800-Cell curated field staged at DAO:typed:plain = 20:70:10,
+  seeded in one pass from a node-revalidated reservoir composed at that same
+  field size (canonical retained Cells fill any remainder). The
+  composition is held by demand rather than by a timer: the plane publishes what
+  it is short of per class, spends of staged Cells are detected exactly, and
+  bounded top-ups walk deeper into each class and enter by a one-way ratchet, so
+  the steady-state cost is proportional to churn. In both modes each block's
+  real transaction endpoints take a reserved slice of the stage. A snapshot
+  ships that stage and nothing else, so the galaxy-wide numbers the panels show
+  come from the aggregate statistics segment instead of from the rows that
+  arrived. Canonical Cells and the complete canonical neighbour graph still own
+  new-block pulses, live nerve routes, counters, and reorg behavior. See
+  [ckbadger.md](ckbadger.md#cellgalaxy-composition).
+- The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
+  indexer, or transaction submitter.
+
+ckbadger-specific capability limits are documented in
+[ckbadger.md](ckbadger.md#known-limits).
