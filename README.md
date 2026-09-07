@@ -104,34 +104,9 @@ CKNERV_SKIP_UI_BUILD=1 cargo clippy --workspace --all-targets
 The normative Canvas visual, quality, performance, and acceptance contract is
 documented in [`docs/canvas-rendering.md`](docs/canvas-rendering.md).
 
-### Optional Jukebox
-
-The dashboard includes an optional four-track SoundCloud Jukebox labeled
-`Vocal A`, `Vocal B`, `Piano A`, and `Piano B` for versions of
-`TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a small floating
-`SND·06` chip in the bottom-right corner: an equalizer mark, a `BGM` label, and
-the panels' own corner brackets. The closed chip never names a track. Until the
-Jukebox has been opened once its equalizer idles slowly and ticks with each
-arriving block; opening it retires the motion for the rest of the page's life,
-as does `prefers-reduced-motion`.
-SoundCloud is not contacted
-and no audio is loaded during dashboard startup. Clicking the chip replaces it
-with SoundCloud's official HTML5 player and requests playback of the selected
-track; browser autoplay policy may still require a second tap, especially on
-mobile. The Jukebox offers `SINGLE ∞` and `RANDOM ∞` playback modes and
-defaults to single-track repeat. Single mode repeats the selected track forever;
-random mode chooses a different random track after each song and continues
-forever. The Arianne vocal upload fades from `05:55` to `06:00`, then either
-returns to the beginning in single mode or advances to a random track; this is
-parent-page playback control, so the native SoundCloud timeline still reflects
-the source recording's full length. The visible player is scaled and darkened
-inside a compact cknerv HUD shell, while its native controls and SoundCloud
-attribution remain intact.
-Closing the Jukebox removes the player, stops playback, and restores the floating
-chip. The feature requires internet access, keeps playback independent of chain
-events and visual timing — the closed chip's idle equalizer tick is the one
-chain-driven detail, and it stops once the Jukebox has been opened — and is
-subject to SoundCloud's terms and regional availability.
+The dashboard's optional SoundCloud Jukebox — the floating `SND·06` chip in
+the bottom-right corner — is documented in
+[`docs/jukebox.md`](docs/jukebox.md).
 
 ## Tech Stack
 
