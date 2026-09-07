@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
+  ScriptFamilyCensusRecord,
   ScriptRegistryRecord,
   ChainEntry,
   Peer,
@@ -304,7 +305,7 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, scriptFamilyCensus, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** The staged set counted by script identity, for the panel named after it.
    *  A different scope from `cellsStats.scripts`, which the backend counts
@@ -321,6 +322,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
   scriptRegistry?: ScriptRegistryRecord | null;
+  scriptFamilyCensus?: ScriptFamilyCensusRecord | null;
   protocolEra?: ProtocolEraRecord | null;
   daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
@@ -895,6 +897,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
                     cellPopulation={cellPopulation}
                     enrichmentSource={enrichmentSource}
                     assetEcosystem={assetEcosystem}
+                    scriptFamilyCensus={scriptFamilyCensus}
                     protocolEra={protocolEra}
                     activityFeed={activityFeed}
                     transactionHorizon={transactionHorizon}

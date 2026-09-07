@@ -418,18 +418,23 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-Chain-scope and stage-scope readings live on two surfaces. **CHAIN STATE**
-is a fused readout inside `COMMON KNOWLEDGE BASE`, in the same header system
-as `TX HORIZON` and `ACTIVITY`: everything true of the whole chain — indexed
-live capacity, knowledge bytes, the validated live-Cell census with its
-`DAO · TYPED · PLAIN` mix split by Cell COUNT, top assets — under one stated
-anchor, with the census row and its mix bar carrying the census's own anchor
-and staleness whenever those differ from the record's. The record's
-basis-point capacity shares are validated on the wire but not drawn: split by
-capacity the chain reads DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER 85%,
-which is true of the CKB and says nothing about the Cells — a token Cell holds
-close to the minimum capacity, a balance Cell some three hundred times that —
-and under a Cell count it read as a Cell mix. **STAGE SAMPLE** (`STAGE·07`) is an
+Chain-scope and stage-scope readings live on two surfaces, and they are a
+census and a sample of one population. **CELL CENSUS** is a fused readout
+inside `COMMON KNOWLEDGE BASE`, in the same header system as `TX HORIZON` and
+`ACTIVITY`: everything true of the whole chain — indexed live capacity,
+knowledge bytes, the validated live-Cell count, the chain's `ASSETS` and
+`LOCKS` bars, top assets — under one stated anchor, with the count and the two
+bars each carrying their own anchor and staleness whenever those differ from
+the record's. The bars are the stage's own two taxonomies at chain scope,
+drawn from the `script_family_census` record below: type families with bare
+`CKB` beside them, and lock families, ranked by live-Cell count, six named,
+the rest folded, and an `unlisted` tail for Cells whose script the index has
+no family for. The asset record's basis-point capacity shares are validated on
+the wire but not drawn: split by capacity the chain reads DAO 14%, TOKENS
+0.08%, OBJECTS 0.03%, OTHER 85%, which is true of the CKB and says nothing
+about the Cells — a token Cell holds close to the minimum capacity, a balance
+Cell some three hundred times that — and under a Cell count it read as a Cell
+mix. **STAGE SAMPLE** (`STAGE·07`) is an
 independent panel holding everything true of this dashboard's local slice:
 retained capacity, the rendered→retained→observed population funnel, the
 stage-versus-chain composition disclosure, the asset/lock taxonomy, and the
@@ -880,6 +885,34 @@ Without a census at all, from a backend predating it or a galaxy restored from
 older state, the pinned families remain rather than an empty panel. A family
 nothing named keeps its code hash as its label. Losing the index therefore costs
 names, not counts: the bars still show the true distribution, spelled in hashes.
+
+
+### Script Family Census
+
+With `script_family_census`, cknerv asks the index for the whole chain's
+live Cells by script family, at most once every two minutes: the bounded
+`scripts` catalogue — every family the index tracks, its `scriptKind` and its
+chain-wide `liveCellsCount`, read page by page to at most 256 families — and
+`cells/live-summary` for the totals the families are cut against, both under
+one validated anchor that is rechecked after the two reads. The record carries
+the count of live Cells, the bare-CKB count from the summary's class partition,
+every family that holds at least one live Cell, and two explicit remainders:
+typed Cells outside every listed type family and Cells under a lock outside
+every listed lock family. A family the index places on neither bar is skipped;
+a catalogue that names families without counting them withholds the record
+rather than counting zero; a summary without a class partition withholds it
+too. The two requests are a block apart at most, so family totals up to 256
+Cells past the census are read as skew and the remainder floors at zero, while
+anything past that is refused naming both figures.
+
+This is the chain-scope twin of the cells projection's script census: that one
+counts the stage's identities and refuses to name them, this one arrives named
+and counts the chain. `CELL CENSUS` draws it as the same `ASSETS` and `LOCKS`
+bars `STAGE SAMPLE` draws, so the two surfaces split their populations by one
+taxonomy. The bars carry the record's own anchor whenever it differs from the
+section's, dim when the source is stale or the record is more than six minutes
+old, and are absent — never a guess from the census's three classes — until the
+index has counted every family.
 
 ### Producer Ledger
 

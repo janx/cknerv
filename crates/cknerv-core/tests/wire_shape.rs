@@ -17,8 +17,8 @@ use cknerv_core::{
     DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
     PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
     PeerSightingRecord, ProducerLedger, ProducerLedgerRow, ReplayPhase, RosterNode,
-    RosterNodeState, ScriptCensus, ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord,
-    SemanticsDelta, SemanticsSnapshot,
+    RosterNodeState, ScriptCensus, ScriptCount, ScriptFamilyCensusRecord, ScriptFamilyCount,
+    ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -602,6 +602,7 @@ fn semantics_delta_variant(delta: &SemanticsDelta) -> &'static str {
         SemanticsDelta::ProducerLedgerReplace { .. } => "producer_ledger_replace",
         SemanticsDelta::ProducerLedgerClear => "producer_ledger_clear",
         SemanticsDelta::ScriptRegistryReplace { .. } => "script_registry_replace",
+        SemanticsDelta::ScriptFamilyCensusReplace { .. } => "script_family_census_replace",
         SemanticsDelta::Prune { .. } => "prune",
         SemanticsDelta::Clear => "clear",
     }
@@ -641,6 +642,63 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
             },
         ],
         unresolved: 8,
+    }
+}
+
+/// The whole chain's live Cells by script family, cut the way the browser
+/// draws it: the listed families, bare CKB beside the type families, and the
+/// two remainders the index has no family for. The figures are a
+/// mainnet-shaped thousandth — 66% bare CKB, one lock family holding most of
+/// the chain, a DAO family too small to be named on a six-slot bar — so the
+/// derive that ranks and folds them is exercised on a shape it will meet.
+fn enrichment_script_family_census() -> ScriptFamilyCensusRecord {
+    let family = |name: &str, kind: &str, live_cells: u64| ScriptFamilyCount {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        live_cells,
+    };
+    ScriptFamilyCensusRecord {
+        source: "ckbadger".to_string(),
+        as_of: ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        },
+        updated_at_ms: 1_700_000_000_005,
+        live_cells: 1_000,
+        types_absent: 663,
+        types_unlisted: 10,
+        locks_unlisted: 6,
+        families: vec![
+            family("Nervos DAO", "type", 15),
+            family(".bit Income Cell", "type", 158),
+            family("xUDT", "type", 39),
+            family("COTA", "type", 36),
+            family("M-NFT", "type", 31),
+            family("Spore", "type", 25),
+            family("Simple UDT", "type", 3),
+            family("Spore Cluster", "type", 1),
+            family("Unique Cell", "type", 1),
+            family("CKBFS", "type", 1),
+            family("did:ckb", "type", 1),
+            family("Bitcoin SPV Type Lock", "type", 1),
+            family("Stable++ Asset", "type", 1),
+            family("ccBTC Asset", "type", 1),
+            family("M-NFT Class", "type", 4),
+            family(".bit Reverse Record", "type", 8),
+            family(".bit Account", "type", 1),
+            family("Default Lock", "lock", 604),
+            family(".bit Lock", "lock", 175),
+            family("JoyID", "lock", 109),
+            family("FlashSigner", "lock", 28),
+            family("PW Lock", "lock", 20),
+            family("Force Bridge", "lock", 18),
+            family("OMNI Lock", "lock", 17),
+            family("UniPass", "lock", 15),
+            family("RGB++", "lock", 4),
+            family("Nervape Shadow Lock", "lock", 2),
+            family("Default Multisig", "lock", 1),
+            family("Anyone-Can-Pay Lock", "lock", 1),
+        ],
     }
 }
 
@@ -919,6 +977,7 @@ fn enrichment_samples() -> EnrichmentSamples {
     let mut snapshot: SemanticsSnapshot = serde_json::from_value(committed["snapshot"].clone())
         .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
     snapshot.script_registry = Some(enrichment_script_registry());
+    snapshot.script_family_census = Some(enrichment_script_family_census());
     snapshot.network_roster = Some(enrichment_network_roster(enrichment_roster_nodes(), true));
     snapshot.producer_ledger = Some(enrichment_producer_ledger());
 
@@ -1056,6 +1115,12 @@ fn enrichment_samples() -> EnrichmentSamples {
             script_registry: Box::new(enrichment_script_registry()),
         },
     );
+    deltas.insert(
+        "script_family_census_replace",
+        SemanticsDelta::ScriptFamilyCensusReplace {
+            script_family_census: Box::new(enrichment_script_family_census()),
+        },
+    );
     deltas.insert("prune", SemanticsDelta::Prune { from_block: 100 });
     deltas.insert("clear", SemanticsDelta::Clear);
 
@@ -1189,6 +1254,7 @@ fn enrichment_samples_cover_every_delta_variant() {
             "producer_ledger_replace",
             "protocol_era_replace",
             "prune",
+            "script_family_census_replace",
             "script_registry_replace",
             "source_status",
             "transaction_horizon_replace",

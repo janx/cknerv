@@ -1005,13 +1005,26 @@ pub(crate) struct ScriptFamilyResponse {
     pub script_kind: Option<String>,
     #[serde(default)]
     pub website: Option<String>,
+    /// Live Cells carrying any deployment of the family, chain-wide. Optional
+    /// on the wire because the registry needs nothing of it and an index that
+    /// predates the field must still name scripts; the family census, which
+    /// is nothing without it, withholds rather than counting zero.
+    #[serde(default)]
+    pub live_cells_count: Option<i64>,
 }
 
+/// One page of the catalogue. The index caps a page at 100 and mainnet's
+/// catalogue is 66 families, so this is one request today; the cursor is
+/// read so a longer catalogue arrives whole instead of truncated in silence.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScriptCatalogueResponse {
     #[serde(default)]
     pub data: Vec<ScriptFamilyResponse>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

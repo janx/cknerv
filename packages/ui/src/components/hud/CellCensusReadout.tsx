@@ -2,13 +2,20 @@ import type {
   AssetEcosystemRecord,
   ChainCensus,
   EnrichmentSourceStatus,
+  ScriptFamilyCensusRecord,
 } from '@cknerv/types';
 import { assetEcosystemVisualState } from '../../derives/assetEcosystem.derive';
-import { CLASS_MIX_COLORS, formatCkb, formatExactCkb } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, COMPANION_OPACITY, STALE_OPACITY } from './hudTheme';
-import { ReadoutHeader, StatRow } from './primitives';
 import {
-  chainClassShares,
+  chainAssetFamilyBuckets,
+  chainLockFamilyBuckets,
+  scriptFamilyCensusVisualState,
+} from '../../derives/scriptFamilies.derive';
+import { formatCkb, formatExactCkb } from './cellFormat';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import { ReadoutHeader, SCOPE_TAG, StatRow } from './primitives';
+import TaxonomyBar from './TaxonomyBar';
+import {
+  POPULATION_SCOPE,
   chainLiveRow,
   formatPopulationCount,
 } from './cellPopulation.presentation';
@@ -30,36 +37,47 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Everything true of the whole chain, and nothing true of this dashboard's
- * local slice — that slice is the STAGE CAPACITY panel's whole subject.
+ * The census of the chain's Cells: how many are alive, what they are made
+ * of, the capacity they stand in and the knowledge standing in it, and the
+ * biggest populations among them. Everything true of the whole chain, and
+ * nothing true of this dashboard's local slice — that slice is STAGE·07's
+ * whole subject, and the two are a census and a sample of one population,
+ * which is why the section is named for the census and the panel for the
+ * sample.
  *
- * It is a section of several readings, not one: the capacity the chain has
- * sold, the knowledge standing in it, the validated live-Cell census, that
- * census's class mix, and the biggest tenants. It was titled CHAIN CAPACITY
- * after the first of them, and the title made the bar under the census read
- * as a split of the count above it, when it was a split of the capacity two
- * rows up — DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER 85%. True of the CKB
- * and silent about the Cells: a token Cell holds close to the least a Cell
- * can hold and a balance Cell holds some three hundred times that, so by
- * capacity a hundred and forty thousand token and object Cells weighed a
- * tenth of a percent. The section is CHAIN STATE now, and the bar splits the
- * census's COUNT — DAO, TYPED, PLAIN — under the same law as STAGE·07's
- * chain-mix row, so the one number never prints two ways.
+ * It was CHAIN CAPACITY, named for its first row, with the index's capacity
+ * split drawn under the count — DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER
+ * 85%, true of the CKB and silent about the Cells. Then, briefly, CHAIN STATE, with
+ * the count split three ways, DAO · TYPED · PLAIN, which is the partition
+ * and not the composition: a third of the chain's Cells are typed, and
+ * "typed" says nothing about which of thirty families they belong to. The
+ * bars are now the stage's own two taxonomies at chain scope — type families
+ * with bare CKB beside them, and lock families — read from the index's
+ * whole-chain family counts, so the ASSETS bar here and the ASSETS bar on
+ * STAGE·07 name the same things and a reader can hold the two side by side.
  *
- * Two independent measurements meet here: the indexed asset-ecosystem record
- * and the validated Cell census. Each is exact at its own anchor. The section
- * header states the record's anchor once for every record row; the census row
- * carries its own anchor whenever it differs, because a count must never
- * inherit an anchor that is not its own — and the bar, being the census's own
- * partition, stands and dims with the census rather than with the index.
- * Either measurement can be missing; the section renders when at least one
- * exists, and renders nothing sooner than a number it cannot prove.
+ * Three independent measurements meet here: the indexed asset-ecosystem
+ * record, the validated Cell census, and the index's family census. Each is
+ * exact at its own anchor. The section header states the first anchor it
+ * has once; the census row and the family bars each carry their own anchor
+ * and their own staleness whenever those differ, because a count must never
+ * inherit an anchor that is not its own. Any of the three can be missing;
+ * the section renders when at least one exists, and renders nothing sooner
+ * than a number it cannot prove.
  */
-export default function ChainStateReadout({ source, record, census = null, censusStale = false, folded = false }: {
+export default function CellCensusReadout({
+  source,
+  record,
+  census = null,
+  censusStale = false,
+  scriptFamilyCensus = null,
+  folded = false,
+}: {
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
   census?: ChainCensus | null;
   censusStale?: boolean;
+  scriptFamilyCensus?: ScriptFamilyCensusRecord | null;
   /** The rail has collapsed (`RAILS_COLLAPSE_MAX_WIDTH_PX`): the section is
    *  its own header and the
    *  count in it, nothing more. Distinct from `compact`, which is the SHORT
@@ -70,24 +88,35 @@ export default function ChainStateReadout({ source, record, census = null, censu
 }) {
   const visualState = source && record ? assetEcosystemVisualState(source, record) : null;
   const usableRecord = visualState ? record! : null;
-  if (!usableRecord && !census) return null;
+  const familyState = source && scriptFamilyCensus
+    ? scriptFamilyCensusVisualState(source, scriptFamilyCensus)
+    : null;
+  const families = familyState ? scriptFamilyCensus! : null;
+  if (!usableRecord && !census && !families) return null;
 
   const stale = visualState === 'stale';
   // The same accent its two siblings wear, and for the same reason they wear
-  // it: CHAIN STATE, TX HORIZON and ACTIVITY are three stacked sections of
+  // it: CELL CENSUS, TX HORIZON and ACTIVITY are three stacked sections of
   // one panel about the chain, and not one of them is reporting health. This
   // one opened in `nominal` — so of three identical headers, the top one had a
   // green lamp beside it and the two under it did not, which reads as a
   // verdict about the section rather than as the section's own colour.
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
-  const headerAnchor = usableRecord?.as_of ?? census!.as_of;
+  const headerAnchor = usableRecord?.as_of ?? census?.as_of ?? families!.as_of;
   const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
-  // The census's own partition, in the hues the stage-versus-chain rows wear
-  // for the same three classes. Empty when the census carries no proven
-  // partition: the bar is then absent, never a guess under the census's anchor.
-  const classes = chainClassShares(census)
-    .map((cls) => ({ ...cls, color: CLASS_MIX_COLORS[cls.key] }));
-  const classTotal = classes.reduce((sum, cls) => sum + cls.count, 0);
+  // The family bars follow the census row's rule: the scope always, the
+  // anchor only when the header's is not their own, and STALE when the
+  // count was exact somewhere it no longer is.
+  const familyStale = familyState === 'stale';
+  const familyScope = families === null
+    ? null
+    : [
+      POPULATION_SCOPE.chain,
+      families.as_of.block === headerAnchor.block
+        ? null
+        : `AS OF #${formatPopulationCount(families.as_of.block)}`,
+      familyStale ? 'STALE' : null,
+    ].filter((part) => part !== null).join(' · ');
 
   if (folded) {
     // Header and the one count the section is read for. `LIVE n` rather than
@@ -96,9 +125,9 @@ export default function ChainStateReadout({ source, record, census = null, censu
     // not derivable from another section's.
     return (
       <section
-        aria-label="Chain state"
-        data-chain-state
-        data-chain-state-folded="true"
+        aria-label="Cell census"
+        data-cell-census
+        data-cell-census-folded="true"
         data-asset-ecosystem-state={visualState ?? undefined}
         style={{
           marginTop: 6,
@@ -107,7 +136,7 @@ export default function ChainStateReadout({ source, record, census = null, censu
         }}
       >
         <ReadoutHeader
-          title="CHAIN STATE"
+          title="CELL CENSUS"
           meta={`${liveCells.value} LIVE · AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
           accent={accent}
           stale={stale}
@@ -119,8 +148,8 @@ export default function ChainStateReadout({ source, record, census = null, censu
 
   return (
     <section
-      aria-label="Chain state"
-      data-chain-state
+      aria-label="Cell census"
+      data-cell-census
       data-asset-ecosystem-state={visualState ?? undefined}
       style={{
         marginTop: 10,
@@ -129,7 +158,7 @@ export default function ChainStateReadout({ source, record, census = null, censu
       }}
     >
       <ReadoutHeader
-        title="CHAIN STATE"
+        title="CELL CENSUS"
         meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}`}
         accent={accent}
         stale={stale}
@@ -163,10 +192,7 @@ export default function ChainStateReadout({ source, record, census = null, censu
           Live cells
         </span>
         {liveCells.tag ? (
-          <span
-            data-population-scope
-            style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: COMPANION_OPACITY }}
-          >
+          <span data-population-scope style={SCOPE_TAG}>
             {liveCells.tag}
           </span>
         ) : null}
@@ -174,57 +200,14 @@ export default function ChainStateReadout({ source, record, census = null, censu
           {liveCells.value}
         </span>
       </div>
-      {classes.length > 0 ? (
-        <div
-          data-chain-class-mix
-          // The census's partition, directly under the count it partitions,
-          // and dimmed with that row rather than with the indexed rows above:
-          // it is the census's own reading and shares the census's anchor and
-          // staleness. Exact counts on hover, the way every value on this rail
-          // keeps its figure on its tooltip; the legend carries the shares.
-          title={`${classes.map((cls) => `${cls.label} ${formatPopulationCount(cls.count)}`).join(' · ')} · OF ${formatPopulationCount(classTotal)} LIVE CELLS`}
-          style={{ marginTop: 6, opacity: liveCells.dim ? 0.6 : 1 }}
-        >
-          <div style={{ display: 'flex', height: 6, background: HUD_COLORS.trackGround, border: `1px solid ${rgba(accent, 0.14)}` }}>
-            {classes.map((cls) => cls.count > 0 ? (
-              <span
-                key={cls.key}
-                data-chain-class={cls.key}
-                style={{
-                  width: `${(cls.count / classTotal) * 100}%`,
-                  // ⚠️ A BAR MAY NOT OMIT WHAT ITS LEGEND NAMES. The capacity
-                  // bar this replaced printed `TOKENS 0.08% · OBJECTS 0.03%`
-                  // and drew them 0.27 px and 0.10 px wide — invisible — so a
-                  // reader checking the legend against the bar found two of
-                  // its four names missing (report A, A-9). By count no class
-                  // is that thin today, and the floor stays for the day one
-                  // is: one pixel, the same floor STAGE·07's mix bar keeps.
-                  minWidth: 1,
-                  background: cls.color,
-                  boxShadow: `0 0 5px ${rgba(cls.color, 0.28)}`,
-                }}
-              />
-            ) : null)}
-          </div>
-          {/* Qualitative: three unrelated hues, so the hue IS the mapping and
-              the legend's NAME carries it. The share stays in the caption
-              tier — a caption beside a key. */}
-          <div
-            data-class-legend="qualitative"
-            style={{ fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, color: HUD_COLORS.legendInk, marginTop: 3, lineHeight: 1.45 }}
-          >
-            {classes
-              .filter((cls) => cls.count > 0)
-              .map((cls, index) => (
-                <span key={cls.key}>
-                  {index > 0 ? ' · ' : null}
-                  <span data-class-legend-name style={{ color: cls.color }}>
-                    {cls.label}
-                  </span>
-                  {` ${cls.text}`}
-                </span>
-              ))}
-          </div>
+      {families && familyScope !== null ? (
+        // The chain's composition in the stage's own two taxonomies. Indexed
+        // context, like the capacity rows: it dims on its own record's
+        // staleness, never on the census row's, and it is absent — never a
+        // guess — until the index has counted every family.
+        <div data-indexed-context data-chain-taxonomy style={{ opacity: familyStale ? STALE_OPACITY : 1 }}>
+          <TaxonomyBar title="ASSETS" scope={familyScope} buckets={chainAssetFamilyBuckets(families)} />
+          <TaxonomyBar title="LOCKS" scope={familyScope} buckets={chainLockFamilyBuckets(families)} />
         </div>
       ) : null}
       {usableRecord && usableRecord.top_assets.length > 0 ? (

@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import type { ScriptCensus, ScriptRegistryRecord } from '@cknerv/types';
+import type {
+  EnrichmentSourceStatus,
+  ScriptCensus,
+  ScriptFamilyCensusRecord,
+  ScriptRegistryRecord,
+} from '@cknerv/types';
 import {
   assetFamilyBuckets,
+  chainAssetFamilyBuckets,
+  chainLockFamilyBuckets,
   hasScriptCensus,
   lockFamilyBuckets,
+  scriptFamilyCensusVisualState,
   scriptLabel,
   SCRIPT_BAR_FAMILIES,
+  SCRIPT_FAMILY_CENSUS_STALE_AFTER_MS,
   SCRIPT_FAMILY_COLORS,
 } from '../../src/derives/scriptFamilies.derive';
 import { CONTENT_BANDS } from '../../src/components/hud/cellFormat';
@@ -209,5 +218,123 @@ describe('scriptFamilies.derive', () => {
     // Same 32 bytes, different hash type: a different script, not this one.
     expect(scriptLabel({ code_hash: hash('aa'), hash_type: 'data1' }, names).named)
       .toBe(false);
+  });
+});
+
+describe('scriptFamilies.derive at chain scope', () => {
+  const familyRecord: ScriptFamilyCensusRecord = {
+    source: 'ckbadger',
+    as_of: { block: 100, hash: '0xblock100' },
+    updated_at_ms: 1,
+    live_cells: 1_000,
+    types_absent: 663,
+    types_unlisted: 17,
+    locks_unlisted: 9,
+    families: [
+      // Named already — the index counts families, not deployments — and in
+      // the index's own order, which the bar must not inherit.
+      { name: 'Nervos DAO', kind: 'type', live_cells: 15 },
+      { name: '.bit Income Cell', kind: 'type', live_cells: 158 },
+      { name: 'xUDT', kind: 'type', live_cells: 39 },
+      { name: 'COTA', kind: 'type', live_cells: 36 },
+      { name: 'M-NFT', kind: 'type', live_cells: 31 },
+      { name: 'Spore', kind: 'type', live_cells: 25 },
+      { name: 'Simple UDT', kind: 'type', live_cells: 3 },
+      { name: 'Spore Cluster', kind: 'type', live_cells: 1 },
+      { name: 'M-NFT Class', kind: 'type', live_cells: 4 },
+      { name: '.bit Reverse Record', kind: 'type', live_cells: 8 },
+      { name: 'COTA Registry', kind: 'type', live_cells: 0 },
+      { name: 'Default Lock', kind: 'lock', live_cells: 604 },
+      { name: '.bit Lock', kind: 'lock', live_cells: 175 },
+      { name: 'JoyID', kind: 'lock', live_cells: 109 },
+      { name: 'FlashSigner', kind: 'lock', live_cells: 28 },
+      { name: 'PW Lock', kind: 'lock', live_cells: 20 },
+      { name: 'Force Bridge', kind: 'lock', live_cells: 18 },
+      { name: 'OMNI Lock', kind: 'lock', live_cells: 17 },
+      { name: 'UniPass', kind: 'lock', live_cells: 15 },
+      { name: 'RGB++', kind: 'lock', live_cells: 4 },
+      { name: 'Default Multisig', kind: 'lock', live_cells: 1 },
+    ],
+  };
+
+  it('takes the shape the stage’s ASSETS bar takes, over the whole chain', () => {
+    const buckets = chainAssetFamilyBuckets(familyRecord);
+    expect(buckets.map((b) => b.label)).toEqual([
+      // CKB first: a cell with no type script is not an unnamed family.
+      'CKB',
+      // Ranked by Cell count, never in the index's order; the DAO is the
+      // seventh type family on this chain and folds off a six-slot bar.
+      '.bit Income Cell',
+      'xUDT',
+      'COTA',
+      'M-NFT',
+      'Spore',
+      '+5 more',
+      // Typed Cells the index has no family for: not a gap in cknerv's
+      // records, so not `unidentified` — a different fact under a
+      // different word.
+      'unlisted',
+    ]);
+    expect(buckets.map((b) => b.named))
+      .toEqual([true, true, true, true, true, true, false, false]);
+    // A family counted at zero is no segment, and no member of the fold.
+    expect(buckets.find((b) => b.key === 'rest')?.families).toBe(5);
+    expect(buckets.reduce((n, b) => n + b.count, 0)).toBe(familyRecord.live_cells);
+  });
+
+  it('ranks the lock families and counts the unlisted remainder last', () => {
+    const buckets = chainLockFamilyBuckets(familyRecord);
+    expect(buckets.map((b) => b.label)).toEqual([
+      'Default Lock',
+      '.bit Lock',
+      'JoyID',
+      'FlashSigner',
+      'PW Lock',
+      'Force Bridge',
+      '+4 more',
+      'unlisted',
+    ]);
+    expect(buckets.reduce((n, b) => n + b.count, 0)).toBe(familyRecord.live_cells);
+    // The plain segment and the unnamed tail wear the hues the stage's bars
+    // wear for the same two facts; the ranks walk the same qualitative ramp.
+    const assets = chainAssetFamilyBuckets(familyRecord);
+    expect(assets[0].color).toBe(CONTENT_BANDS.consensus);
+    expect(assets[1].color).toBe(QUALITATIVE_BUCKET_COLORS[1]);
+    expect(buckets[0].color).toBe(QUALITATIVE_BUCKET_COLORS[0]);
+    expect(buckets[buckets.length - 1].color).toBe(SCRIPT_FAMILY_COLORS.unidentified);
+  });
+
+  it('omits a remainder the record does not carry', () => {
+    const clean = chainLockFamilyBuckets({ ...familyRecord, locks_unlisted: 0 });
+    expect(clean.map((b) => b.key)).not.toContain('unlisted');
+    const bare = chainAssetFamilyBuckets({ ...familyRecord, types_absent: 0, types_unlisted: 0 });
+    expect(bare[0].label).toBe('.bit Income Cell');
+    // Without CKB on the bar the sixth slot goes back to a family.
+    expect(bare.map((b) => b.label)).toContain('+4 more');
+  });
+
+  it('exposes the record only while its source and anchor still hold', () => {
+    const source: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'ready',
+      capabilities: ['script_family_census'],
+      validated_anchor: { block: 100, hash: '0xblock100' },
+    };
+    expect(scriptFamilyCensusVisualState(source, familyRecord, 1)).toBe('ready');
+    expect(scriptFamilyCensusVisualState({ ...source, status: 'stale' }, familyRecord, 1))
+      .toBe('stale');
+    expect(scriptFamilyCensusVisualState(
+      source,
+      familyRecord,
+      familyRecord.updated_at_ms + SCRIPT_FAMILY_CENSUS_STALE_AFTER_MS + 1,
+    )).toBe('stale');
+    expect(scriptFamilyCensusVisualState({ ...source, status: 'error' }, familyRecord, 1))
+      .toBeNull();
+    // A record from past the proven anchor is a record from nowhere.
+    expect(scriptFamilyCensusVisualState(
+      { ...source, validated_anchor: { block: 99, hash: '0xblock99' } },
+      familyRecord,
+      1,
+    )).toBeNull();
   });
 });

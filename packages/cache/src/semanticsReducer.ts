@@ -8,6 +8,7 @@ import type {
   ForkWatchRecord,
   NetworkAtlasRecord,
   NetworkRosterRecord,
+  ScriptFamilyCensusRecord,
   ScriptRegistryRecord,
   OutPoint,
   ProducerLedger,
@@ -40,6 +41,10 @@ export interface SemanticsCache {
    *  Null without a source that can name them; the panel then falls back to
    *  the handful of families cknerv pins itself. */
   scriptRegistry: ScriptRegistryRecord | null;
+  /** The whole chain's live Cells by script family — the chain-scope twin of
+   *  the stage's script census, so CELL CENSUS splits its population by the
+   *  same names STAGE·07 does. Null without a source that counts families. */
+  scriptFamilyCensus: ScriptFamilyCensusRecord | null;
   /** Who took the last seven complete days, from the indexer — the other
    *  window on the same producers `Chain.producer_window` holds the last 240
    *  blocks of. Null without a source that can answer for it, and the reader
@@ -81,6 +86,7 @@ export function emptySemanticsCache(): SemanticsCache {
     networkAtlas: null,
     networkRoster: null,
     scriptRegistry: null,
+    scriptFamilyCensus: null,
     producerLedger: null,
   };
 }
@@ -106,6 +112,7 @@ export function fromSemanticsSnapshot(
     networkAtlas: snapshot.network_atlas ?? null,
     networkRoster: snapshot.network_roster ?? null,
     scriptRegistry: snapshot.script_registry ?? null,
+    scriptFamilyCensus: snapshot.script_family_census ?? null,
     producerLedger: snapshot.producer_ledger ?? null,
   };
 }
@@ -383,6 +390,9 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
     case 'script_registry_replace':
       writable(draft).scriptRegistry = delta.script_registry;
       return;
+    case 'script_family_census_replace':
+      writable(draft).scriptFamilyCensus = delta.script_family_census;
+      return;
     case 'network_atlas_clear':
       writable(draft).networkAtlas = null;
       return;
@@ -457,6 +467,12 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       ) {
         value.scriptRegistry = null;
       }
+      if (
+        value.scriptFamilyCensus
+        && value.scriptFamilyCensus.as_of.block >= delta.from_block
+      ) {
+        value.scriptFamilyCensus = null;
+      }
       // ⭐ `producerLedger` is deliberately NOT dropped here, and it is the
       // only record in this cache that is not. Every slot above is cut on its
       // own `as_of`; the ledger has none, because it counts seven days that
@@ -488,6 +504,7 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       value.networkAtlas = null;
       value.networkRoster = null;
       value.scriptRegistry = null;
+      value.scriptFamilyCensus = null;
       // The ledger survives a reorg and not this: a rebuilt source may be
       // pointed at another network, where last week's producers are another
       // chain's. `clear_records()` empties it on the server for the same

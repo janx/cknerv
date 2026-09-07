@@ -56,6 +56,9 @@ const ENRICHMENT_CHAIN_CENSUS_REFRESH: Duration = Duration::from_secs(30);
 /// the reason to repeat at all is that the census keeps discovering
 /// identities this galaxy had not seen yet.
 const ENRICHMENT_SCRIPT_REGISTRY_REFRESH: Duration = Duration::from_secs(300);
+/// A whole-chain composition moves by tens of Cells a block; two minutes is
+/// a third of the 360 s the CELL CENSUS bars wait before dimming.
+const ENRICHMENT_SCRIPT_FAMILY_CENSUS_REFRESH: Duration = Duration::from_secs(120);
 /// The composition has NO cadence by default (design D7). It runs once
 /// to staff the stage and then holds; drift is corrected by the top-up,
 /// which costs churn rather than a whole re-derivation every period.
@@ -123,6 +126,7 @@ struct RefreshCadence {
     producer_ledger: Duration,
     chain_census: Duration,
     script_registry: Duration,
+    script_family_census: Duration,
     galaxy_composition: Option<Duration>,
     galaxy_composition_retry: Duration,
     galaxy_top_up: Duration,
@@ -149,6 +153,7 @@ impl Default for RefreshCadence {
             producer_ledger: ENRICHMENT_PRODUCER_LEDGER_REFRESH,
             chain_census: ENRICHMENT_CHAIN_CENSUS_REFRESH,
             script_registry: ENRICHMENT_SCRIPT_REGISTRY_REFRESH,
+            script_family_census: ENRICHMENT_SCRIPT_FAMILY_CENSUS_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
             galaxy_composition_retry: ENRICHMENT_GALAXY_COMPOSITION_RETRY,
             galaxy_top_up: ENRICHMENT_GALAXY_TOP_UP_REFRESH,
@@ -172,11 +177,12 @@ enum RefreshKind {
     ProducerLedger,
     ChainCensus,
     ScriptRegistry,
+    ScriptFamilyCensus,
     GalaxyComposition,
     GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 13] = [
+const REFRESH_KINDS: [RefreshKind; 14] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -188,6 +194,7 @@ const REFRESH_KINDS: [RefreshKind; 13] = [
     RefreshKind::ProducerLedger,
     RefreshKind::ChainCensus,
     RefreshKind::ScriptRegistry,
+    RefreshKind::ScriptFamilyCensus,
     RefreshKind::GalaxyComposition,
     RefreshKind::GalaxyTopUp,
 ];
@@ -206,6 +213,7 @@ impl RefreshKind {
             Self::ProducerLedger => "producer_ledger",
             Self::ChainCensus => "chain_census",
             Self::ScriptRegistry => "script_registry",
+            Self::ScriptFamilyCensus => "script_family_census",
             // The top-up is the same source feature as the composition:
             // a source that cannot compose cannot supply either.
             Self::GalaxyComposition | Self::GalaxyTopUp => "galaxy_composition",
@@ -229,6 +237,7 @@ impl RefreshKind {
             Self::ProducerLedger => Some(cadence.producer_ledger),
             Self::ChainCensus => Some(cadence.chain_census),
             Self::ScriptRegistry => Some(cadence.script_registry),
+            Self::ScriptFamilyCensus => Some(cadence.script_family_census),
             Self::GalaxyComposition => cadence.galaxy_composition,
             Self::GalaxyTopUp => Some(cadence.galaxy_top_up),
         }
@@ -316,6 +325,16 @@ impl RefreshKind {
             Self::ScriptRegistry => source.enrich_script_registry(context).await.map(|record| {
                 record.map(|registry| EnrichmentEvent::ScriptRegistryReplace(Box::new(registry)))
             }),
+            Self::ScriptFamilyCensus => {
+                source
+                    .enrich_script_family_census(context)
+                    .await
+                    .map(|record| {
+                        record.map(|census| {
+                            EnrichmentEvent::ScriptFamilyCensusReplace(Box::new(census))
+                        })
+                    })
+            }
             Self::GalaxyComposition => source
                 .enrich_galaxy_composition(context)
                 .await
@@ -1232,6 +1251,7 @@ mod tests {
             producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
+            script_family_census: Duration::from_secs(120),
             galaxy_composition: None,
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_millis(10),
@@ -1316,6 +1336,7 @@ mod tests {
             producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
+            script_family_census: Duration::from_secs(120),
             galaxy_composition: periodic,
             galaxy_composition_retry: Duration::from_millis(30),
             galaxy_top_up: Duration::from_secs(60),
@@ -2161,6 +2182,7 @@ mod tests {
             producer_ledger: Duration::from_secs(120),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
+            script_family_census: Duration::from_secs(120),
             galaxy_composition: Some(Duration::from_secs(60)),
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_secs(60),
@@ -2205,6 +2227,7 @@ mod tests {
             producer_ledger: Duration::from_secs(1),
             chain_census: Duration::from_secs(1),
             script_registry: Duration::from_secs(300),
+            script_family_census: Duration::from_secs(120),
             galaxy_composition: Some(Duration::from_secs(1)),
             galaxy_composition_retry: Duration::from_secs(1),
             galaxy_top_up: Duration::from_secs(1),

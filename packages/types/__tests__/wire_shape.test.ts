@@ -665,6 +665,23 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.script_registry_replace.type).toBe(
       'script_registry_replace',
     );
+    // The chain-scope twin of the stage's script census: every family the
+    // index counts, and the remainders it cannot place, so the CELL CENSUS
+    // bars partition `live_cells` exactly — the fixture pins that arithmetic
+    // rather than the shape alone.
+    const familyCensus = sample.snapshot.script_family_census;
+    expect(familyCensus).toBeDefined();
+    const familyCells = (kind: string) => familyCensus!.families
+      .filter((family) => family.kind === kind)
+      .reduce((sum, family) => sum + family.live_cells, 0);
+    expect(familyCells('type') + familyCensus!.types_absent + familyCensus!.types_unlisted)
+      .toBe(familyCensus!.live_cells);
+    expect(familyCells('lock') + familyCensus!.locks_unlisted).toBe(familyCensus!.live_cells);
+    expect(familyCensus!.families.map((family) => family.kind))
+      .toEqual(expect.arrayContaining(['type', 'lock']));
+    expect(sample.deltas.script_family_census_replace.type).toBe(
+      'script_family_census_replace',
+    );
     expect(sample.deltas.census_replace.type).toBe('census_replace');
     // The three class counters are a PARTITION of `live_cells`, not three
     // independent tallies: a fixture whose bins stop adding up would let a
@@ -704,6 +721,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'producer_ledger_replace',
         'producer_ledger_clear',
         'script_registry_replace',
+        'script_family_census_replace',
         'prune',
         'clear',
       ]),

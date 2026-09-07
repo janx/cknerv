@@ -5,6 +5,7 @@ import type {
   ChainEntry,
   EnrichmentSourceStatus,
   ProtocolEraRecord,
+  ScriptFamilyCensusRecord,
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
@@ -13,7 +14,7 @@ import { HudPanel, PanelHeader, StatRow } from './primitives';
 import ActivityFeedReadout from './ActivityFeedReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
-import ChainStateReadout from './ChainStateReadout';
+import CellCensusReadout from './CellCensusReadout';
 import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -30,13 +31,14 @@ const fmt = (n: number) => n.toLocaleString('en-US');
 export const CHAIN_PANEL_WIDTH_PX = 340;
 export const CHAIN_PANEL_DENSE_WIDTH_PX = 268;
 
-function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, reorgLive = false, style }: {
+function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, scriptFamilyCensus, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, reorgLive = false, style }: {
   chain: ChainEntry;
   /** Population model, or null for a consumer that derives none. Absent means
    *  the panel is absent — it never guesses a scope. */
   cellPopulation?: CellPopulationFieldModel | null;
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
+  scriptFamilyCensus?: ScriptFamilyCensusRecord | null;
   protocolEra?: ProtocolEraRecord | null;
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
@@ -107,9 +109,10 @@ function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosy
       <StatRow label="Reorgs" valueColor={reorgLive ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
       {/* Chain truth only. The dashboard's local slice is a different scope
           and lives on the mesh rail as the STAGE CAPACITY panel. */}
-      <ChainStateReadout
+      <CellCensusReadout
         source={enrichmentSource}
         record={assetEcosystem}
+        scriptFamilyCensus={scriptFamilyCensus}
         census={cellPopulation?.chainCensus ?? null}
         censusStale={cellPopulation?.censusStale ?? false}
         folded={folded}

@@ -12,8 +12,8 @@ use cknerv_core::{
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, NetworkRosterRecord,
     OutPoint, PeerSightingAbsence, PeerSightingLookup, ProducerLedger, ProtocolEraRecord,
-    RecentBlock, RecentTx, ScriptId, ScriptRegistryRecord, TransactionHorizonRecord,
-    TransactionSemanticRecord,
+    RecentBlock, RecentTx, ScriptFamilyCensusRecord, ScriptId, ScriptRegistryRecord,
+    TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -242,6 +242,18 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<ScriptRegistryRecord>> {
+        Ok(None)
+    }
+
+    /// Count the whole chain's live Cells by script family — the type and
+    /// lock taxonomies the stage's script census uses, at chain scope — so
+    /// CELL CENSUS can split the population by the same names STAGE·07 does.
+    /// Sources without a script index leave this unsupported; the section
+    /// then shows the count alone.
+    async fn enrich_script_family_census(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ScriptFamilyCensusRecord>> {
         Ok(None)
     }
 

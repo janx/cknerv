@@ -19,6 +19,7 @@
         "peer_sighting",
         "chain_census",
         "script_registry",
+        "script_family_census",
         "transaction_detail",
         "transaction_lifecycle",
         "producer_ledger",
@@ -621,6 +622,165 @@
       ],
       "unresolved": 8
     },
+    "script_family_census": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000005,
+      "live_cells": 1000,
+      "types_absent": 663,
+      "types_unlisted": 10,
+      "locks_unlisted": 6,
+      "families": [
+        {
+          "name": "Nervos DAO",
+          "kind": "type",
+          "live_cells": 15
+        },
+        {
+          "name": ".bit Income Cell",
+          "kind": "type",
+          "live_cells": 158
+        },
+        {
+          "name": "xUDT",
+          "kind": "type",
+          "live_cells": 39
+        },
+        {
+          "name": "COTA",
+          "kind": "type",
+          "live_cells": 36
+        },
+        {
+          "name": "M-NFT",
+          "kind": "type",
+          "live_cells": 31
+        },
+        {
+          "name": "Spore",
+          "kind": "type",
+          "live_cells": 25
+        },
+        {
+          "name": "Simple UDT",
+          "kind": "type",
+          "live_cells": 3
+        },
+        {
+          "name": "Spore Cluster",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "Unique Cell",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "CKBFS",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "did:ckb",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "Bitcoin SPV Type Lock",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "Stable++ Asset",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "ccBTC Asset",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "M-NFT Class",
+          "kind": "type",
+          "live_cells": 4
+        },
+        {
+          "name": ".bit Reverse Record",
+          "kind": "type",
+          "live_cells": 8
+        },
+        {
+          "name": ".bit Account",
+          "kind": "type",
+          "live_cells": 1
+        },
+        {
+          "name": "Default Lock",
+          "kind": "lock",
+          "live_cells": 604
+        },
+        {
+          "name": ".bit Lock",
+          "kind": "lock",
+          "live_cells": 175
+        },
+        {
+          "name": "JoyID",
+          "kind": "lock",
+          "live_cells": 109
+        },
+        {
+          "name": "FlashSigner",
+          "kind": "lock",
+          "live_cells": 28
+        },
+        {
+          "name": "PW Lock",
+          "kind": "lock",
+          "live_cells": 20
+        },
+        {
+          "name": "Force Bridge",
+          "kind": "lock",
+          "live_cells": 18
+        },
+        {
+          "name": "OMNI Lock",
+          "kind": "lock",
+          "live_cells": 17
+        },
+        {
+          "name": "UniPass",
+          "kind": "lock",
+          "live_cells": 15
+        },
+        {
+          "name": "RGB++",
+          "kind": "lock",
+          "live_cells": 4
+        },
+        {
+          "name": "Nervape Shadow Lock",
+          "kind": "lock",
+          "live_cells": 2
+        },
+        {
+          "name": "Default Multisig",
+          "kind": "lock",
+          "live_cells": 1
+        },
+        {
+          "name": "Anyone-Can-Pay Lock",
+          "kind": "lock",
+          "live_cells": 1
+        }
+      ]
+    },
     "producer_ledger": {
       "window_days": 7,
       "from_date": "2026-08-26",
@@ -1176,6 +1336,168 @@
       "type": "prune",
       "from_block": 100
     },
+    "script_family_census_replace": {
+      "type": "script_family_census_replace",
+      "script_family_census": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000005,
+        "live_cells": 1000,
+        "types_absent": 663,
+        "types_unlisted": 10,
+        "locks_unlisted": 6,
+        "families": [
+          {
+            "name": "Nervos DAO",
+            "kind": "type",
+            "live_cells": 15
+          },
+          {
+            "name": ".bit Income Cell",
+            "kind": "type",
+            "live_cells": 158
+          },
+          {
+            "name": "xUDT",
+            "kind": "type",
+            "live_cells": 39
+          },
+          {
+            "name": "COTA",
+            "kind": "type",
+            "live_cells": 36
+          },
+          {
+            "name": "M-NFT",
+            "kind": "type",
+            "live_cells": 31
+          },
+          {
+            "name": "Spore",
+            "kind": "type",
+            "live_cells": 25
+          },
+          {
+            "name": "Simple UDT",
+            "kind": "type",
+            "live_cells": 3
+          },
+          {
+            "name": "Spore Cluster",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "Unique Cell",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "CKBFS",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "did:ckb",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "Bitcoin SPV Type Lock",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "Stable++ Asset",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "ccBTC Asset",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "M-NFT Class",
+            "kind": "type",
+            "live_cells": 4
+          },
+          {
+            "name": ".bit Reverse Record",
+            "kind": "type",
+            "live_cells": 8
+          },
+          {
+            "name": ".bit Account",
+            "kind": "type",
+            "live_cells": 1
+          },
+          {
+            "name": "Default Lock",
+            "kind": "lock",
+            "live_cells": 604
+          },
+          {
+            "name": ".bit Lock",
+            "kind": "lock",
+            "live_cells": 175
+          },
+          {
+            "name": "JoyID",
+            "kind": "lock",
+            "live_cells": 109
+          },
+          {
+            "name": "FlashSigner",
+            "kind": "lock",
+            "live_cells": 28
+          },
+          {
+            "name": "PW Lock",
+            "kind": "lock",
+            "live_cells": 20
+          },
+          {
+            "name": "Force Bridge",
+            "kind": "lock",
+            "live_cells": 18
+          },
+          {
+            "name": "OMNI Lock",
+            "kind": "lock",
+            "live_cells": 17
+          },
+          {
+            "name": "UniPass",
+            "kind": "lock",
+            "live_cells": 15
+          },
+          {
+            "name": "RGB++",
+            "kind": "lock",
+            "live_cells": 4
+          },
+          {
+            "name": "Nervape Shadow Lock",
+            "kind": "lock",
+            "live_cells": 2
+          },
+          {
+            "name": "Default Multisig",
+            "kind": "lock",
+            "live_cells": 1
+          },
+          {
+            "name": "Anyone-Can-Pay Lock",
+            "kind": "lock",
+            "live_cells": 1
+          }
+        ]
+      }
+    },
     "script_registry_replace": {
       "type": "script_registry_replace",
       "script_registry": {
@@ -1227,6 +1549,7 @@
           "peer_sighting",
           "chain_census",
           "script_registry",
+          "script_family_census",
           "transaction_detail",
           "transaction_lifecycle",
           "producer_ledger",

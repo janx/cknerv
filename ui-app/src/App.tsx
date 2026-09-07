@@ -2273,6 +2273,9 @@ export default function App({
         scriptRegistry={enrichmentConfig.enabled
           ? semanticsCache.scriptRegistry
           : undefined}
+        scriptFamilyCensus={enrichmentConfig.enabled
+          ? semanticsCache.scriptFamilyCensus
+          : undefined}
         daoState={enrichmentConfig.enabled
           ? semanticsCache.daoState
           : undefined}

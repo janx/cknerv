@@ -321,13 +321,12 @@ export const ASSET_COLORS: Record<string, string> = {
   object: CONTENT_BANDS.artifact, identity: CONTENT_BANDS.identity,
 };
 
-/** The census's three-class partition — DAO, typed, bare CKB — worn by every
- *  bar that splits Cells by class: STAGE·07's stage-versus-chain rows and
- *  CHAIN STATE's own class bar, which reads these very values rather than
- *  keeping a second copy that could drift. The chain section used to draw the
- *  index's capacity split in these hues, with a bright cyan of its own for
- *  the one bucket it could not name; that bar is gone, and the count bar that
- *  replaced it has no unnamed bucket to paint. */
+/** The census's three-class partition — DAO, typed, bare CKB — worn by the
+ *  stage-versus-chain mix rows on STAGE·07. The chain section used to draw
+ *  the index's capacity split in these hues, with a bright cyan of its own
+ *  for the one bucket it could not name, and then the partition itself by
+ *  count; it draws the script-family taxonomies now (`TaxonomyBar`), which
+ *  paint from `SCRIPT_FAMILY_COLORS` and have no unnamed bucket to invent. */
 export const CLASS_MIX_COLORS = {
   dao: CONTENT_BANDS.value, typed: CONTENT_BANDS.token, plain: CONTENT_BANDS.plain,
 } as const;

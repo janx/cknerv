@@ -297,6 +297,32 @@ export function PanelHeader({ en, cjk, idx, accent, compact = false }: {
  */
 export const STAT_ROW_HEIGHT_PX = 17;
 
+/** Scope qualifiers sit right after their labels, never in a third column:
+ *  a trailing column of tags gives every value its own right edge, and the
+ *  panel stops reading as one table. A scope tag is a companion — the same
+ *  role in Latin the CJK companions play beside a title — and wears the
+ *  companion opacity. Written once, here, because three surfaces draw one:
+ *  the stage panel's funnel and mix rows, the taxonomy bars on both scopes,
+ *  and the chain census's count. */
+export const SCOPE_TAG: CSSProperties = {
+  fontFamily: HUD_FONTS.tech,
+  fontSize: HUD_TYPE.micro,
+  letterSpacing: 1.2,
+  color: HUD_COLORS.dim,
+  textTransform: 'uppercase',
+  opacity: COMPANION_OPACITY,
+};
+
+/** The small caps line that opens a block inside a panel. */
+export const SUBHEAD: CSSProperties = {
+  fontFamily: HUD_FONTS.tech,
+  fontSize: HUD_TYPE.micro,
+  letterSpacing: 1.4,
+  color: HUD_COLORS.dim,
+  textTransform: 'uppercase',
+  marginBottom: 4,
+};
+
 /**
  * …so a LIFTED row is as tall as the rhythm plus the ascent its numeral adds:
  *

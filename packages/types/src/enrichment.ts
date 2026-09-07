@@ -374,6 +374,38 @@ export interface ScriptRegistryRecord {
   unresolved: number;
 }
 
+/** One script family the index catalogues, with the live Cells carrying it.
+ *  Named by the family's display name — the spelling `ScriptNameRecord.name`
+ *  uses — so a family reads the same on the whole-chain bars as on the
+ *  stage's; a family is deployed under several code hashes and this counts
+ *  the family. */
+export interface ScriptFamilyCount {
+  name: string;
+  /** `'type'` or `'lock'`: which of the two bars the family belongs on. */
+  kind: string;
+  live_cells: number;
+}
+
+/** The whole chain's live Cells partitioned by script family, in the two
+ *  taxonomies the stage's script census uses — type families with bare CKB
+ *  beside them, and lock families — so CELL CENSUS and STAGE·07 split their
+ *  populations by the same names. Every remainder is explicit, so a bar drawn
+ *  from it sums to `live_cells` without inventing a bucket. */
+export interface ScriptFamilyCensusRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  /** Every live Cell at the anchor — what both bars partition. */
+  live_cells: number;
+  /** Live Cells carrying no type script at all. */
+  types_absent: number;
+  /** Typed live Cells outside every listed type family. */
+  types_unlisted: number;
+  /** Live Cells whose lock is outside every listed lock family. */
+  locks_unlisted: number;
+  families: ScriptFamilyCount[];
+}
+
 /** Whole-network context from an optional network crawler: what the last
  * completed round reached, and what the set it holds is made of.
  *
@@ -811,6 +843,7 @@ export interface SemanticsSnapshot {
   network_atlas?: NetworkAtlasRecord;
   network_roster?: NetworkRosterRecord;
   script_registry?: ScriptRegistryRecord;
+  script_family_census?: ScriptFamilyCensusRecord;
   /** Absent when no source declares the capability, when its route answers
    * 404, and on every server that predates the field — all three of which a
    * consumer answers the same way, by falling back to `Chain.producer_window`.
@@ -846,6 +879,7 @@ export type SemanticsDelta =
    *  week nobody produced in and is not a sentence this source has ever said. */
   | { type: 'producer_ledger_clear' }
   | { type: 'script_registry_replace'; script_registry: ScriptRegistryRecord }
+  | { type: 'script_family_census_replace'; script_family_census: ScriptFamilyCensusRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 

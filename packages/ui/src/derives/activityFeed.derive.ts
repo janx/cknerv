@@ -4,8 +4,12 @@ import type {
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import { CONTENT_BANDS } from '../components/hud/cellFormat';
+import {
+  anchoredRecordVisualState,
+  type AnchoredRecordVisualState,
+} from './anchoredRecord.derive';
 
-export type ActivityFeedVisualState = 'ready' | 'stale';
+export type ActivityFeedVisualState = AnchoredRecordVisualState;
 
 export const ACTIVITY_FEED_STALE_AFTER_MS = 45_000;
 export const ACTIVITY_FEED_MAX_ITEMS = 8;
@@ -67,20 +71,7 @@ export function activityFeedVisualState(
   record: ActivityFeedRecord,
   nowMs = Date.now(),
 ): ActivityFeedVisualState | null {
-  if (source.status !== 'ready' && source.status !== 'stale') return null;
-  if (source.source !== record.source) return null;
-  const anchor = source.validated_anchor;
-  if (!anchor || record.as_of.block > anchor.block) return null;
-  if (record.as_of.block === anchor.block && record.as_of.hash !== anchor.hash) {
-    return null;
-  }
-  if (!Number.isSafeInteger(record.updated_at_ms) || record.updated_at_ms < 0) {
-    return null;
-  }
-  const ageMs = Math.max(0, nowMs - record.updated_at_ms);
-  return source.status === 'stale' || ageMs > ACTIVITY_FEED_STALE_AFTER_MS
-    ? 'stale'
-    : 'ready';
+  return anchoredRecordVisualState(source, record, ACTIVITY_FEED_STALE_AFTER_MS, nowMs);
 }
 
 /** Validate and group the fixed-size sample before drawing its fingerprint. */

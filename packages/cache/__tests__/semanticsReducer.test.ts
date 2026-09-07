@@ -14,6 +14,7 @@ import type {
   ProducerLedger,
   ProtocolEraRecord,
   RevisionedSemanticsDelta,
+  ScriptFamilyCensusRecord,
   ScriptRegistryRecord,
   SemanticsDelta,
   TransactionHorizonRecord,
@@ -261,6 +262,22 @@ function scriptRegistry(block: number): ScriptRegistryRecord {
   };
 }
 
+function scriptFamilyCensus(block: number): ScriptFamilyCensusRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    live_cells: 1_000,
+    types_absent: 700,
+    types_unlisted: 10,
+    locks_unlisted: 4,
+    families: [
+      { name: 'xUDT', kind: 'type', live_cells: 290 },
+      { name: 'Default Lock', kind: 'lock', live_cells: 996 },
+    ],
+  };
+}
+
 /** The indexer's week. It carries NO `as_of`, and that absence is the whole
  *  shape of the record: it counts seven complete days that closed before any
  *  reorg this session will see, so there is no block to cut it on. */
@@ -481,6 +498,25 @@ describe('semantics reducer', () => {
       applySemanticsDelta(seeded, { type: 'prune', from_block: 9 })
         .scriptRegistry,
     ).toBeNull();
+  });
+
+  it('prune and clear cut the script family census on its own anchor', () => {
+    // Server parity (`enrichment.rs`): the chain-scope twin of the stage's
+    // script census is anchored like every other aggregate, so a reorg that
+    // reaches its block drops it and the next refresh re-proves it.
+    const record = scriptFamilyCensus(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'source_status', source: ready } },
+      { revision: 2, delta: { type: 'script_family_census_replace', script_family_census: record } },
+    ]);
+    expect(seeded.scriptFamilyCensus).toBe(record);
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 15 }).scriptFamilyCensus,
+    ).toBe(record);
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 10 }).scriptFamilyCensus,
+    ).toBeNull();
+    expect(applySemanticsDelta(seeded, { type: 'clear' }).scriptFamilyCensus).toBeNull();
   });
 
   it('clear drops the script registry along with every other record', () => {

@@ -234,6 +234,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(cache.transactions.size).toBe(snapshot.transactions.length);
     expect(cache.census).toEqual(snapshot.census);
     expect(cache.scriptRegistry).toEqual(snapshot.script_registry);
+    expect(cache.scriptFamilyCensus).toEqual(snapshot.script_family_census);
     expect(cache.networkRoster).toEqual(snapshot.network_roster);
     expect(cache.producerLedger).toEqual(snapshot.producer_ledger);
     // The roster is the one snapshot record whose ORDER is part of the
@@ -282,6 +283,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       ['network_roster_replace', 'networkRoster'],
       ['producer_ledger_replace', 'producerLedger'],
       ['script_registry_replace', 'scriptRegistry'],
+      ['script_family_census_replace', 'scriptFamilyCensus'],
     ];
     for (const [name, slot] of landed) {
       const next = applySemanticsDelta(emptySemanticsCache(), deltas[name]);

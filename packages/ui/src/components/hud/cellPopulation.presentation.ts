@@ -183,38 +183,6 @@ function share(count: number, total: number): string {
   return `${Math.round(pct)}%`;
 }
 
-export interface ChainClassShare {
-  key: 'dao' | 'typed' | 'plain';
-  label: string;
-  count: number;
-  /** The class's share of the live-Cell COUNT, under `share`'s law. */
-  text: string;
-}
-
-/**
- * The census's own composition for the chain section: three classes as
- * shares of the live-Cell COUNT, under the same `share` law the
- * stage-versus-chain rows read, so the chain's mix prints one way wherever it
- * is printed. Count, not capacity: the section drew the index's capacity
- * split for a while — DAO 14%, TOKENS 0.08%, OBJECTS 0.03%, OTHER 85% — and
- * under a Cell count it read as a Cell mix, which it is not.
- *
- * Empty when the census carries no proven partition. `classes` is present
- * only when the source proved it sums to `live_cells`, and a bar drawn from
- * anything less would be a guess wearing the census's anchor.
- */
-export function chainClassShares(census: ChainCensus | null): ChainClassShare[] {
-  const classes = census?.classes;
-  if (!classes) return [];
-  const total = classes.dao + classes.typed_non_dao + classes.plain;
-  if (total <= 0) return [];
-  return [
-    { key: 'dao', label: 'DAO', count: classes.dao, text: share(classes.dao, total) },
-    { key: 'typed', label: 'TYPED', count: classes.typed_non_dao, text: share(classes.typed_non_dao, total) },
-    { key: 'plain', label: 'PLAIN', count: classes.plain, text: share(classes.plain, total) },
-  ];
-}
-
 /**
  * The stage's composition beside the chain's.
  *

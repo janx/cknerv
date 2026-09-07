@@ -341,7 +341,7 @@ describe('the block', () => {
     expect(text).toContain('STAGE·07');
     // Capacity is a CKB amount, so it reads in the HUD-wide K/M/G family.
     expect(text).toContain('1.21 G·CKB');
-    expect(text).not.toContain('CHAIN STATE');
+    expect(text).not.toContain('CELL CENSUS');
     expect(text).not.toContain('Live capacity');
     expect(text).not.toContain('Chain live');
     // The one chain-scope line it keeps is the comparison the curation

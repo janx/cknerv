@@ -17,11 +17,12 @@ use cknerv_core::{
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
     PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProducerLedger, ProducerLedgerRow,
-    ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState, ScriptId, ScriptNameRecord,
-    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellConsumption,
-    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState, ScriptFamilyCensusRecord,
+    ScriptFamilyCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
+    SemanticAttribute, SemanticCellConsumption, SemanticCellContent, SemanticContentDecode,
+    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript,
+    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
+    DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_FAMILIES, MAX_SCRIPT_REGISTRY_ENTRIES,
     PRODUCER_LEDGER_ROW_CAP,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
@@ -69,6 +70,7 @@ const CAPABILITIES: &[&str] = &[
     "peer_sighting",
     "chain_census",
     "script_registry",
+    "script_family_census",
     "transaction_detail",
     "transaction_lifecycle",
     "producer_ledger",
@@ -199,6 +201,15 @@ struct RosterScope {
 /// One page holds ckbadger's whole script catalogue (66 families as measured);
 /// the limit is here so a grown catalogue arrives truncated rather than paged.
 const SCRIPT_CATALOGUE_LIMIT: usize = 200;
+/// Pages of the catalogue read before giving up on a cursor that never ends.
+/// The index caps a page at 100 and mainnet's catalogue is 66 families.
+const MAX_SCRIPT_CATALOGUE_PAGES: usize = 8;
+const MAX_SCRIPT_FAMILY_NAME_CHARS: usize = 96;
+/// How far the family counts may run past the census they are cut against
+/// before the record is a contradiction rather than two reads of one index a
+/// block apart. `scripts` and `cells/live-summary` are two requests; a block
+/// landing between them moves tens of Cells, never hundreds.
+const SCRIPT_FAMILY_SKEW_TOLERANCE: u64 = 256;
 /// `scripts/lookup` wants a transaction for context. The census has no
 /// transaction — it is a set of identities — so this asks with none and lets
 /// the response's own `resolutionState` say whether that mattered.
@@ -952,33 +963,91 @@ impl CkbadgerEnrichmentSource {
             .collect())
     }
 
-    /// The script-family catalogue, keyed by name. Bounded and fixed-shape:
-    /// one page holds every family the index tracks.
+    /// The script-family catalogue, keyed by name.
     async fn script_catalogue(&self) -> anyhow::Result<HashMap<String, ScriptFamilyResponse>> {
-        let mut url = self.endpoint("scripts")?;
-        url.query_pairs_mut()
-            .append_pair("limit", &SCRIPT_CATALOGUE_LIMIT.to_string());
+        Ok(self
+            .script_catalogue_list()
+            .await?
+            .into_iter()
+            .map(|family| (family.name.clone(), family))
+            .collect())
+    }
+
+    /// Every family the index tracks, in the index's order. Bounded: the
+    /// index caps a page at 100 and this follows the cursor for at most
+    /// [`MAX_SCRIPT_CATALOGUE_PAGES`], so a catalogue that outgrows one page
+    /// arrives whole and one that never ends is refused rather than walked.
+    async fn script_catalogue_list(&self) -> anyhow::Result<Vec<ScriptFamilyResponse>> {
+        let mut families = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_SCRIPT_CATALOGUE_PAGES {
+            let mut url = self.endpoint("scripts")?;
+            url.query_pairs_mut()
+                .append_pair("limit", &SCRIPT_CATALOGUE_LIMIT.to_string());
+            if let Some(cursor) = cursor.as_deref() {
+                url.query_pairs_mut().append_pair("cursor", cursor);
+            }
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .context("fetch ckbadger script catalogue")?;
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "ckbadger script catalogue returned HTTP {}",
+                    response.status()
+                ));
+            }
+            let page: ScriptCatalogueResponse = response
+                .json()
+                .await
+                .context("decode ckbadger script catalogue")?;
+            families.extend(page.data);
+            if families.len() > MAX_SCRIPT_FAMILIES {
+                return Err(anyhow!(
+                    "ckbadger script catalogue returned too many families"
+                ));
+            }
+            match (page.has_more, page.next_cursor) {
+                (true, Some(next)) if !next.is_empty() => cursor = Some(next),
+                _ => return Ok(families),
+            }
+        }
+        Err(anyhow!("ckbadger script catalogue cursor never ended"))
+    }
+
+    /// The whole-chain live-Cell summary, or `None` when the source is
+    /// deliberately declining to state a number: `503 initializing` (bulk
+    /// sync, or a reorg withdrew the record) and `500` (corrupt record) both
+    /// mean withhold, never synthesize a zero.
+    async fn fetch_live_cell_summary(&self) -> anyhow::Result<Option<LiveCellSummaryResponse>> {
+        let url = self.endpoint("cells/live-summary")?;
         let response = self
             .client
             .get(url)
             .send()
             .await
-            .context("fetch ckbadger script catalogue")?;
+            .context("fetch ckbadger live cell summary")?;
+        if matches!(
+            response.status(),
+            StatusCode::NOT_FOUND
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::INTERNAL_SERVER_ERROR
+        ) {
+            return Ok(None);
+        }
         if !response.status().is_success() {
             return Err(anyhow!(
-                "ckbadger script catalogue returned HTTP {}",
+                "ckbadger live cell summary returned HTTP {}",
                 response.status()
             ));
         }
-        let catalogue: ScriptCatalogueResponse = response
+        let summary: LiveCellSummaryResponse = response
             .json()
             .await
-            .context("decode ckbadger script catalogue")?;
-        Ok(catalogue
-            .data
-            .into_iter()
-            .map(|family| (family.name.clone(), family))
-            .collect())
+            .context("decode ckbadger live cell summary")?;
+        Ok(Some(summary))
     }
 
     async fn token_asset(&self, cell: &CellDetailResponse) -> Option<SemanticAsset> {
@@ -1788,34 +1857,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         // stronger fence than re-reading the index — a source-side reorg
         // during the fetch yields a hash our own chain does not hold.
         self.current_anchor(context)?;
-        let url = self.endpoint("cells/live-summary")?;
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .context("fetch ckbadger live cell summary")?;
-        // `503 initializing` (bulk sync, or a reorg withdrew the record) and
-        // `500` (corrupt record) both mean the source is deliberately
-        // declining to state a number. Withhold; never synthesize a zero.
-        if matches!(
-            response.status(),
-            StatusCode::NOT_FOUND
-                | StatusCode::SERVICE_UNAVAILABLE
-                | StatusCode::INTERNAL_SERVER_ERROR
-        ) {
+        let Some(summary) = self.fetch_live_cell_summary().await? else {
             return Ok(None);
-        }
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "ckbadger live cell summary returned HTTP {}",
-                response.status()
-            ));
-        }
-        let summary: LiveCellSummaryResponse = response
-            .json()
-            .await
-            .context("decode ckbadger live cell summary")?;
+        };
         map_chain_census(summary, context)
     }
 
@@ -2165,6 +2209,28 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             entries,
             unresolved,
         }))
+    }
+
+    /// Two bounded reads under one anchor: the catalogue for every family's
+    /// live count, and the live-Cell summary for the totals the families are
+    /// cut against — bare CKB from its class partition, and the two
+    /// remainders the index has no family for. A whole-chain fact, so unlike
+    /// the registry it asks nothing of the stage and needs no census on it.
+    async fn enrich_script_family_census(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ScriptFamilyCensusRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let families = self.script_catalogue_list().await?;
+        let Some(summary) = self.fetch_live_cell_summary().await? else {
+            return Ok(None);
+        };
+        let Some(record) = map_script_family_census(families, summary, anchor.clone())? else {
+            return Ok(None);
+        };
+        self.revalidate_anchor(&anchor, "script family census")
+            .await?;
+        Ok(Some(record))
     }
 
     async fn enrich_galaxy_composition(
@@ -2650,6 +2716,122 @@ fn deep_fork_canonical_anchor(
 /// if the bins have drifted there is no reason left to trust the total they
 /// are supposed to decompose. The error surfaces as a refresh failure so it
 /// is logged rather than silently degrading to a countless dashboard.
+/// The census's remainder past what the listed families account for. Two
+/// reads of one index a block apart can put the families a few Cells past
+/// the census; that much is skew and the remainder is zero. Past the
+/// tolerance it is a contradiction, and the record is refused naming both
+/// figures rather than drawn with a negative bucket folded away.
+fn script_family_remainder(total: u64, listed: u64, kind: &str) -> anyhow::Result<u64> {
+    if listed <= total {
+        return Ok(total - listed);
+    }
+    if listed - total <= SCRIPT_FAMILY_SKEW_TOLERANCE {
+        return Ok(0);
+    }
+    Err(anyhow!(
+        "ckbadger {kind} families exceed the live-cell census: families={listed}, census={total}"
+    ))
+}
+
+fn map_script_family_census(
+    families: Vec<ScriptFamilyResponse>,
+    summary: LiveCellSummaryResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<Option<ScriptFamilyCensusRecord>> {
+    // Without a proven class partition there is no bare-CKB count to stand
+    // beside the type families, and a bar that guessed it would be a guess
+    // wearing the census's anchor. Withhold.
+    let Some(classes) = summary.classes else {
+        return Ok(None);
+    };
+    let live_cells = nonnegative(summary.live_cells, "live summary liveCells")?;
+    wire_safe_u64(live_cells, "live summary liveCells")?;
+    let dao = nonnegative(classes.dao, "live summary classes.dao")?;
+    let typed_non_dao = nonnegative(classes.typed_non_dao, "live summary classes.typedNonDao")?;
+    let plain = nonnegative(classes.plain, "live summary classes.plain")?;
+    let typed = dao
+        .checked_add(typed_non_dao)
+        .ok_or_else(|| anyhow!("ckbadger live summary typed classes overflow"))?;
+    if typed.checked_add(plain) != Some(live_cells) {
+        return Err(anyhow!(
+            "ckbadger live summary classes do not partition liveCells: dao={dao}, typedNonDao={typed_non_dao}, plain={plain}, liveCells={live_cells}"
+        ));
+    }
+    if families.len() > MAX_SCRIPT_FAMILIES {
+        return Err(anyhow!(
+            "ckbadger script catalogue returned too many families"
+        ));
+    }
+
+    let mut seen = HashSet::<(String, String)>::new();
+    let mut counted = Vec::with_capacity(families.len());
+    let mut type_sum = 0u64;
+    let mut lock_sum = 0u64;
+    for family in families {
+        // A family the index places on neither bar has no bar to be counted
+        // on; it is not an error, and it is not "unlisted" either — those are
+        // Cells, and this is a vocabulary entry.
+        let Some(kind) = family.script_kind.as_deref().map(str::trim) else {
+            continue;
+        };
+        if kind != "type" && kind != "lock" {
+            continue;
+        }
+        let name = family.name.trim();
+        if name.is_empty() {
+            return Err(anyhow!(
+                "ckbadger script catalogue returned a family with no name"
+            ));
+        }
+        if name.chars().count() > MAX_SCRIPT_FAMILY_NAME_CHARS {
+            return Err(anyhow!(
+                "ckbadger script catalogue returned an overlong family name"
+            ));
+        }
+        // An index that catalogues families but does not count them predates
+        // this record; naming still works, counting cannot. Withhold.
+        let Some(live) = family.live_cells_count else {
+            return Ok(None);
+        };
+        let live = nonnegative(live, "script family liveCellsCount")?;
+        wire_safe_u64(live, "script family liveCellsCount")?;
+        if !seen.insert((name.to_string(), kind.to_string())) {
+            return Err(anyhow!(
+                "ckbadger script catalogue returned duplicate {kind} family {name}"
+            ));
+        }
+        if live == 0 {
+            continue;
+        }
+        let sum = if kind == "type" {
+            &mut type_sum
+        } else {
+            &mut lock_sum
+        };
+        *sum = sum
+            .checked_add(live)
+            .ok_or_else(|| anyhow!("ckbadger script family counts overflow"))?;
+        counted.push(ScriptFamilyCount {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            live_cells: live,
+        });
+    }
+
+    let types_unlisted = script_family_remainder(typed, type_sum, "type")?;
+    let locks_unlisted = script_family_remainder(live_cells, lock_sum, "lock")?;
+    Ok(Some(ScriptFamilyCensusRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        live_cells,
+        types_absent: plain,
+        types_unlisted,
+        locks_unlisted,
+        families: counted,
+    }))
+}
+
 fn map_chain_census(
     summary: LiveCellSummaryResponse,
     context: &CanonicalContext,
@@ -7961,6 +8143,207 @@ mod tests {
         assert!(!registry.entries.iter().any(|entry| entry.name == "Unknown"));
         assert_eq!(lookup_requests.load(Ordering::Relaxed), 1);
 
+        server.abort();
+    }
+
+    async fn spawn_script_family_census_api(
+        families: serde_json::Value,
+        summary: serde_json::Value,
+    ) -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async { Json(serde_json::json!({ "number": 100, "hash": "0xblock100" })) }),
+            )
+            .route(
+                "/api/v1/scripts",
+                get(move || {
+                    let families = families.clone();
+                    async move {
+                        Json(serde_json::json!({
+                            "data": families,
+                            "total": families.as_array().map_or(0, Vec::len),
+                            "hasMore": false,
+                            "nextCursor": null
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/cells/live-summary",
+                get(move || {
+                    let summary = summary.clone();
+                    async move { Json(summary) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+        )
+    }
+
+    fn family_census_summary(live: i64, dao: i64, typed: i64, plain: i64) -> serde_json::Value {
+        serde_json::json!({
+            "tip": { "block": 100, "hash": "0xblock100" },
+            "liveCells": live,
+            "classes": { "dao": dao, "typedNonDao": typed, "plain": plain },
+            "dataBearing": 5
+        })
+    }
+
+    fn mainnet_like_families() -> serde_json::Value {
+        serde_json::json!([
+            { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "liveCellsCount": 893, "deprecated": false },
+            { "familyId": "joyid", "name": "JoyID", "scriptKind": "lock", "liveCellsCount": 100, "deprecated": false },
+            { "familyId": "nervos-dao", "name": "Nervos DAO", "scriptKind": "type", "liveCellsCount": 22, "deprecated": false },
+            { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "liveCellsCount": 57, "deprecated": false },
+            // Counted at zero: a family the index knows and no Cell carries
+            // is not a segment, so it is not in the record either.
+            { "familyId": "cota-registry", "name": "COTA Registry", "scriptKind": "type", "liveCellsCount": 0, "deprecated": false },
+            // Placed on neither bar by the index: skipped, not an error.
+            { "familyId": "decoder", "name": "DOB Decoder", "scriptKind": null, "liveCellsCount": 9, "deprecated": false }
+        ])
+    }
+
+    #[tokio::test]
+    async fn script_family_census_counts_the_whole_chain_by_family() {
+        let (api_base, server) = spawn_script_family_census_api(
+            mainnet_like_families(),
+            // 1,000 live: 22 DAO + 70 other typed = 92 typed, 908 plain.
+            // The listed type families hold 79, so 13 typed Cells carry a
+            // type the index has no family for; the listed locks hold 993,
+            // so 7 Cells sit under an unlisted lock.
+            family_census_summary(1_000, 22, 70, 908),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        // No census on stage — a whole-chain fact asks nothing of the stage.
+        let record = source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .expect("family census record");
+
+        assert_eq!(record.as_of.block, 100);
+        assert_eq!(record.live_cells, 1_000);
+        assert_eq!(record.types_absent, 908);
+        assert_eq!(record.types_unlisted, 13);
+        assert_eq!(record.locks_unlisted, 7);
+        let names: Vec<(&str, &str, u64)> = record
+            .families
+            .iter()
+            .map(|family| {
+                (
+                    family.name.as_str(),
+                    family.kind.as_str(),
+                    family.live_cells,
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("Default Lock", "lock", 893),
+                ("JoyID", "lock", 100),
+                ("Nervos DAO", "type", 22),
+                ("xUDT", "type", 57),
+            ]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn script_family_census_tolerates_a_block_of_skew_and_refuses_more() {
+        // The families were counted a block after the summary: one Cell past
+        // the census is skew, and the remainder is zero rather than negative.
+        let (api_base, server) = spawn_script_family_census_api(
+            mainnet_like_families(),
+            family_census_summary(992, 22, 56, 914),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let record = source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .expect("family census record");
+        assert_eq!(record.types_unlisted, 0);
+        assert_eq!(record.locks_unlisted, 0);
+        server.abort();
+
+        // Hundreds past the census is not a block of skew: refused, naming
+        // both figures, rather than drawn with a bucket folded away.
+        let (api_base, server) = spawn_script_family_census_api(
+            mainnet_like_families(),
+            family_census_summary(600, 22, 56, 522),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let error = source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("lock families exceed"), "{error}");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn script_family_census_withholds_without_a_partition_or_a_count() {
+        // A summary with no class partition has no bare-CKB figure to draw.
+        let (api_base, server) = spawn_script_family_census_api(
+            mainnet_like_families(),
+            serde_json::json!({
+                "tip": { "block": 100, "hash": "0xblock100" },
+                "liveCells": 1_000
+            }),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        assert!(source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .is_none());
+        server.abort();
+
+        // An index that names families but does not count them predates the
+        // record: naming still works, counting withholds.
+        let (api_base, server) = spawn_script_family_census_api(
+            serde_json::json!([
+                { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock" }
+            ]),
+            family_census_summary(1_000, 22, 70, 908),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        assert!(source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .is_none());
         server.abort();
     }
 

@@ -9,13 +9,19 @@
 // trust the other's scope, and either can be missing.
 
 import type {
+  EnrichmentSourceStatus,
   ScriptCensus,
   ScriptCount,
+  ScriptFamilyCensusRecord,
   ScriptId,
   ScriptRegistryRecord,
 } from '@cknerv/types';
 import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';
 import { CONTENT_BANDS, midTruncate } from '../components/hud/cellFormat';
+import {
+  anchoredRecordVisualState,
+  type AnchoredRecordVisualState,
+} from './anchoredRecord.derive';
 
 export interface ScriptFamilyBucket {
   key: string;
@@ -124,11 +130,33 @@ export function scriptLabel(
   return { label: midTruncate(script.code_hash, 6, 3), named: false };
 }
 
+interface Ranked {
+  buckets: ScriptFamilyBucket[];
+  restCells: number;
+  restScripts: number;
+}
+
+/** Order the merged families, name the first `limit` of them in rank hues
+ *  and fold the rest into one count. Sorting is stable on the key, so a bar
+ *  drawn twice from the same census is the same bar. */
+function rankBuckets(merged: ScriptFamilyBucket[], limit: number): Ranked {
+  merged.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  const rest = merged.slice(limit);
+  return {
+    buckets: merged.slice(0, limit).map((bucket, index) => ({
+      ...bucket,
+      color: RANK_COLORS[index % RANK_COLORS.length],
+    })),
+    restCells: rest.reduce((sum, bucket) => sum + bucket.count, 0),
+    restScripts: rest.length,
+  };
+}
+
 function rank(
   entries: ScriptCount[],
   names: Map<string, string>,
   limit: number,
-): { buckets: ScriptFamilyBucket[]; restCells: number; restScripts: number } {
+): Ranked {
   // Merge identities that share a name before cutting. A family can be
   // deployed more than once — mainnet runs three Default Multisig versions
   // and two xUDTs — and the census counts each deployment separately because
@@ -157,24 +185,24 @@ function rank(
   }
   // Merging can reorder: two small versions of one family may outrank a
   // single larger script.
-  merged.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  return rankBuckets(merged, limit);
+}
 
-  const rest = merged.slice(limit);
-  return {
-    buckets: merged.slice(0, limit).map((bucket, index) => ({
-      ...bucket,
-      color: RANK_COLORS[index % RANK_COLORS.length],
-    })),
-    restCells: rest.reduce((sum, bucket) => sum + bucket.count, 0),
-    restScripts: rest.length,
-  };
+/** The last segment of a bar: Cells nobody here can name. On the stage that
+ *  is `unidentified` — an identity cknerv could not read, a gap in its own
+ *  records. On the chain it is `unlisted` — a script the index has no family
+ *  for. Two different facts, so two different words; one hue, because a
+ *  reader meets them the same way, as the part of the bar that has no name. */
+interface UnnamedTail {
+  key: 'unidentified' | 'unlisted';
+  count: number;
 }
 
 function withRest(
   buckets: ScriptFamilyBucket[],
   restCells: number,
   restScripts: number,
-  unidentified: number,
+  tail: UnnamedTail | null,
 ): ScriptFamilyBucket[] {
   const out = [...buckets];
   if (restCells > 0) {
@@ -189,17 +217,58 @@ function withRest(
       families: restScripts,
     });
   }
-  if (unidentified > 0) {
+  if (tail && tail.count > 0) {
     out.push({
-      key: 'unidentified',
-      label: 'unidentified',
-      count: unidentified,
+      key: tail.key,
+      label: tail.key,
+      count: tail.count,
       color: UNIDENTIFIED_COLOR,
       named: false,
       families: 1,
     });
   }
   return out;
+}
+
+/** The ASSETS bar's shape, for either scope: bare CKB first — a cell with no
+ *  type script is not an unnamed family, it is CKB itself — then the type
+ *  families ranked past it, the fold, and the unnamed tail. */
+function assetBar(
+  plainCells: number,
+  ranked: (limit: number) => Ranked,
+  limit: number,
+  tailCells: number,
+  tailScripts: number,
+  tail: UnnamedTail | null,
+): ScriptFamilyBucket[] {
+  const plain: ScriptFamilyBucket[] = plainCells > 0
+    ? [{
+      key: 'native',
+      label: 'CKB',
+      count: plainCells,
+      color: SCRIPT_FAMILY_COLORS.native,
+      named: true,
+      families: 1,
+    }]
+    : [];
+  // The plain segment spends one of the bar's colours, so it also spends one
+  // of its named slots: at `limit === RANK_COLORS.length` the offset below
+  // would otherwise wrap the last type family back onto CKB's own hue, and
+  // two segments of one colour in one bar is a bar that reads as a bug.
+  const { buckets, restCells, restScripts } = ranked(Math.max(0, limit - plain.length));
+  return [
+    ...plain,
+    ...withRest(
+      // Rank colours start past the plain segment so it never shares one.
+      buckets.map((bucket, index) => ({
+        ...bucket,
+        color: RANK_COLORS[(index + plain.length) % RANK_COLORS.length],
+      })),
+      restCells + tailCells,
+      restScripts + tailScripts,
+      tail,
+    ),
+  ];
 }
 
 /** Lock families of the retained set, ranked, with the census's own tail
@@ -215,7 +284,7 @@ export function lockFamilyBuckets(
     buckets,
     restCells + census.locks_tail_cells,
     restScripts + census.locks_tail_scripts,
-    census.unidentified,
+    { key: 'unidentified', count: census.unidentified },
   );
 }
 
@@ -227,38 +296,91 @@ export function assetFamilyBuckets(
   limit = SCRIPT_BAR_FAMILIES,
 ): ScriptFamilyBucket[] {
   const names = scriptNameIndex(registry);
-  const plain: ScriptFamilyBucket[] = census.types_absent > 0
-    ? [{
-      key: 'native',
-      label: 'CKB',
-      count: census.types_absent,
-      color: SCRIPT_FAMILY_COLORS.native,
+  return assetBar(
+    census.types_absent,
+    (cut) => rank(census.types, names, cut),
+    limit,
+    census.types_tail_cells,
+    census.types_tail_scripts,
+    null,
+  );
+}
+
+// ——— The same two bars at chain scope ———————————————————————————————————
+//
+// The index counts the whole chain's live Cells by family, already named, so
+// there is no identity join to perform: a family IS its name here. What the
+// record cannot place it says so explicitly — bare CKB as `types_absent`, and
+// Cells whose script the index has no family for as the two `*_unlisted`
+// counts — so both bars sum to `live_cells` without a bucket invented on
+// this side.
+
+function chainFamilyBuckets(
+  record: ScriptFamilyCensusRecord,
+  kind: 'type' | 'lock',
+): ScriptFamilyBucket[] {
+  return record.families
+    .filter((family) => family.kind === kind && family.live_cells > 0)
+    .map((family) => ({
+      key: `${kind}:${family.name}`,
+      label: family.name,
+      count: family.live_cells,
+      color: REST_COLOR,
       named: true,
       families: 1,
-    }]
-    : [];
-  // The plain segment spends one of the bar's colours, so it also spends one
-  // of its named slots: at `limit === RANK_COLORS.length` the offset below
-  // would otherwise wrap the last type family back onto CKB's own hue, and
-  // two segments of one colour in one bar is a bar that reads as a bug.
-  const { buckets, restCells, restScripts } = rank(
-    census.types,
-    names,
-    Math.max(0, limit - plain.length),
+    }));
+}
+
+/** The whole chain's type families, in the shape the stage's ASSETS bar
+ *  takes: CKB first, the families ranked, the fold, and the typed Cells the
+ *  index has no family for. */
+export function chainAssetFamilyBuckets(
+  record: ScriptFamilyCensusRecord,
+  limit = SCRIPT_BAR_FAMILIES,
+): ScriptFamilyBucket[] {
+  return assetBar(
+    record.types_absent,
+    (cut) => rankBuckets(chainFamilyBuckets(record, 'type'), cut),
+    limit,
+    0,
+    0,
+    { key: 'unlisted', count: record.types_unlisted },
   );
-  return [
-    ...plain,
-    ...withRest(
-      // Rank colours start past the plain segment so it never shares one.
-      buckets.map((bucket, index) => ({
-        ...bucket,
-        color: RANK_COLORS[(index + plain.length) % RANK_COLORS.length],
-      })),
-      restCells + census.types_tail_cells,
-      restScripts + census.types_tail_scripts,
-      0,
-    ),
-  ];
+}
+
+/** The whole chain's lock families, ranked, with the Cells under a lock the
+ *  index has no family for as the bar's last segment. */
+export function chainLockFamilyBuckets(
+  record: ScriptFamilyCensusRecord,
+  limit = SCRIPT_BAR_FAMILIES,
+): ScriptFamilyBucket[] {
+  const { buckets, restCells, restScripts } = rankBuckets(
+    chainFamilyBuckets(record, 'lock'),
+    limit,
+  );
+  return withRest(buckets, restCells, restScripts, {
+    key: 'unlisted',
+    count: record.locks_unlisted,
+  });
+}
+
+/** Three refreshes of the record's two-minute cadence: a composition that
+ *  moves by tens of Cells a block is not news, and a bar that dimmed on one
+ *  missed refresh would be dimming over nothing. Twinned in `cknerv-core`
+ *  (`SCRIPT_FAMILY_CENSUS_CLIENT_PATIENCE_MS`), which floors the record's
+ *  re-stamp at half of this. */
+export const SCRIPT_FAMILY_CENSUS_STALE_AFTER_MS = 360_000;
+
+export type ScriptFamilyCensusVisualState = AnchoredRecordVisualState;
+
+/** Whether the chain bars may be drawn, and whether dimmed — the one law
+ *  every anchored aggregate answers to. */
+export function scriptFamilyCensusVisualState(
+  source: EnrichmentSourceStatus,
+  record: ScriptFamilyCensusRecord,
+  nowMs = Date.now(),
+): ScriptFamilyCensusVisualState | null {
+  return anchoredRecordVisualState(source, record, SCRIPT_FAMILY_CENSUS_STALE_AFTER_MS, nowMs);
 }
 
 /** Whether anything has been counted by identity yet — a pre-census backend,

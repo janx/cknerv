@@ -2976,7 +2976,7 @@ describe('chrome is the frame, not the reading', () => {
     // was `nominal`, a health tone, so of three identical headers in one panel
     // the top one appeared to be reporting that it was well and the two under
     // it did not. None of the three is reporting anything of the kind.
-    const sections = ['ChainStateReadout.tsx', 'TransactionHorizonReadout.tsx', 'ActivityFeedReadout.tsx'];
+    const sections = ['CellCensusReadout.tsx', 'TransactionHorizonReadout.tsx', 'ActivityFeedReadout.tsx'];
     const accents = sections.map((name) => {
       const source = SOURCES.find((entry) => entry.name === name);
       expect(source, `${name} moved — this oracle reads files off disk`).toBeDefined();
@@ -4558,13 +4558,17 @@ describe('one alpha for a rule', () => {
     expect(companionSites).toBeGreaterThan(4);
 
     // The scope tag is the same role in Latin — a qualifier beside a count —
-    // and it wore 0.8 in the two files that draw one.
-    for (const name of ['ChainStateReadout.tsx', 'StageCapacityPanel.tsx']) {
-      const source = SOURCES.find((item) => item.name === name);
-      expect(code(source?.text ?? ''), `${name} lost its scope tag`)
-        .toContain("textTransform: 'uppercase'");
-      expect(code(source?.text ?? ''), `${name}: a scope tag is a companion`)
-        .toContain('opacity: COMPANION_OPACITY');
+    // and it wore 0.8 in the two files that drew one. It is written once now,
+    // `SCOPE_TAG` in `primitives.tsx`, and every surface that draws one reads
+    // it from there: a third copy typed by hand is how the 0.8 got in.
+    const primitives = code(SOURCES.find((item) => item.name === 'primitives.tsx')?.text ?? '');
+    const scopeTag = /export const SCOPE_TAG: CSSProperties = \{[^}]*\}/.exec(primitives)?.[0] ?? '';
+    expect(scopeTag, 'primitives.tsx lost SCOPE_TAG').toContain("textTransform: 'uppercase'");
+    expect(scopeTag, 'a scope tag is a companion').toContain('opacity: COMPANION_OPACITY');
+    for (const name of ['CellCensusReadout.tsx', 'StageCapacityPanel.tsx', 'TaxonomyBar.tsx']) {
+      const source = code(SOURCES.find((item) => item.name === name)?.text ?? '');
+      expect(source, `${name} draws a scope tag of its own`).not.toMatch(/const SCOPE_TAG/);
+      expect(source, `${name} lost its scope tag`).toMatch(/\bSCOPE_TAG\b/);
     }
   });
 
@@ -5275,7 +5279,7 @@ describe('two names are never one colour', () => {
       'ActivityFeedReadout.tsx': 'stale={stale}',
       'CellByteBudget.tsx': 'OBSERVED',
       'CellDetailPanel.tsx': "proof.read ? '◆' : '◇'",
-      'ChainStateReadout.tsx': 'stale={stale}',
+      'CellCensusReadout.tsx': 'stale={stale}',
       'ConsensusIdentityPlate.tsx': 'SPENT INPUTS',
       'DaoStateReadout.tsx': '· STALE',
       'NetworkAtlasReadout.tsx': 'ATLAS STALE',
@@ -6437,8 +6441,9 @@ describe('freshness speaks only when it is wrong', () => {
 // caption. Two things broke that promise.
 //
 // A segment drawn from a share can round to nothing. The chain section (CHAIN
-// CAPACITY then, split by capacity; CHAIN STATE now, split by Cell count) named
-// `TOKENS 0.08% · OBJECTS 0.03%` and drew them 0.27 px and 0.10 px wide, so
+// CAPACITY then, split by capacity; CELL CENSUS now, the stage's two taxonomies
+// by Cell count) named `TOKENS 0.08% · OBJECTS 0.03%` and drew them 0.27 px
+// and 0.10 px wide, so
 // two of its four names were simply not there (report A, A-9). Every
 // proportional segment now has a floor — and the floor is for a segment that
 // has something in it, because a sliver standing for a zero is a worse lie
@@ -6482,10 +6487,10 @@ describe('a bar and the legend that names it', () => {
     expect([...drawers].sort()).toEqual([
       'ActivityFeedReadout.tsx',
       'CellByteBudget.tsx',
-      'ChainStateReadout.tsx',
       'NetworkAtlasReadout.tsx',
       'NetworkPanel.tsx',
       'StageCapacityPanel.tsx',
+      'TaxonomyBar.tsx',
     ]);
   });
 
@@ -6516,9 +6521,11 @@ describe('a bar and the legend that names it', () => {
     expect(offenders).toEqual([]);
     expect(declared.sort()).toEqual([
       'ActivityFeedReadout.tsx qualitative',
-      'ChainStateReadout.tsx qualitative',
       'NetworkAtlasReadout.tsx qualitative',
-      'StageCapacityPanel.tsx qualitative',
+      // One legend for both scopes: the taxonomy bar draws the stage's
+      // families and the chain's, so it declares once for the two panels
+      // that mount it.
+      'TaxonomyBar.tsx qualitative',
     ]);
   });
 });

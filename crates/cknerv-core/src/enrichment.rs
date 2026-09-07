@@ -566,6 +566,50 @@ pub struct ScriptRegistryRecord {
     pub unresolved: u32,
 }
 
+/// One script family the index catalogues, with the live Cells carrying it.
+///
+/// Named by the family's display name — the same spelling the registry's
+/// [`ScriptNameRecord::name`] uses — so a family reads the same on the
+/// whole-chain bars as on the stage's, and keyed by nothing else: a family
+/// is deployed under several code hashes, and this counts the family.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptFamilyCount {
+    pub name: String,
+    /// `"type"` or `"lock"`: which of the two bars the family belongs on.
+    pub kind: String,
+    pub live_cells: u64,
+}
+
+/// The most families one record may carry. Mainnet's index catalogues 66;
+/// a record is bounded by the index's vocabulary, never by the chain.
+pub const MAX_SCRIPT_FAMILIES: usize = 256;
+
+/// The whole chain's live Cells partitioned by script family, in the two
+/// taxonomies the stage's script census already uses — type families with
+/// bare CKB beside them, and lock families — so CELL CENSUS and STAGE·07
+/// split their populations by the same names.
+///
+/// Every count is exact at the index's tip, and the record carries its
+/// remainders explicitly so a bar drawn from it sums to `live_cells` without
+/// inventing a bucket: `types_absent` is bare CKB, and the two `*_unlisted`
+/// counts are Cells whose script the index has no family for.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptFamilyCensusRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    /// Every live Cell at the anchor — what both bars partition.
+    pub live_cells: u64,
+    /// Live Cells carrying no type script at all.
+    pub types_absent: u64,
+    /// Typed live Cells outside every listed type family.
+    pub types_unlisted: u64,
+    /// Live Cells whose lock is outside every listed lock family.
+    pub locks_unlisted: u64,
+    #[serde(default)]
+    pub families: Vec<ScriptFamilyCount>,
+}
+
 /// One normalized CKB edition activation from an optional protocol index.
 /// The short display name is source-owned context; activation coordinates
 /// remain exact chain positions.
@@ -1430,6 +1474,7 @@ const DAO_STATE_CLIENT_PATIENCE_MS: u64 = 180_000;
 const NETWORK_ATLAS_CLIENT_PATIENCE_MS: u64 = 180_000;
 const TRANSACTION_HORIZON_CLIENT_PATIENCE_MS: u64 = 180_000;
 const PROTOCOL_ERA_CLIENT_PATIENCE_MS: u64 = 900_000;
+const SCRIPT_FAMILY_CENSUS_CLIENT_PATIENCE_MS: u64 = 360_000;
 
 macro_rules! chain_aggregate {
     ($record:ty, $floor:expr) => {
@@ -1495,6 +1540,12 @@ chain_aggregate!(
 chain_aggregate!(
     ProtocolEraRecord,
     Some(floor_under_client_patience(PROTOCOL_ERA_CLIENT_PATIENCE_MS))
+);
+chain_aggregate!(
+    ScriptFamilyCensusRecord,
+    Some(floor_under_client_patience(
+        SCRIPT_FAMILY_CENSUS_CLIENT_PATIENCE_MS
+    ))
 );
 // The one aggregate the macro cannot write, because it carries neither of the
 // two stamps the macro adopts: a seven-day ledger over completed days has no
@@ -1577,6 +1628,7 @@ pub enum EnrichmentEvent {
     /// rather than a hope.
     ProducerLedgerClear,
     ScriptRegistryReplace(Box<ScriptRegistryRecord>),
+    ScriptFamilyCensusReplace(Box<ScriptFamilyCensusRecord>),
     GalaxyCompositionReplace(GalaxyCompositionRecord),
     /// Additive supply for the curated composition, in answer to the
     /// display plane's published shortfall.
@@ -1609,6 +1661,8 @@ pub struct SemanticsSnapshot {
     pub network_roster: Option<NetworkRosterRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_registry: Option<ScriptRegistryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_family_census: Option<ScriptFamilyCensusRecord>,
     /// Absent when no source declares the capability, when its route 404s, and
     /// on every build that predates the field — all three of which a consumer
     /// answers the same way, by falling back to the 240-block window.
@@ -1674,6 +1728,9 @@ pub enum SemanticsDelta {
     ScriptRegistryReplace {
         script_registry: Box<ScriptRegistryRecord>,
     },
+    ScriptFamilyCensusReplace {
+        script_family_census: Box<ScriptFamilyCensusRecord>,
+    },
     Prune {
         from_block: u64,
     },
@@ -1701,6 +1758,7 @@ pub struct SemanticsProjection {
     network_atlas: Option<NetworkAtlasRecord>,
     network_roster: Option<NetworkRosterRecord>,
     script_registry: Option<ScriptRegistryRecord>,
+    script_family_census: Option<ScriptFamilyCensusRecord>,
     producer_ledger: Option<ProducerLedger>,
     next_sequence: u64,
     cell_cap: usize,
@@ -1727,6 +1785,7 @@ impl SemanticsProjection {
             network_atlas: None,
             network_roster: None,
             script_registry: None,
+            script_family_census: None,
             producer_ledger: None,
             next_sequence: 0,
             cell_cap: 512,
@@ -1792,6 +1851,7 @@ impl SemanticsProjection {
         self.network_atlas = None;
         self.network_roster = None;
         self.script_registry = None;
+        self.script_family_census = None;
         self.producer_ledger = None;
     }
 
@@ -1854,6 +1914,7 @@ impl Projection for SemanticsProjection {
             network_atlas: self.network_atlas.clone(),
             network_roster: self.network_roster.clone(),
             script_registry: self.script_registry.clone(),
+            script_family_census: self.script_family_census.clone(),
             producer_ledger: self.producer_ledger.clone(),
         }
     }
@@ -1939,6 +2000,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|registry| registry.as_of.block >= *from_block)
                 {
                     self.script_registry = None;
+                }
+                if self
+                    .script_family_census
+                    .as_ref()
+                    .is_some_and(|census| census.as_of.block >= *from_block)
+                {
+                    self.script_family_census = None;
                 }
                 // `producer_ledger` is deliberately NOT dropped here, and it
                 // is the only aggregate that is not. Every record above is cut
@@ -2150,6 +2218,17 @@ impl EnrichmentProjection for SemanticsProjection {
                 }
                 vec![SemanticsDelta::ScriptRegistryReplace {
                     script_registry: script_registry.clone(),
+                }]
+            }
+            EnrichmentEvent::ScriptFamilyCensusReplace(script_family_census) => {
+                if !accept_refresh(
+                    &mut self.script_family_census,
+                    script_family_census.as_ref(),
+                ) {
+                    return Vec::new();
+                }
+                vec![SemanticsDelta::ScriptFamilyCensusReplace {
+                    script_family_census: script_family_census.clone(),
                 }]
             }
             EnrichmentEvent::GalaxyCompositionReplace(_)
@@ -2469,6 +2548,33 @@ mod tests {
         }
     }
 
+    fn script_family_census(block: u64) -> ScriptFamilyCensusRecord {
+        ScriptFamilyCensusRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            live_cells: 1_000,
+            types_absent: 700,
+            types_unlisted: 10,
+            locks_unlisted: 4,
+            families: vec![
+                ScriptFamilyCount {
+                    name: "xUDT".into(),
+                    kind: "type".into(),
+                    live_cells: 290,
+                },
+                ScriptFamilyCount {
+                    name: "Default Lock".into(),
+                    kind: "lock".into(),
+                    live_cells: 996,
+                },
+            ],
+        }
+    }
+
     /// The same answer, asked again at `at_ms`. Every aggregate this is used
     /// on spells its fetch clock `updated_at_ms`, which is the whole reason a
     /// re-fetch of an unchanged fact is not automatically an unchanged record.
@@ -2500,6 +2606,10 @@ mod tests {
             EnrichmentEvent::NetworkAtlasReplace(restamped!(network_atlas(block), at_ms)),
             EnrichmentEvent::ScriptRegistryReplace(Box::new(restamped!(
                 script_registry(block),
+                at_ms
+            ))),
+            EnrichmentEvent::ScriptFamilyCensusReplace(Box::new(restamped!(
+                script_family_census(block),
                 at_ms
             ))),
         ]
@@ -3089,7 +3199,7 @@ mod tests {
 
         assert_eq!(
             refresh_round(&mut projection, 10, 1_000_000),
-            9,
+            10,
             "the first round of answers is all news"
         );
 
@@ -3186,6 +3296,11 @@ mod tests {
                 "protocol_era",
                 ProtocolEraRecord::REFRESH_FLOOR_MS,
                 PROTOCOL_ERA_CLIENT_PATIENCE_MS,
+            ),
+            (
+                "script_family_census",
+                ScriptFamilyCensusRecord::REFRESH_FLOOR_MS,
+                SCRIPT_FAMILY_CENSUS_CLIENT_PATIENCE_MS,
             ),
         ] {
             let floor =
