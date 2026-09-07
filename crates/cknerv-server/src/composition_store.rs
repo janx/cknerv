@@ -12,8 +12,12 @@
 //! * **Remembering** is a file write. `<workdir>/galaxy-composition.json`
 //!   holds a schema-versioned envelope around the exact
 //!   [`GalaxyCompositionRecord`] a source last proved, written atomically
-//!   (tmp → rename, the [`crate::persistence`] idiom) so a crash mid-write
-//!   leaves the previous record standing rather than half of the new one.
+//!   (tmp → flush → rename, the [`crate::persistence`] idiom) so a crash
+//!   mid-write leaves the previous record standing rather than half of the
+//!   new one, and a machine that loses power just after the rename comes
+//!   back to a whole record rather than to an entry with nothing behind
+//!   it. The one file this module never discards is one a NEWER schema
+//!   wrote: that is set aside under its own version instead.
 //!
 //! * **Restoring** is NOT a file read. What comes back off disk is a list
 //!   of outpoints that used to be live, which is exactly the shape
@@ -61,6 +65,7 @@
 //! So the anchor names what it always names on a hydrated record: the
 //! height the membership was proven at. Here that is now.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -78,9 +83,10 @@ use cknerv_core::{
 use crate::enrichment::GalaxyCompositionHydrator;
 use crate::state::ServerState;
 
-/// Bumped when the on-disk shape changes incompatibly. An older or newer
-/// file is discarded rather than guessed at — the record is derived state
-/// a single composition refresh rebuilds.
+/// Bumped when the on-disk shape changes incompatibly. An older file is
+/// discarded rather than guessed at — the record is derived state a single
+/// composition refresh rebuilds. A NEWER one is set aside instead: see
+/// [`schema_aside_path`].
 const SCHEMA_VERSION: u32 = 1;
 
 /// Filename inside `<workdir>/`. The atomic write goes to `<name>.tmp` and
@@ -188,9 +194,20 @@ fn held(record: &GalaxyCompositionRecord) -> usize {
     record.dao.len() + record.typed.len() + record.plain.len()
 }
 
-/// Atomic write: the whole envelope lands in `<name>.tmp` first and is
-/// renamed over the live file, so a reader never sees a partial record and
-/// a failed write leaves the previous one intact.
+/// Where a composition written by a NEWER build is kept while an older one
+/// runs. The schema that wrote it is in the name, so a work directory can
+/// hold one of these per version without either overwriting the other
+/// silently. The twin of [`crate::persistence`]'s, for the file beside it.
+fn schema_aside_path(path: &Path, schema_version: u32) -> PathBuf {
+    let mut aside = path.to_path_buf().into_os_string();
+    aside.push(format!(".schema{schema_version}.bak"));
+    PathBuf::from(aside)
+}
+
+/// Atomic write: the whole envelope lands in `<name>.tmp` first, is flushed
+/// to the disk, and only then renamed over the live file — so a reader
+/// never sees a partial record and a failed write leaves the previous one
+/// intact.
 fn write(path: &Path, record: &GalaxyCompositionRecord) -> std::io::Result<()> {
     let bytes = serde_json::to_vec(&StoredComposition {
         schema_version: SCHEMA_VERSION,
@@ -201,8 +218,30 @@ fn write(path: &Path, record: &GalaxyCompositionRecord) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, bytes)?;
+    // The rename is atomic over the directory entry, but only over bytes
+    // the disk has actually taken. Without the flush below, a machine that
+    // loses power moments after the rename comes back to a
+    // `galaxy-composition.json` that is truncated or empty — the entry
+    // landed, its contents never did — and the whole reason to write a
+    // temporary file first is that the record already on disk is never the
+    // thing at risk.
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
     std::fs::rename(&tmp, path)?;
+    // The rename itself is a directory write, and it needs the same
+    // promise. Best-effort: some platforms refuse to open a directory at
+    // all, and a composition that survives the process but not the machine
+    // is still the composition we wrote — failing the whole call over the
+    // second flush would cost more than it buys, on a write that is already
+    // allowed to fail quietly.
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
     Ok(())
 }
 
@@ -211,9 +250,11 @@ fn write(path: &Path, record: &GalaxyCompositionRecord) -> std::io::Result<()> {
 /// Every failure is the same failure — there is no composition to restore
 /// — and every one of them is survivable by definition, because it is the
 /// state every first boot is in. Missing, unreadable, corrupt and
-/// schema-mismatched all return `None`; the last two also delete the file,
-/// matching [`crate::persistence::load`], since a record that cannot be
-/// parsed cannot become useful later and the next refresh rewrites it.
+/// schema-mismatched all return `None`; corrupt and older-schema files are
+/// also deleted, matching [`crate::persistence::load`], since a record this
+/// build cannot read cannot become useful later and the next refresh
+/// rewrites it. A record from a NEWER schema is the exception, and is moved
+/// aside rather than removed.
 fn read(path: &Path) -> Option<GalaxyCompositionRecord> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -245,10 +286,38 @@ fn read(path: &Path) -> Option<GalaxyCompositionRecord> {
             return None;
         }
     };
-    if envelope.schema_version != SCHEMA_VERSION {
+    if envelope.schema_version > SCHEMA_VERSION {
+        // A build newer than this one curated it. Deleting it would mean
+        // that starting the older binary once — to bisect, to compare, by
+        // accident — silently destroyed a stage this process cannot even
+        // read, and a composition is about a minute of a source's work
+        // plus a few hundred node round trips, none of which the newer
+        // build gets back for free. Set it aside under the version that
+        // wrote it instead: this boot composes from discovery, and the
+        // file is still there when the build that understands it returns.
+        let aside = schema_aside_path(path, envelope.schema_version);
+        match std::fs::rename(path, &aside) {
+            Ok(()) => tracing::warn!(
+                target: "cknerv-server",
+                "remembered composition schema {} is newer than this build's {SCHEMA_VERSION} — moved {} to {} and composing from discovery instead",
+                envelope.schema_version,
+                path.display(),
+                aside.display()
+            ),
+            Err(error) => tracing::warn!(
+                target: "cknerv-server",
+                "remembered composition schema {} is newer than this build's {SCHEMA_VERSION} — leaving {} where it is ({} could not be written: {error}) and composing from discovery instead",
+                envelope.schema_version,
+                path.display(),
+                aside.display()
+            ),
+        }
+        return None;
+    }
+    if envelope.schema_version < SCHEMA_VERSION {
         tracing::warn!(
             target: "cknerv-server",
-            "remembered composition schema {} != current {SCHEMA_VERSION} — discarding",
+            "remembered composition schema {} is older than this build's {SCHEMA_VERSION} — discarding",
             envelope.schema_version
         );
         let _ = std::fs::remove_file(path);
@@ -748,17 +817,55 @@ mod tests {
         assert!(!path.exists(), "an unparseable record cannot become useful");
     }
 
+    /// The older half of the schema split: a shape this build has moved
+    /// past is not worth guessing at, and one refresh rebuilds it.
     #[test]
-    fn a_record_from_another_schema_is_skipped() {
-        let scratch = Scratch::new("schema");
+    fn a_record_from_an_older_schema_is_discarded() {
+        let scratch = Scratch::new("older-schema");
         let path = scratch.file();
         let envelope = serde_json::json!({
-            "schema_version": SCHEMA_VERSION + 1,
+            "schema_version": SCHEMA_VERSION - 1,
             "record": serde_json::to_value(record(4_000)).unwrap(),
         });
         std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
 
         assert_eq!(read(&path), None);
+        assert!(!path.exists(), "an older record is deleted");
+        assert!(
+            !schema_aside_path(&path, SCHEMA_VERSION - 1).exists(),
+            "and it is not kept aside"
+        );
+    }
+
+    /// The other half: a curation this build cannot read is not this
+    /// build's to destroy. Running the older binary once — bisecting,
+    /// comparing two tips — used to take the newer stage with it, and
+    /// re-curating one costs a source about a minute of index pages and
+    /// the node a few hundred batched reads.
+    #[test]
+    fn a_record_from_a_newer_schema_is_set_aside_rather_than_deleted() {
+        let scratch = Scratch::new("newer-schema");
+        let path = scratch.file();
+        let envelope = serde_json::json!({
+            "schema_version": SCHEMA_VERSION + 1,
+            "record": serde_json::to_value(record(4_000)).unwrap(),
+        });
+        let written = serde_json::to_vec(&envelope).unwrap();
+        std::fs::write(&path, &written).unwrap();
+
+        assert_eq!(read(&path), None);
+        assert!(!path.exists(), "a newer record must not be half-read");
+        let aside = schema_aside_path(&path, SCHEMA_VERSION + 1);
+        assert!(
+            aside.exists(),
+            "the newer record should be waiting at {}",
+            aside.display()
+        );
+        assert_eq!(
+            std::fs::read(&aside).unwrap(),
+            written,
+            "what was set aside is the file, byte for byte"
+        );
     }
 
     #[test]

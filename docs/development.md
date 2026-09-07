@@ -195,10 +195,12 @@ ckbadger enabled the server writes the composition it last proved to
 outpoints back through the same node revalidation a fresh composition goes
 through — every one re-read against the node, dead ones dropped — so a warm
 boot stages a proven set in seconds instead of curating one from nothing. The
-file carries its own schema version and is discarded when it does not match,
-and the trust boundary does not move: nothing reaches the stage that the node
-has not just re-affirmed. A boot that rebuilds canonical state rebuilds the
-stage with it.
+file carries its own schema version: an older one is discarded, while one
+written by a *newer* build is renamed beside itself as
+`galaxy-composition.json.schema<N>.bak` rather than deleted, the same way
+`cknerv-state.json` is. The trust boundary does not move either way: nothing
+reaches the stage that the node has not just re-affirmed. A boot that rebuilds
+canonical state rebuilds the stage with it.
 
 ## Known Limits
 
