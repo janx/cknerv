@@ -33,8 +33,8 @@ function formatBytes(bytes: number): string {
 
 /**
  * The census of the chain's Cells: how many are alive, what they are made
- * of, the capacity they stand in and the knowledge standing in it, and the
- * biggest populations among them. Everything true of the whole chain, and
+ * of, the capacity they stand in and the knowledge standing in it.
+ * Everything true of the whole chain, and
  * nothing true of this dashboard's local slice — that slice is STAGE·07's
  * whole subject, and the two are a census and a sample of one population,
  * which is why the section is named for the census and the panel for the
@@ -199,29 +199,6 @@ export default function CellCensusReadout({
             scope={familyStale ? 'STALE' : undefined}
             buckets={chainInventoryBuckets(families)}
           />
-        </div>
-      ) : null}
-      {usableRecord && usableRecord.top_assets.length > 0 ? (
-        <div data-indexed-context style={{ marginTop: 6, opacity: stale ? STALE_OPACITY : 1 }}>
-          <div style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
-            TOP ASSETS
-          </div>
-          {usableRecord.top_assets.slice(0, 3).map((asset) => (
-            <div
-              key={asset.type_script_hash}
-              title={asset.type_script_hash}
-              style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.nav, padding: '1px 0' }}
-            >
-              <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {asset.symbol ?? asset.name ?? `${asset.type_script_hash.slice(0, 10)}…`}
-              </span>
-              <span style={{ color: HUD_COLORS.dim }}>
-                {Number.isSafeInteger(asset.holders_count)
-                  ? `${asset.holders_count.toLocaleString('en-US')} HOLDERS`
-                  : 'HOLDERS ?'}
-              </span>
-            </div>
-          ))}
         </div>
       ) : null}
     </section>

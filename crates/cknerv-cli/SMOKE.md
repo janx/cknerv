@@ -355,7 +355,7 @@ With a local ckbadger service configured:
       `AS OF` of its own — `STALE` only when stale), one `ASSETS` bar over the
       whole chain by ckbadger's menu (`CKB · TOKENS · OBJECTS · IDENTITIES ·
       DAO · SCRIPTS`, by live-Cell COUNT, never by capacity; absent until the
-      index names each family's inventory), no `LOCKS` bar, and a bounded
+      roster has classified the index's families), no `LOCKS` bar and no
       top-asset list
 - [ ] `PEER MESH` appends the reach bar and the country and client-version
       strips as plain rows of the panel — no `NETWORK ATLAS` heading, no strip

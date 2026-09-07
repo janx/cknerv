@@ -132,8 +132,11 @@ describe('CellCensusReadout', () => {
     expect(container.querySelector('[data-readout-title]')?.textContent).toBe('CELL CENSUS');
     expect(text).toContain('Live cells');
     expect(text).toContain('1,471,373');
-    expect(text).toContain('OTTER');
-    expect(text).toContain('34,386 HOLDERS');
+    // The record's top-asset list is not drawn: ranked by one key and
+    // captioned with another, it was struck.
+    expect(text).not.toContain('TOP ASSETS');
+    expect(text).not.toContain('OTTER');
+    expect(text).not.toContain('HOLDERS');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
     // Two names it has worn and shed: the first named one row of five, the
@@ -335,8 +338,8 @@ describe('CellCensusReadout', () => {
     const indexed = Array.from(
       container.querySelectorAll<HTMLElement>('[data-indexed-context]'),
     );
-    // Capacity rows, the two bars, and the top assets: all indexed, all dim.
-    expect(indexed.length).toBe(3);
+    // The capacity rows and the bar: both indexed, both dim.
+    expect(indexed.length).toBe(2);
     for (const section of indexed) expect(section.style.opacity).toBe(String(STALE_OPACITY));
     expect(container.querySelector<HTMLElement>(
       '[data-population-row="Chain live"]',

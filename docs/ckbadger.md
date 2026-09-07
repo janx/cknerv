@@ -422,8 +422,10 @@ Chain-scope and stage-scope readings live on two surfaces, and they are a
 census and a sample of one population. **CELL CENSUS** is a fused readout
 inside `COMMON KNOWLEDGE BASE`, in the same header system as `TX HORIZON` and
 `ACTIVITY`: everything true of the whole chain — indexed live capacity,
-knowledge bytes, the validated live-Cell count, the chain's `ASSETS` bar, top
-assets. No anchor is printed anywhere on CKB·01's three sections — not on a
+knowledge bytes, the validated live-Cell count, the chain's `ASSETS` bar. The
+record's top-asset list (ckbadger's tokens by last-day transfers, then
+holders) is validated on the wire but not drawn. No anchor is printed
+anywhere on CKB·01's three sections — not on a
 header, the count or the bar; every `AS OF #n` was struck as noise — and each
 reading says only `STALE` when its own record has gone stale.
 The bar is the chain by ckbadger's own menu, drawn from the
