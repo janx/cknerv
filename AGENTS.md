@@ -1,8 +1,11 @@
 # AGENTS.md
 
 Operational instructions for AI agents working in this repository. Read
-`README.md` first; it contains the project overview, architecture, commands,
-API shapes, and runtime configuration.
+`README.md` first; it contains the project overview, API shapes, runtime
+configuration, and an index of the documents under `docs/`, where the
+architecture, the tech stack, the repository layout, and the development
+commands live — `docs/development.md` and `docs/architecture.md` in
+particular.
 
 ## Project Summary
 

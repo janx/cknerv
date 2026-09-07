@@ -71,134 +71,20 @@ one-run hard scan limit and is intentionally not persisted in
 `cknerv.toml`. The CKB node is accessed read-only; cknerv polls node state and
 never submits transactions.
 
-## Development
+## Documentation
 
-Run the Rust server/CLI:
-
-```bash
-cargo run -p cknerv-cli -- run --no-open --port 7001
-```
-
-Run the Vite app against that server:
-
-```bash
-pnpm -F cknerv-ui-app dev
-```
-
-The Vite dev server uses port `5181` and proxies `/api` plus WebSocket traffic
-to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
-`cknerv` binary via `crates/cknerv-cli/build.rs`, which reruns the pnpm build
-whenever `ui-app/`, `packages/{ui,cache,types}/src`, or `pnpm-lock.yaml`
-changes — otherwise a TS-only edit would leave a stale bundle inside the
-binary.
-
-For `cargo check` / clippy / rust-analyzer cycles, where that pnpm build is
-pure latency, `CKNERV_SKIP_UI_BUILD=1` reuses whatever `ui-app/dist` is already
-on disk (it refuses to skip if there is none, and prints a cargo warning each
-time it fires). Never set it when producing a release binary.
-
-```bash
-CKNERV_SKIP_UI_BUILD=1 cargo clippy --workspace --all-targets
-```
-
-The normative Canvas visual, quality, performance, and acceptance contract is
-documented in [`docs/canvas-rendering.md`](docs/canvas-rendering.md).
-
-The dashboard's optional SoundCloud Jukebox — the floating `SND·06` chip in
-the bottom-right corner — is documented in
-[`docs/jukebox.md`](docs/jukebox.md).
-
-## Tech Stack
-
-| Layer | Technology | Purpose |
-|---|---|---|
-| CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
-| Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
-| CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| Optional enrichment | Rust, reqwest | Canonically anchored indexed context from ckbadger; see [`docs/ckbadger.md`](docs/ckbadger.md) |
-| Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
-| UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, Cell-tethered detail constellations, nerve overlays |
-
-## Architecture
-
-The full design contract — domain model, server runtime, protocol, browser
-data layer, budgets, and extension guide — is
-[`docs/architecture.md`](docs/architecture.md). In outline:
-
-cknerv keeps source-specific chain ingestion separate from the chain-generic
-dashboard pipeline. The direct CKB adapter remains the sole producer of
-structural chain truth. Optional indexed enrichment is additive and can never
-create, spend, or replace a canonical Cell.
-
-```text
-CKB node JSON-RPC
-      |
-      v
-CkbDirectAdapter
-      |
-      v
-Mutation stream
-      |
-      v
-cknerv-server
-  - Chain entity store
-  - projection registry
-  - mutation replay ring
-  - persistence
-      |
-      v
-HTTP/WS API
-      |
-      v
-@cknerv/cache reducers
-      |
-      v
-@cknerv/ui React + R3F cell galaxy
-```
-
-The primary public seams are:
-
-- Data sources implement `cknerv_server::Adapter` and emit
-  `cknerv_core::Mutation` values.
-- Server projections implement `cknerv_core::Projection` and expose snapshots
-  plus deltas through `/api/projections/:name/...`.
-- Optional indexed sources implement `cknerv_server::EnrichmentSource`.
-  Enrichment-aware projections own an independent revision/ring, while
-  canonical reorg/rebuild mutations only invalidate their anchored records.
-  Source health probing runs independently from bounded per-capability
-  refreshes, and every successful ckbadger result must re-prove its validated
-  block/hash anchor immediately before it enters the semantics projection.
-  CellGalaxy composition additionally uses ckbadger only to discover/rank
-  outpoints, then batch-validates and materializes every displayed candidate
-  through the local CKB node's read-only `get_live_cell` RPC — full
-  compositions and incremental top-ups alike. That validated input is
-  display-plane input, not semantics: it enters the server's own canonical
-  stream as a server-internal mutation the browser never sees, so display
-  membership stays ordered against the births and reorgs it is staged
-  against. The cells projection also publishes the script identities it is
-  currently holding through a shared sink, and names for them return on the
-  semantics stream; ckbadger still cannot write anything that projection
-  reads.
-
-The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
-emits chain-generic mutations. It also includes optional ckbadger enrichment;
-its architecture, trust boundary, capabilities, and limits are documented in
-[`docs/ckbadger.md`](docs/ckbadger.md).
-
-## Repository Layout
-
-| Path | Purpose |
-|---|---|
-| `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
-| `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
-| `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional read-only indexed enrichment adapter; see [`docs/ckbadger.md`](docs/ckbadger.md). |
-| `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
-| `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
-| `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
-| `packages/ui/` | `@cknerv/ui`: React + R3F primitives, HUDs, materials, geometry, cell-life detail views, and nerve overlays. |
-| `ui-app/` | Default SPA assembled from `@cknerv/ui`; embedded by the CLI release build. |
-| `tests/fixtures/` | Cross-language fixtures for Rust <-> TypeScript wire-shape and helix parity tests. |
+- [`docs/development.md`](docs/development.md): running the stack from a
+  checkout, the tech stack, the architecture in outline, and what each crate
+  and package owns.
+- [`docs/architecture.md`](docs/architecture.md): the normative design
+  contract — domain model, server runtime, protocol, browser data layer,
+  budgets, and extension guide.
+- [`docs/canvas-rendering.md`](docs/canvas-rendering.md): the normative Canvas
+  visual, quality, performance, and acceptance contract.
+- [`docs/ckbadger.md`](docs/ckbadger.md): the optional enrichment source — its
+  setup, trust boundary, capabilities, and limits.
+- [`docs/jukebox.md`](docs/jukebox.md): the dashboard's optional SoundCloud
+  Jukebox, the floating `SND·06` chip in the bottom-right corner.
 
 ## Work Directory Structure
 
