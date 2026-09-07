@@ -1,36 +1,29 @@
 # cknerv
 
-cknerv is a local-first CKB visualization "weather station". It connects to a
-read-only CKB JSON-RPC node, reduces chain activity into chain-generic
-mutations, and renders the live chain as a 3D cell galaxy: every UTXO is a
-cell, every block is a pulse, and every transaction is a causal nerve path
-through the field.
+cknerv is a local-first CKB visualization. It gives the blocks, transactions,
+cells, and peers of CKB — an
+[eternal digital realm](https://github.com/janx/ckbadger/blob/main/docs/prompts/WORLD_VIEW.md)
+sustained by continuous work — a visible body.
 
-The project was extracted from `ckb-rcg/simulator/` so the same React Three
-Fiber visualization can be driven by different data sources: the standalone
-`cknerv` CLI uses a direct CKB JSON-RPC adapter, while the simulator can feed
-the same server/UI pipeline through its own adapter.
+What it draws is a dual structure. One layer lives in the digital world: the
+consensus nerve network woven from Common Knowledge Cells, the hub where
+activity is coordinated. The other lives in the physical world: the
+peer-to-peer network of the CKB nodes that carry it. The two are inseparable —
+two faces of one body, each wearing a different form in its own world.
 
-**Status:** v0.1. The standalone CLI boots against a local CKB node, polls
-read-only JSON-RPC methods, serves an embedded dashboard SPA, streams live
-HTTP/WS snapshots and deltas, and checkpoints derived state after target-driven
-Cell hydration and on clean shutdown so the next run resumes from the saved tip
-and recent canonical hash anchors instead of replaying the same history.
-See [`crates/cknerv-cli/SMOKE.md`](crates/cknerv-cli/SMOKE.md) for the manual
-smoke procedure and an observed live-node run.
+cknerv reads from two sources. A CKB node on its own drives the basic view. The
+full dashboard also needs ckbadger, which supplies the richer statistics and
+queries the panels are built on. Both are meant to run on your own machine.
 
 ## Principles
 
 - **CKB Native**: make CKB's cell model visible. Chain data is the source of
-  truth; the galaxy is a derived view over real blocks, transactions, and
-  outpoints.
+  truth; the visualization is a derived view over real blocks, transactions,
+  and outpoints.
 - **Local First**: the useful default is a local CKB node plus a local
-  dashboard. No hosted service, indexer dependency, or RPC middleware is
-  required for the current live visualization.
-- **Chain Generic**: adapters are replaceable. The server and UI consume
-  `Mutation`s and projections, not source-specific APIs.
-- **Agent Friendly**: wire shapes, routes, fixtures, and tests are kept explicit
-  so humans and agents can safely extend the system together.
+  dashboard, and the full version only adds a local ckbadger beside them.
+- **Agent Friendly**: wire shapes, routes, fixtures, and tests are kept
+  explicit so humans and agents can safely extend the system together.
 
 ## Quick Start
 
@@ -39,16 +32,18 @@ Prerequisites:
 - Rust stable with `rustfmt` and `clippy` (`rust-toolchain.toml` pins stable).
 - pnpm 9 (`package.json` declares `packageManager: pnpm@9.0.0`).
 - A CKB node with JSON-RPC enabled, defaulting to `http://localhost:8114`.
+- For the full dashboard, a local ckbadger service; see
+  [`docs/ckbadger.md`](docs/ckbadger.md).
 
 ```bash
 pnpm install --frozen-lockfile
 cargo build --release -p cknerv-cli
 
 # Scaffold a work directory. This writes cknerv.toml and creates data/.
-./target/release/cknerv init -C myviz
+./target/release/cknerv init -C mynerv
 
 # Run the embedded dashboard from that work directory.
-./target/release/cknerv run -C myviz
+./target/release/cknerv run -C mynerv
 
 # Bare `cknerv` defaults to `run` in the current directory.
 ./target/release/cknerv
@@ -60,7 +55,7 @@ Useful run options:
 ./target/release/cknerv run --rpc http://localhost:8114 --port 7001
 ./target/release/cknerv run --no-open
 ./target/release/cknerv run --backfill-blocks 5000
-./target/release/cknerv purge -C myviz --confirm
+./target/release/cknerv purge -C mynerv --confirm
 ```
 
 `-C/--workdir <PATH>` selects the work directory. It contains:
