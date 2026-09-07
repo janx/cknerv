@@ -682,8 +682,8 @@ export const POPULATION_FIBRE_ALPHA = 0.8;
  * strand lengths, forks and joins (P3/P4). Deposit counts per pixel are a
  * placement property, and retention is a function of them, so all three
  * numbers are stale by an unknown amount. Nothing in the tree can re-derive
- * them: `docs/superpowers/measure/` holds placement-geometry instruments only
- * (contours, radial extent), and the material's own tests carry a linear
+ * them: the local instruments that produced them cover placement geometry
+ * only (contours, radial extent), and the material's own tests carry a linear
  * chroma proxy, not an OKLCh one. Both halves need pixels off a GPU. **The
  * live look is the arbiter now, not this table.**
  *

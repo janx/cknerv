@@ -12,7 +12,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0"
-authors = ["janx@users.noreply.github.com"]
+authors = ["janx <janx@users.noreply.github.com>"]
 
 [workspace.dependencies]
 # Versions are pinned to match ckb-rcg/simulator's manifest (see B1.3 in
