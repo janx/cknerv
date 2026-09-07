@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
+import { createRouteScratch } from '../../src/geometry/pathRouter';
 import type { Pulse, PulsePlanningOptions } from '../../src/nerve/pulseRunner';
 import {
   openLinkBatch,
@@ -105,8 +106,14 @@ interface Admitted { pulse: Pulse; startSec: number; batch: LivePulseBatch }
  *  per planned link) costs `stepCostMs`, so a frame's budget is spent in
  *  units the test controls. `originCostMs` charges the same clock per ROUTE
  *  SEARCH instead — `bumpOrigin` fires once per (origin, destination) pair —
- *  which is the grain a step actually holds. */
-function makeDriver(stepCostMs: number, budgetMs: number, originCostMs = 0) {
+ *  which is the grain a step actually holds. `rescueCostMs` charges the scored
+ *  search a rescue candidate pays, so a frame's worst grain can be a RESCUE. */
+function makeDriver(
+  stepCostMs: number,
+  budgetMs: number,
+  originCostMs = 0,
+  rescueCostMs = 0,
+) {
   let wallMs = 0;
   let clockReads = 0;
   let linkSteps = 0;
@@ -117,7 +124,10 @@ function makeDriver(stepCostMs: number, budgetMs: number, originCostMs = 0) {
       wallMs += originCostMs;
       pulseStats.bumpOrigin(k, n);
     },
-    bumpRescue: (k, n) => pulseStats.bumpRescue(k, n),
+    bumpRescue: (k, n) => {
+      wallMs += rescueCostMs;
+      pulseStats.bumpRescue(k, n);
+    },
     bumpRingEvicted: (n) => pulseStats.bumpRingEvicted(n),
     observeLink: (b, lit) => {
       wallMs += stepCostMs;
@@ -305,6 +315,7 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     const queue = createLivePulseQueue();
     expect(stepLivePulseQueue(queue, driver.ctx)).toEqual({
       steps: 0, admitted: 0, pending: false, forcedByDeadline: false, maxStepMs: 0,
+      maxStepKind: 'other', maxStepCold: false,
     });
     expect(driver.clockReads).toBe(0);
   });
@@ -364,6 +375,46 @@ describe('stepLivePulseQueue — sliced over frames, the one-task plan', () => {
     // the driver folds into pulseStats.maxStepMs.
     expect(report.steps).toBeGreaterThan(1);
     expect(report.maxStepMs).toBeCloseTo(0.5, 12);
+  });
+
+  it('names its longest step and whether the router walked it cold', () => {
+    // A 34 ms grain means three different things — an expensive link search, a
+    // dark block's scored rescue, a stage-wide grid rebuild — and only the
+    // report tells them apart. The scratch is this batch's own, so its first
+    // walk is genuinely cold and every later one warm.
+    const { cells, graph } = fixture();
+    const opts: PulsePlanningOptions = { routeScratch: createRouteScratch() };
+    const lit = mkLink({
+      seq: 1, block: 7, tx_hash: '0xlit', to_ids: [4],
+      endpoint_anchors: [{ id: 71, pos_seed: [0, 0, 0], content_hash: CH, resolved: true }],
+    });
+    const dark = mkLink({
+      seq: 2, block: 8, tx_hash: '0xdark', to_ids: [2], endpoint_anchors: [],
+    });
+    // Free link steps, a 1 ms route search, a 9 ms rescue, a zero budget: each
+    // frame stops on the first grain that costs anything.
+    const driver = makeDriver(0, 0, 1, 9);
+    const queue = createLivePulseQueue();
+    const { toFire } = openLinkBatch([lit, dark], 0, false, driver.stats);
+    enqueueLivePulseBatch(queue, toFire, cells, graph, opts, 100, {});
+
+    // Frame 1: the free entry grid, then the lit link's one route search —
+    // the frame's longest, and the first walk this scratch ever took.
+    const first = stepLivePulseQueue(queue, driver.ctx);
+    expect(first.maxStepMs).toBeCloseTo(1, 12);
+    expect(first.maxStepKind).toBe('link');
+    expect(first.maxStepCold).toBe(true);
+    expect(driver.admitted).toHaveLength(1);
+
+    // Frame 2: block 7's free verdict, the dark link (no origin, no search),
+    // then block 8's rescue — nine times the link's search, and warm by now.
+    const second = stepLivePulseQueue(queue, driver.ctx);
+    expect(second.maxStepMs).toBeCloseTo(9, 12);
+    expect(second.maxStepKind).toBe('rescue');
+    expect(second.maxStepCold).toBe(false);
+    expect(queue.batches).toHaveLength(0);
+    expect(driver.admitted).toHaveLength(2);
+    expect(driver.admitted[1].pulse.rescue).toBe('rim');
   });
 });
 

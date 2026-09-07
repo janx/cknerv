@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import type { NeighborGraph } from '../../src/geometry/neighborGraph';
+import {
+  DEFAULT_MAX_HOPS,
+  routeCacheCompactions,
+  shortestPath,
+} from '../../src/geometry/pathRouter';
 import {
   pulseStats,
   snapshotPulseStats,
@@ -89,6 +95,44 @@ describe('pulseStats live-plan driver gauges', () => {
     const s = snapshotPulseStats();
     expect(s.forcedByDeadline).toBe(0);
     expect(s.maxStepMs).toBe(0);
+    expect(s.maxStepKind).toBe('other');
+    expect(s.maxStepCold).toBe(false);
+  });
+
+  it('lets the max step name itself: its kind, and whether it walked cold', () => {
+    // The kind and the coldness belong to the step the max was TAKEN from, so
+    // a later, smaller step can never relabel it.
+    pulseStats.observeStepMs(3.2, 'link', false);
+    pulseStats.observeStepMs(9.4, 'rescue', true);
+    pulseStats.observeStepMs(1.1, 'grid', false);
+    const s = snapshotPulseStats();
+    expect(s.maxStepMs).toBeCloseTo(9.4, 12);
+    expect(s.maxStepKind).toBe('rescue');
+    expect(s.maxStepCold).toBe(true);
+    // A bigger one takes the label with it.
+    pulseStats.observeStepMs(12, 'grid', false);
+    expect(snapshotPulseStats()).toMatchObject({
+      maxStepKind: 'grid', maxStepCold: false,
+    });
+  });
+
+  it('carries the router compaction count, which its own reset does not own', () => {
+    // Each compaction throws the whole neighbour cache away, so the number of
+    // them in an observation window is the direct test of whether the cold
+    // cliff is a real live cost or a session-scale rarity. It belongs to the
+    // router, so resetting the pulse window must not zero it.
+    const before = snapshotPulseStats().routeCompactions;
+    expect(before).toBe(routeCacheCompactions());
+    // Fill the shared registry from a wide graph, then search a tiny one.
+    const edges: [number, number][] = [];
+    for (let i = 2; i <= 9501; i++) edges.push([1, i]);
+    expect(shortestPath(mkStar(edges), 2, 9501, DEFAULT_MAX_HOPS)).toEqual([2, 1, 9501]);
+    expect(snapshotPulseStats().routeCompactions).toBe(before);
+    expect(shortestPath(mkStar([[7, 8], [8, 9]]), 7, 9, DEFAULT_MAX_HOPS))
+      .toEqual([7, 8, 9]);
+    expect(snapshotPulseStats().routeCompactions).toBe(before + 1);
+    resetPulseStats();
+    expect(snapshotPulseStats().routeCompactions).toBe(before + 1);
   });
 });
 
@@ -99,7 +143,7 @@ describe('resetPulseStats', () => {
     pulseStats.observeLink(1, true);
     pulseStats.observeBlockTick();
     pulseStats.observeForcedByDeadline();
-    pulseStats.observeStepMs(5);
+    pulseStats.observeStepMs(5, 'rescue', true);
     resetPulseStats();
     const s = snapshotPulseStats();
     expect(s.linkReasons.fired).toBe(0);
@@ -109,6 +153,8 @@ describe('resetPulseStats', () => {
     expect(s.blocksLit).toBe(0);
     expect(s.forcedByDeadline).toBe(0);
     expect(s.maxStepMs).toBe(0);
+    expect(s.maxStepKind).toBe('other');
+    expect(s.maxStepCold).toBe(false);
   });
 });
 
@@ -143,3 +189,19 @@ describe('pulseStats.bumpRecall', () => {
     expect(snap.recallOutcomes.recalled).toBe(1);
   });
 });
+
+/** A plain undirected graph, the shape every router test uses. */
+function mkStar(edges: [number, number][]): NeighborGraph {
+  const adjacency = new Map<number, Set<number>>();
+  const add = (a: number, b: number) => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set());
+    if (!adjacency.has(b)) adjacency.set(b, new Set());
+    adjacency.get(a)!.add(b);
+    adjacency.get(b)!.add(a);
+  };
+  for (const [a, b] of edges) add(a, b);
+  return {
+    adjacency,
+    edges: edges.map(([a, b]) => ({ from: Math.min(a, b), to: Math.max(a, b), d: 1 })),
+  };
+}

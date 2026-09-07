@@ -347,6 +347,9 @@ import type { Cell } from '@cknerv/types';
 import { buildNeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   createRouteScratch,
+  routeCacheBuilds,
+  routeCacheCold,
+  routeCacheCompactions,
   DEFAULT_MAX_HOPS,
   RESCUE_MAX_HOPS,
   type RouteScratch,
@@ -667,6 +670,63 @@ describe('typed-array search engine — byte-identical to the Set/Map reference'
     expect(shortestPath(star, 40, 41, DEFAULT_MAX_HOPS, scratch)).toEqual([40, 1, 41]);
     expect(shortestPathsToTargets(star, 1, [3, 9501, 2], DEFAULT_MAX_HOPS, scratch))
       .toEqual(new Map([[2, [1, 2]], [3, [1, 3]], [9501, [1, 9501]]]));
+  });
+
+  it('rebuilds only the nodes whose adjacency Set was replaced, and says when it is cold', () => {
+    // The cache's validity rule is already per NODE: it keys on the adjacency
+    // Set instance, and a topology commit keeps the instance of every node it
+    // did not change. So a search after a patched commit must rebuild exactly
+    // the nodes that moved — this is the gauge that says so in numbers.
+    const chain = mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+    const scratch = createRouteScratch();
+    expect(routeCacheCold(scratch)).toBe(true);
+    expect(routeCacheBuilds(scratch)).toBe(0);
+    expect(shortestPath(chain, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 2, 3, 4, 5]);
+    // Four nodes expanded, four arrays built; node 5 is found, never expanded.
+    const cold = routeCacheBuilds(scratch);
+    expect(cold).toBe(4);
+    expect(routeCacheCold(scratch)).toBe(false);
+    expect(scratch.cachedNodes).toBe(4);
+    // Same graph again: nothing to rebuild.
+    expect(shortestPath(chain, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 2, 3, 4, 5]);
+    expect(routeCacheBuilds(scratch)).toBe(cold);
+    // One node's Set is REPLACED with an equal one, the way a patched apply
+    // replaces the nodes the worker found changed. Exactly one rebuild.
+    chain.adjacency.set(3, new Set(chain.adjacency.get(3)!));
+    expect(shortestPath(chain, 1, 5, DEFAULT_MAX_HOPS, scratch)).toEqual([1, 2, 3, 4, 5]);
+    expect(routeCacheBuilds(scratch)).toBe(cold + 1);
+    expect(scratch.cachedNodes).toBe(4); // a refresh, not a new cached node
+  });
+
+  it('a compaction throws away the whole cache, unchanged nodes included', () => {
+    // The cliff the per-node rule cannot prevent: compaction renumbers slots,
+    // and every cached array holds SLOT indices, so no entry survives — which
+    // is also why it cannot be kept "for the part of the graph that did not
+    // change". It takes a registry that dwarfs the live graph to fire.
+    const edges: [number, number][] = [];
+    for (let i = 2; i <= 9501; i++) edges.push([1, i]);
+    const star = mkGraph(edges);
+    const scratch = createRouteScratch();
+    const walk = () => shortestPath(star, 2, 9501, DEFAULT_MAX_HOPS, scratch);
+    expect(walk()).toEqual([2, 1, 9501]);
+    const cold = routeCacheBuilds(scratch);
+    expect(cold).toBe(2); // nodes 2 and 1 expanded
+    expect(routeCacheCompactions(scratch)).toBe(0);
+    // Repeat searches over the same graph stay warm and never compact: the
+    // registry only grows on ids it has never seen.
+    expect(walk()).toEqual([2, 1, 9501]);
+    expect(walk()).toEqual([2, 1, 9501]);
+    expect(routeCacheBuilds(scratch)).toBe(cold);
+    expect(routeCacheCompactions(scratch)).toBe(0);
+    // A tiny graph makes the 9,501-slot registry dwarf the live node count.
+    const small = mkGraph([[7, 8], [8, 9]]);
+    expect(shortestPath(small, 7, 9, DEFAULT_MAX_HOPS, scratch)).toEqual([7, 8, 9]);
+    expect(routeCacheCompactions(scratch)).toBe(1);
+    // Node 1's adjacency never changed, and its entry is gone all the same:
+    // the very same walk pays the full cold rebuild again.
+    const afterSmall = routeCacheBuilds(scratch);
+    expect(walk()).toEqual([2, 1, 9501]);
+    expect(routeCacheBuilds(scratch) - afterSmall).toBe(cold);
   });
 
   it('touches no scratch on the cheap early returns', () => {

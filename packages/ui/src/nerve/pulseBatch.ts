@@ -29,7 +29,12 @@ import {
   type PulsePlanningOptions,
 } from './pulseRunner';
 import { BLOCK_HIGHLIGHT_DELAY_S } from '../ui/topologyConstants';
-import type { PulseStatsSink, RescueCounter, RescueKind } from './pulseStats';
+import type {
+  PlannerStepKind,
+  PulseStatsSink,
+  RescueCounter,
+  RescueKind,
+} from './pulseStats';
 
 /** Per-batch planning ceiling. The active-pulse render pool clamps at 128,
  * so planning past it is pure main-thread waste on tx-heavy blocks — the
@@ -206,6 +211,11 @@ export interface LinkBatchPlanner {
   readonly pending: number;
   /** Block-guarantee watermark so far; the batch's result once `done`. */
   readonly lastGuaranteedBlock: number;
+  /** What the last {@link step} did — the gauge the frame-sliced driver reads
+   *  to name its longest step. A step that drove a link's planner reads
+   *  `link` even when that link closed on arrival with no origin to search
+   *  from; such a step costs nothing and can never be a frame's longest. */
+  readonly lastStepKind: PlannerStepKind;
   step(): Pulse[];
   /**
    * Reorg: links at or above `fromBlock` are stale evidence. Unplanned ones
@@ -267,6 +277,8 @@ export function createLinkBatchPlanner(
   let openLink: CellLink | null = null;
   let openPlanner: LinkPulsePlanner | null = null;
   let openPulses = 0;
+  // What the last step held, for the driver's per-frame worst-grain gauge.
+  let lastStepKind: PlannerStepKind = 'other';
 
   /** Drop the open block's state; the next step opens the following block. */
   const endBlock = (): void => {
@@ -306,9 +318,16 @@ export function createLinkBatchPlanner(
     get lastGuaranteedBlock() {
       return guaranteed;
     },
+    get lastStepKind() {
+      return lastStepKind;
+    },
     step(): Pulse[] {
-      if (closed) return [];
+      if (closed) {
+        lastStepKind = 'other';
+        return [];
+      }
       if (!prepared) {
+        lastStepKind = 'grid';
         prepared = true;
         entryIndex();
         return [];
@@ -316,7 +335,10 @@ export function createLinkBatchPlanner(
       // A link in flight owns the step: its remaining origins are planned
       // before the boundary is even looked at, so a link's pulses can never be
       // split around the rescue of the block it belongs to.
-      if (openPlanner !== null) return stepOpenLink();
+      if (openPlanner !== null) {
+        lastStepKind = 'link';
+        return stepOpenLink();
+      }
       const atEnd = next >= links.length;
       // A finished block's rescue pass is a step of its OWN, one CANDIDATE at
       // a time, so a scored rescue BFS never shares a step with a link's route
@@ -334,12 +356,14 @@ export function createLinkBatchPlanner(
             || curBlock <= entryWatermark // lit in an earlier slice
             || curCandidates.length === 0 // cellbase-only: stays silent
           ) {
+            lastStepKind = 'other'; // the free verdict opens no search
             endBlock();
             if (atEnd) closed = true;
             return [];
           }
           rescueAt = 0;
         }
+        lastStepKind = 'rescue';
         const rescued = planRescuePulse(
           curCandidates[rescueAt++],
           cells,
@@ -362,6 +386,7 @@ export function createLinkBatchPlanner(
         return [];
       }
       if (atEnd) {
+        lastStepKind = 'other';
         closed = true;
         return [];
       }
@@ -383,10 +408,12 @@ export function createLinkBatchPlanner(
         curCandidates.push(link);
       }
       if (budgeted >= MAX_PULSES_PER_BATCH) {
+        lastStepKind = 'other'; // refused by the batch budget, never searched
         stats.bump('batch-budget');
         stats.observeLink(link.block, false);
         return [];
       }
+      lastStepKind = 'link';
       openLink = link;
       openPulses = 0;
       openPlanner = createLinkPulsePlanner(

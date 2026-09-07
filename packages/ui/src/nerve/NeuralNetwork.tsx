@@ -1647,7 +1647,13 @@ function NeuralNetwork({
     // T1 gauges (measurement only): how often a slice was forced past its
     // budget on the departure deadline, and the window's longest planner step.
     if (report.forcedByDeadline) pulseStats.observeForcedByDeadline();
-    pulseStats.observeStepMs(report.maxStepMs);
+    // T6b: the max carries WHICH step it was and whether the router walked it
+    // cold, so an outlier grain names its own cause on a release build.
+    pulseStats.observeStepMs(
+      report.maxStepMs,
+      report.maxStepKind,
+      report.maxStepCold,
+    );
     if (report.admitted > 0) {
       // Soft cap — drop oldest if we're way over, shedding rescue pulses
       // last (each is some block's only light).

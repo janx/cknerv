@@ -93,6 +93,19 @@ export interface RouteScratch {
   neighbourSlots: (Int32Array | null)[];
   /** The Set instance `neighbourSlots[slot]` was built from. */
   neighbourSource: (ReadonlySet<number> | null)[];
+  /** Nodes holding a cached neighbour array right now. Zero means the next
+   *  walk is COLD: every node it expands builds its array from scratch, which
+   *  is ~7 ms of a ~9 ms full-stage search. */
+  cachedNodes: number;
+  /** Neighbour arrays built since this scratch was created. A warm walk
+   *  builds only the nodes whose adjacency `Set` the last topology commit
+   *  replaced; a cold one builds every node it expands. */
+  neighbourBuilds: number;
+  /** Times {@link beginSearch} threw the slot registry away. It takes the
+   *  whole neighbour cache with it — every cached array holds SLOT indices
+   *  and a compaction renumbers slots — so this counts the cold cliffs the
+   *  cache's own validity rule cannot prevent. */
+  compactions: number;
 }
 
 export function createRouteScratch(
@@ -110,7 +123,39 @@ export function createRouteScratch(
     queue: new Int32Array(cap),
     neighbourSlots: [],
     neighbourSource: [],
+    cachedNodes: 0,
+    neighbourBuilds: 0,
+    compactions: 0,
   };
+}
+
+/** True while the router's per-node neighbour cache is empty — the next walk
+ *  rebuilds an array for every node it expands. Only a boot or a compaction
+ *  leaves it this way: an ordinary topology commit keeps the `Set` instance
+ *  of every node it did not change, so its searches stay warm. */
+export function routeCacheCold(
+  scratch: RouteScratch = defaultRouteScratch(),
+): boolean {
+  return scratch.cachedNodes === 0;
+}
+
+/** Neighbour arrays built so far — the direct size of what a walk paid for
+ *  cache misses. Cumulative for the scratch's lifetime; read it around a step
+ *  and the difference is that step's rebuild count. */
+export function routeCacheBuilds(
+  scratch: RouteScratch = defaultRouteScratch(),
+): number {
+  return scratch.neighbourBuilds;
+}
+
+/** Compactions so far. Cumulative for the scratch's lifetime; a compaction
+ *  needs the registry to pass `2 x liveNodeCount + ROUTE_SCRATCH_COMPACT_SLACK`
+ *  slots, so on a ~12,000-node stage it is a session-scale event and not a
+ *  per-block one. */
+export function routeCacheCompactions(
+  scratch: RouteScratch = defaultRouteScratch(),
+): number {
+  return scratch.compactions;
 }
 
 let sharedScratch: RouteScratch | null = null;
@@ -172,6 +217,11 @@ function beginSearch(scratch: RouteScratch, liveNodeCount: number): number {
     scratch.queue = fresh.queue;
     scratch.neighbourSlots = [];
     scratch.neighbourSource = [];
+    // The cache dies with the registry: a cached array holds slot indices and
+    // every slot has just been renumbered, so no entry survives — the ones
+    // whose adjacency never changed included.
+    scratch.cachedNodes = 0;
+    scratch.compactions += 1;
   }
   scratch.epoch += 1;
   return scratch.epoch;
@@ -198,6 +248,8 @@ function neighbourSlotsOf(
   const built = new Int32Array(neighbours.size);
   let k = 0;
   for (const id of neighbours) built[k++] = slotFor(scratch, id);
+  if (cached === null) scratch.cachedNodes += 1;
+  scratch.neighbourBuilds += 1;
   scratch.neighbourSlots[slot] = built;
   scratch.neighbourSource[slot] = neighbours;
   return built;

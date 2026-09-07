@@ -5,6 +5,19 @@
 // link — negligible). The WINDOW hook that surfaces this lives in ui-app, so
 // the library stays free of `window` / env coupling.
 
+import { routeCacheCompactions } from '../geometry/pathRouter';
+
+/** Which unit of planning a live-plan step held. The frame-sliced driver
+ *  reports the kind of its LONGEST step, so an outlier `maxStepMs` names its
+ *  own cause instead of leaving three candidates open:
+ *  `link` = one origin's entry query plus the one route search that covers
+ *  every output of the transaction; `rescue` = one candidate of a dark
+ *  block's rescue pass (a scored full-stage search with no target to stop
+ *  on); `grid` = the batch's stage-wide origin entry grid; `other` = a step
+ *  that opened no search at all (a lit block's verdict, the batch budget's
+ *  refusal, a link with no origin to depart from, the closing step). */
+export type PlannerStepKind = 'link' | 'rescue' | 'grid' | 'other';
+
 /** Per-link terminal outcome. `fired` is the success bucket; the rest are the
  *  reasons one link produced zero pulses. `no-origin` = the link named no
  *  consumed input to depart from (cellbase, or a record persisted before
@@ -93,6 +106,22 @@ export interface PulseStatsSnapshot {
    *  slice's worst grain). Both zero on reset. */
   forcedByDeadline: number;
   maxStepMs: number;
+  /** Which planner step produced {@link maxStepMs} — the gauge that names the
+   *  outlier's cause. `other` while no step has been observed. */
+  maxStepKind: PlannerStepKind;
+  /** True when that step walked a COLD router: it began with the path
+   *  router's per-node neighbour cache empty, or emptied it by compacting the
+   *  slot registry while it ran. A cold full-stage search spends most of
+   *  itself rebuilding that cache. Note the one blind spot: a whole topology
+   *  apply with no previous graph to reuse `Set` instances from also produces
+   *  a cold walk without emptying the cache — `__fabricStats().topology`
+   *  (`unchainedApplies`, `workerFallbacks`) is what counts those. */
+  maxStepCold: boolean;
+  /** Compactions of the router's shared search scratch since the tab opened —
+   *  each one throws the whole neighbour cache away. NOT zeroed by
+   *  {@link resetPulseStats} (the counter belongs to the router, not to this
+   *  window): read it at both ends of an observation and take the difference. */
+  routeCompactions: number;
   /** All blocks observed (one per `pulse` delta), incl. empty ones. */
   blocksTotal: number;
   /** Blocks that emitted ≥1 tx-link. */
@@ -146,14 +175,19 @@ interface PulseStatsState extends PulseStatsSink {
   ringEvicted: number;
   forcedByDeadline: number;
   maxStepMs: number;
+  maxStepKind: PlannerStepKind;
+  maxStepCold: boolean;
   blocksTotal: number;
   bumpRecall(outcome: RecallOutcome, n?: number): void;
   bumpRescue(kind: RescueCounter, n?: number): void;
   bumpRingEvicted(n?: number): void;
   /** One frame drained a batch past the budget on its departure deadline. */
   observeForcedByDeadline(): void;
-  /** Fold one frame's longest planner step into the window's running max. */
-  observeStepMs(ms: number): void;
+  /** Fold one frame's longest planner step into the window's running max,
+   *  carrying WHICH step it was and whether it walked a cold router. The kind
+   *  and the coldness always describe the step the max was taken from, so a
+   *  smaller step never relabels a bigger one. */
+  observeStepMs(ms: number, kind?: PlannerStepKind, cold?: boolean): void;
   // Internal block-rollup state. `link.block` is monotonic non-decreasing, so
   // we close the current block when a strictly different block id arrives.
   _curBlock: number;
@@ -175,6 +209,8 @@ export const pulseStats: PulseStatsState = {
   ringEvicted: 0,
   forcedByDeadline: 0,
   maxStepMs: 0,
+  maxStepKind: 'other',
+  maxStepCold: false,
   blocksTotal: 0,
   _curBlock: -1,
   _curBlockLit: false,
@@ -202,8 +238,12 @@ export const pulseStats: PulseStatsState = {
   observeForcedByDeadline() {
     this.forcedByDeadline += 1;
   },
-  observeStepMs(ms) {
-    if (ms > this.maxStepMs) this.maxStepMs = ms;
+  observeStepMs(ms, kind = 'other', cold = false) {
+    if (ms > this.maxStepMs) {
+      this.maxStepMs = ms;
+      this.maxStepKind = kind;
+      this.maxStepCold = cold;
+    }
   },
 
   observeLink(block, lit) {
@@ -249,6 +289,9 @@ export const pulseStats: PulseStatsState = {
       ringEvicted: this.ringEvicted,
       forcedByDeadline: this.forcedByDeadline,
       maxStepMs: this.maxStepMs,
+      maxStepKind: this.maxStepKind,
+      maxStepCold: this.maxStepCold,
+      routeCompactions: routeCacheCompactions(),
       blocksTotal: this.blocksTotal,
       blocksWithLinks,
       blocksLit,
@@ -273,6 +316,8 @@ export const pulseStats: PulseStatsState = {
     this.ringEvicted = 0;
     this.forcedByDeadline = 0;
     this.maxStepMs = 0;
+    this.maxStepKind = 'other';
+    this.maxStepCold = false;
     this.blocksTotal = 0;
     this._curBlock = -1;
     this._curBlockLit = false;

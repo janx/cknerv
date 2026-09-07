@@ -3,6 +3,14 @@
 //   window.__pulseStats()        → { linkReasons, pathFails, origins,
 //                                    recallOutcomes, rescues, ringEvicted,
 //                                    blocks*, firedRatePct, recalledRatePct }
+//                                  — plus the live-plan gauges: `maxStepMs`
+//                                    with `maxStepKind` (`link` / `rescue` /
+//                                    `grid` / `other`) and `maxStepCold`,
+//                                    which say WHICH planner step was the
+//                                    window's longest and whether it walked a
+//                                    cold route cache; `routeCompactions` is
+//                                    the router's own cache-cliff count and is
+//                                    NOT zeroed by the reset below.
 //   window.__pulseStatsReset()   → zero the pulse counters for a clean observation
 //   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons,
 //                                    animating*, bridge, topology }

@@ -749,7 +749,11 @@ planning frame costs the budget plus exactly one grain: the batch's entry grid i
 a step of its own, a link is planned one ORIGIN per step (a link may carry
 `MAX_ORIGINS_PER_LINK` of them), and a block boundary's rescue pass is one
 CANDIDATE per step (a dark block may hold `MAX_RESCUE_ATTEMPTS`, each paying a
-scored search of its own). Pulses admitted from a slice carry the batch's `startSec`, so
+scored search of its own). Each slice also reports WHICH of those its longest
+step was (`maxStepKind`: `link` / `rescue` / `grid` / `other`) and whether the
+router walked it cold (`maxStepCold` — the neighbour cache empty when it began,
+or emptied by a slot-registry compaction while it ran), so an outlier grain on
+a release build names its own cause instead of leaving three open. Pulses admitted from a slice carry the batch's `startSec`, so
 departure times, pulse order, the 128-per-batch budget, the rescue pass and
 every stats bump are those the one-task planner produced. A batch whose earliest
 departure is within `LIVE_PLAN_DEADLINE_MARGIN_S` of now is planned under
@@ -1813,8 +1817,9 @@ current staged structure.
   the always-on counters are integer increments (§19.5). The set includes the
   selection-churn gauges `selectionChurn` and `weightedSelectionEdges` (beside
   `trunkTierEdges` on `__fabricStats()`) and the live-plan gauges
-  `forcedByDeadline` and `maxStepMs` (on `__pulseStats()`), which name the
-  block-churn root and the plan tail without a profiler attached.
+  `forcedByDeadline`, `maxStepMs`, `maxStepKind` and `maxStepCold` (on
+  `__pulseStats()`), which name the block-churn root and the plan tail — and
+  which grain the tail is — without a profiler attached.
 
 ### 15.2 GPU strategy
 
@@ -2147,7 +2152,9 @@ the cell attributes included); `__colonyStats()` (`topologyBuilds` against
 `rebuilds`, `patches`, `deferredRebuilds`, and `rebuildReasons`, which counts
 every gate open at a rebuild and so sums to more than `rebuilds`; the four
 outcomes partition the answered raycasts); `__pulseStats()` (admitted and dropped-by-
-reason plus the live-plan gauges `forcedByDeadline` and `maxStepMs`),
+reason plus the live-plan gauges `forcedByDeadline`, `maxStepMs` and the pair
+that names it, `maxStepKind` / `maxStepCold`, beside `routeCompactions` — the
+router's own cache-cliff count, which the pulse reset deliberately leaves alone),
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;
 production is exact.

@@ -742,6 +742,7 @@ describe('createLinkBatchPlanner — stepping the machine is the one-shot plan',
 // in the one grain the frame budget cannot subdivide.
 
 import { MAX_RESCUE_ATTEMPTS } from '../../src/nerve/pulseBatch';
+import type { PlannerStepKind } from '../../src/nerve/pulseStats';
 
 /** A link that lights nothing (no input anchor → no origin) and cannot be
  *  rescued either: its output never reached the graph and no anchor names it,
@@ -788,6 +789,35 @@ describe('createLinkBatchPlanner — the rescue pass takes one candidate a step'
     expect(stepped[0].rescue).toBe('rim');
     expect(planner.lastGuaranteedBlock).toBe(oneShot.lastGuaranteedBlock);
     expect(snapshotPulseStats()).toEqual(oneShotStats);
+  });
+
+  it('names what each step held: the grid, a link origin, a rescue candidate', () => {
+    // The gauge the frame-sliced driver reads to turn its longest step into a
+    // named cause. Only `link`, `rescue` and `grid` open a search or build an
+    // index; a block's free verdict opens none and reads `other`.
+    const lit = mkLink({
+      seq: 1, block: 7, tx_hash: '0xlit', to_ids: [4],
+      endpoint_anchors: [mkAnchor(77, [0, 0, 0])],
+    });
+    const links = [lit, rescuable(2, 8, 2)];
+    const { toFire } = openLinkBatch(links, 0, false, pulseStats);
+    const planner = createLinkBatchPlanner(toFire, cells(), graph(), OPTS, pulseStats, 0);
+    expect(planner.lastStepKind).toBe('other'); // nothing stepped yet
+    const kinds: PlannerStepKind[] = [];
+    const emitted: number[] = [];
+    while (!planner.done) {
+      const pulses = planner.step();
+      kinds.push(planner.lastStepKind);
+      emitted.push(pulses.length);
+    }
+    // The batch's entry grid, the lit link's one origin, block 7's free
+    // verdict, the dark link (no origin, so no search — but it is still the
+    // link's step), then block 8's rescue candidate.
+    expect(kinds).toEqual(['grid', 'link', 'other', 'link', 'rescue']);
+    expect(emitted).toEqual([0, 1, 0, 0, 1]);
+    // Idempotent once done, and it says so.
+    expect(planner.step()).toEqual([]);
+    expect(planner.lastStepKind).toBe('other');
   });
 
   it('spends the whole attempt cap one step at a time and gives up exactly once', () => {

@@ -32,10 +32,21 @@
 // published graph (the router's per-node neighbour cache is built as it
 // walks), so anything that packs several into one step lands directly on the
 // frame, budget or no budget.
+//
+// Which is why the slice reports not just its longest step but WHAT that step
+// was (`maxStepKind`) and whether the router walked it cold (`maxStepCold`).
+// A grain of the same size means three different things depending on the
+// answer — an expensive link search, a dark block's scored rescue, or a
+// stage-wide grid rebuild — and only one of them can be attacked from here.
 
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborAdjacency } from '../geometry/neighborGraph';
+import {
+  routeCacheCold,
+  routeCacheCompactions,
+} from '../geometry/pathRouter';
 import type { Pulse, PulsePlanningOptions } from './pulseRunner';
+import type { PlannerStepKind } from './pulseStats';
 import {
   createLinkBatchPlanner,
   type LinkBatchPlanner,
@@ -138,6 +149,17 @@ export interface LivePulseStepReport {
    *  window's running max. Zero when the frame only took free grid/flush
    *  steps or ran no step at all. */
   maxStepMs: number;
+  /** WHICH step that was — the gauge that turns an outlier grain into a
+   *  named cause instead of three candidates (a link's route search, a dark
+   *  block's rescue candidate, the stage-wide entry grid). `other` when no
+   *  step was measured. */
+  maxStepKind: PlannerStepKind;
+  /** True when that step walked a COLD router: the per-node neighbour cache
+   *  was empty when it began, or it emptied the cache by compacting the slot
+   *  registry while it ran. A cold full-stage search spends most of itself
+   *  rebuilding that cache, so this separates "the grain is expensive" from
+   *  "the grain paid a cache cliff". */
+  maxStepCold: boolean;
 }
 
 export function enqueueLivePulseBatch(
@@ -184,6 +206,8 @@ export function stepLivePulseQueue(
     pending: false,
     forcedByDeadline: false,
     maxStepMs: 0,
+    maxStepKind: 'other',
+    maxStepCold: false,
   };
   const batches = queue.batches;
   if (batches.length === 0) return report;
@@ -217,10 +241,21 @@ export function stepLivePulseQueue(
         report.pending = true;
         return report;
       }
+      // The router's cache state is read AROUND the step, so the two gauges
+      // describe the very step the max was taken from: cold before it ran, or
+      // made cold by a compaction inside it.
+      const scratch = batch.opts.routeScratch;
+      const coldAtStart = routeCacheCold(scratch);
+      const compactionsAtStart = routeCacheCompactions(scratch);
       const stepStartMs = ctx.nowMs();
       const pulses = planner.step();
       lastStepMs = ctx.nowMs() - stepStartMs;
-      if (lastStepMs > report.maxStepMs) report.maxStepMs = lastStepMs;
+      if (lastStepMs > report.maxStepMs) {
+        report.maxStepMs = lastStepMs;
+        report.maxStepKind = planner.lastStepKind;
+        report.maxStepCold =
+          coldAtStart || routeCacheCompactions(scratch) > compactionsAtStart;
+      }
       report.steps += 1;
       for (const pulse of pulses) {
         ctx.admit(pulse, batch);
