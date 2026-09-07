@@ -180,6 +180,13 @@ export async function fetchCellsSnapshot(): Promise<
 // is the problem. One GET every `STREAM_RECONNECT_MS` costs the same as the
 // reconnect the sockets are already doing at that cadence, and no dependency.
 
+/** The shortest a poll may be given before it is abandoned, however fast the
+ *  cadence above it. The deadline itself is twice the poll interval — a probe
+ *  that has not answered by the time the next one is due has already stopped
+ *  being a reading of now — and this floor keeps a busy local server answering
+ *  in a second or two from being called dead by an impatient cadence. */
+const HEALTH_POLL_TIMEOUT_FLOOR_MS = 4_000;
+
 /** Wire shape of `GET /api/health`, narrowed to the four fields the node
  *  channel reads. The endpoint reports a dozen more; the page is probing
  *  vitals, not consuming a projection, so it names only what it asks. */
@@ -198,18 +205,38 @@ interface HealthResponse {
  * server is unreachable, and the SOCKETS own that story. Publishing a fault
  * here for it would put two banners on one emergency, and the one that knows
  * least would be shouting.
+ *
+ * Every poll carries its own deadline, because this endpoint's whole purpose
+ * is the case where THE SERVER IS THE PROBLEM. A process that still accepts
+ * the connection and never answers it is the shape that failure most often
+ * takes, and a `fetch` with no signal on it waits out the browser's own
+ * default — minutes — during which nothing is published and the node channel
+ * goes on showing a reading that stopped being true. The deadline turns that
+ * silence back into the answer the catch below already knows how to give.
  */
 export function connectNodeHealth(
   onHealth: (health: NodeStreamHealth | null) => void,
   opts: { pollMs?: number; now?: () => number } = {},
 ): { disconnect: () => void } {
   const pollMs = Math.max(250, opts.pollMs ?? STREAM_RECONNECT_MS);
+  const timeoutMs = Math.max(HEALTH_POLL_TIMEOUT_FLOOR_MS, pollMs * 2);
   const now = opts.now ?? Date.now;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /** The request on the wire, so `disconnect` can drop it rather than leave
+   *  the page holding a socket for an answer nobody will read. */
+  let inFlight: AbortController | null = null;
   const poll = async (): Promise<void> => {
+    const controller = new AbortController();
+    inFlight = controller;
+    // An own controller and an own timer rather than `AbortSignal.timeout`:
+    // this is the same `setTimeout` the cadence below runs on, so a test that
+    // owns the clock owns the deadline too.
+    const deadline = setTimeout(() => { controller.abort(); }, timeoutMs);
     try {
-      const resp = await fetch(`${API_BASE}/api/health`);
+      const resp = await fetch(`${API_BASE}/api/health`, {
+        signal: controller.signal,
+      });
       if (!resp.ok) throw new Error(`health: ${resp.status}`);
       const body = (await resp.json()) as HealthResponse;
       if (stopped) return;
@@ -228,8 +255,12 @@ export function connectNodeHealth(
           .filter((name): name is string => typeof name === 'string'),
       }, now()));
     } catch {
+      // An abandoned request and a refused one are the same reading: the
+      // server did not answer, so this channel has nothing to say.
       if (!stopped) onHealth(null);
     } finally {
+      clearTimeout(deadline);
+      if (inFlight === controller) inFlight = null;
       if (!stopped) timer = setTimeout(() => { void poll(); }, pollMs);
     }
   };
@@ -239,6 +270,12 @@ export function connectNodeHealth(
       stopped = true;
       if (timer !== null) clearTimeout(timer);
       timer = null;
+      // The request already on the wire goes with the cadence. `stopped`
+      // alone would keep its answer from being published, and would still
+      // leave the browser holding the connection until the server or the
+      // deadline let go of it.
+      inFlight?.abort();
+      inFlight = null;
     },
   };
 }
