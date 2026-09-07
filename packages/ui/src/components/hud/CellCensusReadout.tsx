@@ -52,8 +52,9 @@ function formatBytes(bytes: number): string {
  * asked for the index's own inventory instead: the ASSETS bar is now the
  * chain by ckbadger's menu — CKB, then TOKENS · OBJECTS · IDENTITIES as its
  * Inventory pages classify them, the DAO, and SCRIPTS for every other typed
- * Cell — read from the index's whole-chain family counts and its own
- * verdict on which inventory each family is.
+ * Cell — read from the index's whole-chain family counts, each family
+ * classified by the index's own token registry and its object and identity
+ * standards, with nothing added to the index for it.
  *
  * Three independent measurements meet here: the indexed asset-ecosystem
  * record, the validated Cell census, and the index's family census. Each is

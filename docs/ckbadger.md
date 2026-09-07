@@ -893,26 +893,35 @@ names, not counts: the bars still show the true distribution, spelled in hashes.
 
 With `script_family_census`, cknerv asks the index for the whole chain's
 live Cells by script family, at most once every two minutes: the bounded
-`scripts` catalogue — every family the index tracks, its `scriptKind`, its
-chain-wide `liveCellsCount` and its `assetType`, read page by page to at most
-256 families — and `cells/live-summary` for the totals the families are cut
-against, both under one validated anchor that is rechecked after the two
-reads. `assetType` is the index's own verdict on which Inventory page a
-family's cells are listed under — `token`, `object` or `identity`, decided by
-the recognizers its indexer classifies item deltas with — and it rides each
-family as `inventory`. The record carries the count of live Cells, the
-bare-CKB and DAO counts from the summary's class partition, every family that
-holds at least one live Cell, and two explicit remainders: typed Cells outside
-every listed type family and Cells under a lock outside every listed lock
-family. A family the index places on neither slot is skipped; a catalogue that
-names families without counting them withholds the record rather than counting
-zero, and so does one that counts them but names no inventory for any (an
-index that predates the field — a bar drawn from it would read every token as
-a script); a summary without a class partition withholds it too; an inventory
-kind this dashboard has no word for is refused. The two requests are a block
-apart at most, so family totals up to 256 Cells past the census are read as
-skew and the remainder floors at zero, while anything past that is refused
-naming both figures.
+`scripts` catalogue — every family the index tracks, its `scriptKind` and its
+chain-wide `liveCellsCount`, read page by page to at most 256 families — and
+`cells/live-summary` for the totals the families are cut against, both under
+one validated anchor that is rechecked after the two reads. The record carries
+the count of live Cells, the bare-CKB and DAO counts from the summary's class
+partition, every family that holds at least one live Cell — each with the
+inventory ckbadger lists its cells under, `token`, `object` or `identity`, or
+none — and two explicit remainders: typed Cells outside every listed type
+family and Cells under a lock outside every listed lock family.
+
+The inventory is ckbadger's own, re-derived for Cells because the index
+counts Cells per family and capacity per asset. It is the classification the
+asset ecosystem splits capacity by: the token registry (`tokens`, paged at
+100, read at most once an hour and held) names the contract code hash of every
+UDT the index knows, and the script lookup turns the distinct hashes into the
+catalogue's family names — on mainnet `xUDT`, `Simple UDT`, `wCKB Asset`,
+`Stable++ Asset`, `ccBTC Asset`; objects and identities are the index's two
+closed standard sets (`spore`/`m-nft`, `dotbit`/`bit_cell`/`did_ckb`),
+matched by the catalogue's own spellings of their families, `Spore`, `M-NFT`,
+`.bit Account`, `.bit Cell`, `did:ckb`. Nothing is added to ckbadger for it.
+
+A family the index places on neither slot is skipped; a catalogue that names
+families without counting them withholds the record rather than counting
+zero; a summary without a class partition withholds it; so does a token
+registry that cannot be read while no roster from an earlier hour is held — a
+bar that read every token as a script would be the exact wrong reading the
+record exists to end. The two requests are a block apart at most, so family
+totals up to 256 Cells past the census are read as skew and the remainder
+floors at zero, while anything past that is refused naming both figures.
 
 This is the chain-scope twin of the cells projection's script census: that one
 counts the stage's identities and refuses to name them, this one arrives named,
@@ -922,7 +931,8 @@ the DAO's family taken off the scripts once, the unlisted typed Cells counted
 as scripts — so a dashboard reading "inventory" means what ckbadger means by
 it. The bar dims and says `STALE` when the source is stale or the record is
 more than six minutes old, and is absent — never a guess from the census's
-three classes — until the index has counted and classified every family.
+three classes — until the index has counted every family and the roster has
+classified them.
 
 ### Producer Ledger
 

@@ -37,12 +37,13 @@ use crate::dto::{
     NetworkPeersPageResponse, NetworkStats, NftCollectionDetailResponse, PeerDetailResponse,
     PeerDisplayState, PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse,
     ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenResponse,
+    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenCatalogueResponse, TokenResponse,
     TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
     TransactionStatsResponse, VerifiedPeerResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, identity_families as galaxy_identity_families,
+    identity_standard_for_name as galaxy_identity_standard_for_name,
     top_up as top_up_galaxy_composition, CandidateTail, IdentityStandard,
 };
 
@@ -210,6 +211,50 @@ const MAX_SCRIPT_FAMILY_NAME_CHARS: usize = 96;
 /// block apart. `scripts` and `cells/live-summary` are two requests; a block
 /// landing between them moves tens of Cells, never hundreds.
 const SCRIPT_FAMILY_SKEW_TOLERANCE: u64 = 256;
+/// The token registry pages at 100; mainnet holds ~730 tokens. Sixteen pages
+/// is a ceiling on a registry that has stopped ending, not a plan.
+const TOKEN_CATALOGUE_LIMIT: usize = 100;
+const MAX_TOKEN_CATALOGUE_PAGES: usize = 16;
+/// How long the inventory roster stands before the token registry is read
+/// again. Token contracts are deployed a few times a year; the census
+/// refreshes every two minutes and must not spend eight requests each time.
+const INVENTORY_ROSTER_TTL_MS: u64 = 3_600_000;
+/// The catalogue families whose cells ckbadger's Objects page lists: its
+/// `spore` and `m-nft` standards (`AssetStandard::classify`), spelled as the
+/// catalogue spells them, read live on 2026-09-08. A closed set on the index's
+/// side, unlike tokens, which is why these are pinned the way the identity
+/// spellings are and tokens are discovered.
+const OBJECT_FAMILY_NAMES: &[&str] = &["Spore", "M-NFT"];
+
+/// Which script families ckbadger's inventory lists as tokens, objects and
+/// identities — the classification its asset ecosystem splits capacity by,
+/// re-derived here for Cells because the index counts Cells per family and
+/// not per asset.
+///
+/// Tokens are discovered: every UDT in the token registry names the code hash
+/// of its contract, and the script lookup names the family. Objects and
+/// identities are the index's two closed standard sets, pinned by the
+/// catalogue's own spellings.
+#[derive(Clone, Debug)]
+struct InventoryRoster {
+    token_families: HashSet<String>,
+    fetched_at_ms: u64,
+}
+
+impl InventoryRoster {
+    fn inventory_for(&self, family_name: &str) -> Option<&'static str> {
+        if self.token_families.contains(family_name) {
+            return Some("token");
+        }
+        if OBJECT_FAMILY_NAMES.contains(&family_name) {
+            return Some("object");
+        }
+        if galaxy_identity_standard_for_name(family_name).is_some() {
+            return Some("identity");
+        }
+        None
+    }
+}
 /// `scripts/lookup` wants a transaction for context. The census has no
 /// transaction — it is a set of identities — so this asks with none and lets
 /// the response's own `resolutionState` say whether that mattered.
@@ -336,6 +381,10 @@ pub struct CkbadgerEnrichmentSource {
     /// process; the supervisor cannot dispatch a refresh before one has,
     /// because it gates on the anchor the same probe writes.
     indexed_tip: AtomicU64,
+    /// The inventory roster the family census classifies by, held for
+    /// [`INVENTORY_ROSTER_TTL_MS`] so the token registry is read hourly
+    /// rather than on every two-minute refresh.
+    inventory_roster: tokio::sync::Mutex<Option<InventoryRoster>>,
 }
 
 impl CkbadgerEnrichmentSource {
@@ -358,6 +407,7 @@ impl CkbadgerEnrichmentSource {
             candidate_tail: tokio::sync::Mutex::new(CandidateTail::default()),
             peers_route: AtomicU8::new(PEERS_ROUTE_UNOBSERVED),
             indexed_tip: AtomicU64::new(0),
+            inventory_roster: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -1048,6 +1098,92 @@ impl CkbadgerEnrichmentSource {
             .await
             .context("decode ckbadger live cell summary")?;
         Ok(Some(summary))
+    }
+
+    /// The families that mint tokens, by the catalogue's names: the distinct
+    /// contract code hashes across the whole token registry, put to the
+    /// script lookup. A hash the lookup cannot resolve names no family and is
+    /// dropped — its cells then count as scripts, which is what an unnamed
+    /// typed Cell is on this bar.
+    async fn token_family_names(&self) -> anyhow::Result<HashSet<String>> {
+        let mut hashes: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_TOKEN_CATALOGUE_PAGES {
+            let mut url = self.endpoint("tokens")?;
+            url.query_pairs_mut()
+                .append_pair("limit", &TOKEN_CATALOGUE_LIMIT.to_string());
+            if let Some(cursor) = cursor.as_deref() {
+                url.query_pairs_mut().append_pair("cursor", cursor);
+            }
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .context("fetch ckbadger token registry")?;
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "ckbadger token registry returned HTTP {}",
+                    response.status()
+                ));
+            }
+            let page: TokenCatalogueResponse = response
+                .json()
+                .await
+                .context("decode ckbadger token registry")?;
+            for token in page.data {
+                let hash = token.type_code_hash.trim().to_ascii_lowercase();
+                if !is_hash32(&hash) {
+                    return Err(anyhow!(
+                        "ckbadger token registry returned an invalid type code hash"
+                    ));
+                }
+                if !hashes.contains(&hash) {
+                    hashes.push(hash);
+                }
+            }
+            if hashes.len() > MAX_SCRIPT_REGISTRY_ENTRIES {
+                return Err(anyhow!("ckbadger token registry names too many contracts"));
+            }
+            match (page.has_more, page.next_cursor) {
+                (true, Some(next)) if !next.is_empty() => cursor = Some(next),
+                _ => {
+                    let named = self.lookup_script_names(&hashes).await?;
+                    return Ok(named.into_values().map(|info| info.name).collect());
+                }
+            }
+        }
+        Err(anyhow!("ckbadger token registry cursor never ended"))
+    }
+
+    /// The roster, read once an hour. A failed read keeps the roster already
+    /// held — the families that mint tokens do not change between one hour
+    /// and the next — and without one held there is no classification to
+    /// give, so the caller withholds.
+    async fn inventory_roster(&self) -> Option<InventoryRoster> {
+        let mut held = self.inventory_roster.lock().await;
+        let now = now_ms();
+        if let Some(roster) = held.as_ref() {
+            if now.saturating_sub(roster.fetched_at_ms) < INVENTORY_ROSTER_TTL_MS {
+                return Some(roster.clone());
+            }
+        }
+        match self.token_family_names().await {
+            Ok(token_families) => {
+                *held = Some(InventoryRoster {
+                    token_families,
+                    fetched_at_ms: now,
+                });
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "cknerv-adapter-ckbadger",
+                    "the token registry that names the inventory's token families \
+                     could not be read; the family census keeps the roster it holds: {error:#}"
+                );
+            }
+        }
+        held.clone()
     }
 
     async fn token_asset(&self, cell: &CellDetailResponse) -> Option<SemanticAsset> {
@@ -2225,7 +2361,14 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let Some(summary) = self.fetch_live_cell_summary().await? else {
             return Ok(None);
         };
-        let Some(record) = map_script_family_census(families, summary, anchor.clone())? else {
+        // No roster, no classification, no bar: a census that read every
+        // token as a script would be the exact wrong reading this record
+        // exists to end. Withheld, and the next refresh asks again.
+        let Some(roster) = self.inventory_roster().await else {
+            return Ok(None);
+        };
+        let Some(record) = map_script_family_census(families, summary, anchor.clone(), &roster)?
+        else {
             return Ok(None);
         };
         self.revalidate_anchor(&anchor, "script family census")
@@ -2737,6 +2880,7 @@ fn map_script_family_census(
     families: Vec<ScriptFamilyResponse>,
     summary: LiveCellSummaryResponse,
     anchor: ChainAnchor,
+    roster: &InventoryRoster,
 ) -> anyhow::Result<Option<ScriptFamilyCensusRecord>> {
     // Without a proven class partition there is no bare-CKB count to stand
     // beside the type families, and a bar that guessed it would be a guess
@@ -2801,15 +2945,7 @@ fn map_script_family_census(
                 "ckbadger script catalogue returned duplicate {kind} family {name}"
             ));
         }
-        let inventory = match family.asset_type.as_deref().map(str::trim) {
-            None | Some("") => None,
-            Some(kind @ ("token" | "object" | "identity")) => Some(kind.to_string()),
-            Some(other) => {
-                return Err(anyhow!(
-                    "ckbadger script catalogue returned unsupported inventory kind {other:?}"
-                ));
-            }
-        };
+        let inventory = roster.inventory_for(name).map(str::to_string);
         if inventory.is_some() {
             inventoried += 1;
         }
@@ -2831,9 +2967,9 @@ fn map_script_family_census(
             inventory,
         });
     }
-    // An index that counts families but names no inventory for any of them
-    // predates the field. The bar drawn from this record splits the chain by
-    // that inventory, and one that read every token as a script would be the
+    // A catalogue in which the roster finds no inventory family at all is
+    // not one this bar can read — the bar splits the chain by that
+    // inventory, and one that read every token as a script would be the
     // exact wrong reading the record exists to end. Withhold.
     if inventoried == 0 {
         return Ok(None);
@@ -8168,10 +8304,17 @@ mod tests {
         server.abort();
     }
 
-    async fn spawn_script_family_census_api(
+    /// The census's four reads and the roster's two: the catalogue, the
+    /// live summary, the token registry and the script lookup that names its
+    /// contracts. `tokens_ok` false answers the registry with a 500, the way
+    /// an index mid-warmup does; the counter says how often it was asked.
+    async fn spawn_family_census_api(
         families: serde_json::Value,
         summary: serde_json::Value,
-    ) -> (Url, tokio::task::JoinHandle<()>) {
+        tokens_ok: bool,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let token_requests = Arc::new(AtomicUsize::new(0));
+        let counted = token_requests.clone();
         let app = Router::new()
             .route(
                 "/api/v1/statistics/network",
@@ -8205,6 +8348,48 @@ mod tests {
                     let summary = summary.clone();
                     async move { Json(summary) }
                 }),
+            )
+            .route(
+                "/api/v1/tokens",
+                get(move || {
+                    let requests = counted.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::Relaxed);
+                        if !tokens_ok {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({ "error": "warmup" })),
+                            );
+                        }
+                        (
+                            StatusCode::OK,
+                            Json(serde_json::json!({
+                                "data": [
+                                    { "typeScriptHash": "0x01", "typeCodeHash": format!("0x{}", "aa".repeat(32)), "standard": "xudt" },
+                                    { "typeScriptHash": "0x02", "typeCodeHash": format!("0x{}", "aa".repeat(32)), "standard": "xudt" },
+                                    { "typeScriptHash": "0x03", "typeCodeHash": format!("0x{}", "bb".repeat(32)), "standard": "sudt" }
+                                ],
+                                "hasMore": false,
+                                "nextCursor": null
+                            })),
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/scripts/lookup",
+                axum::routing::post(|| async {
+                    Json(serde_json::json!({
+                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+                            "name": "xUDT", "deprecated": false, "scriptKind": "type",
+                            "decoderType": null, "resolutionState": "resolved"
+                        },
+                        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+                            "name": "Simple UDT", "deprecated": false, "scriptKind": "type",
+                            "decoderType": null, "resolutionState": "resolved"
+                        }
+                    }))
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -8214,7 +8399,16 @@ mod tests {
         (
             Url::parse(&format!("http://{address}/api/v1")).unwrap(),
             handle,
+            token_requests,
         )
+    }
+
+    async fn spawn_script_family_census_api(
+        families: serde_json::Value,
+        summary: serde_json::Value,
+    ) -> (Url, tokio::task::JoinHandle<()>) {
+        let (api_base, handle, _) = spawn_family_census_api(families, summary, true).await;
+        (api_base, handle)
     }
 
     fn family_census_summary(live: i64, dao: i64, typed: i64, plain: i64) -> serde_json::Value {
@@ -8228,27 +8422,33 @@ mod tests {
 
     fn mainnet_like_families() -> serde_json::Value {
         serde_json::json!([
-            { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "assetType": null, "liveCellsCount": 893, "deprecated": false },
-            { "familyId": "joyid", "name": "JoyID", "scriptKind": "lock", "assetType": null, "liveCellsCount": 100, "deprecated": false },
-            { "familyId": "nervos-dao", "name": "Nervos DAO", "scriptKind": "type", "assetType": null, "liveCellsCount": 22, "deprecated": false },
-            { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "assetType": "token", "liveCellsCount": 57, "deprecated": false },
+            { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "liveCellsCount": 893, "deprecated": false },
+            { "familyId": "joyid", "name": "JoyID", "scriptKind": "lock", "liveCellsCount": 100, "deprecated": false },
+            { "familyId": "nervos-dao", "name": "Nervos DAO", "scriptKind": "type", "liveCellsCount": 22, "deprecated": false },
+            // A token family: its contract is in the token registry.
+            { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "liveCellsCount": 40, "deprecated": false },
+            // An object family and an identity family: the index's closed
+            // standard sets, matched by the catalogue's own spellings.
+            { "familyId": "spore", "name": "Spore", "scriptKind": "type", "liveCellsCount": 12, "deprecated": false },
+            { "familyId": "bit-account", "name": ".bit Account", "scriptKind": "type", "liveCellsCount": 5, "deprecated": false },
             // Counted at zero: a family the index knows and no Cell carries
             // is not a segment, so it is not in the record either.
             { "familyId": "cota-registry", "name": "COTA Registry", "scriptKind": "type", "liveCellsCount": 0, "deprecated": false },
-            // Placed on neither bar by the index: skipped, not an error.
+            // Placed on neither slot by the index: skipped, not an error.
             { "familyId": "decoder", "name": "DOB Decoder", "scriptKind": null, "liveCellsCount": 9, "deprecated": false }
         ])
     }
 
     #[tokio::test]
     async fn script_family_census_counts_the_whole_chain_by_family() {
-        let (api_base, server) = spawn_script_family_census_api(
+        let (api_base, server, token_requests) = spawn_family_census_api(
             mainnet_like_families(),
             // 1,000 live: 22 DAO + 70 other typed = 92 typed, 908 plain.
             // The listed type families hold 79, so 13 typed Cells carry a
             // type the index has no family for; the listed locks hold 993,
             // so 7 Cells sit under an unlisted lock.
             family_census_summary(1_000, 22, 70, 908),
+            true,
         )
         .await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
@@ -8263,6 +8463,14 @@ mod tests {
             .await
             .unwrap()
             .expect("family census record");
+        // The roster is read once and held: a second census a minute later
+        // does not page the token registry again.
+        source
+            .enrich_script_family_census(&context())
+            .await
+            .unwrap()
+            .expect("family census record");
+        assert_eq!(token_requests.load(Ordering::Relaxed), 1);
 
         assert_eq!(record.as_of.block, 100);
         assert_eq!(record.live_cells, 1_000);
@@ -8288,7 +8496,9 @@ mod tests {
                 ("Default Lock", "lock", 893, None),
                 ("JoyID", "lock", 100, None),
                 ("Nervos DAO", "type", 22, None),
-                ("xUDT", "type", 57, Some("token")),
+                ("xUDT", "type", 40, Some("token")),
+                ("Spore", "type", 12, Some("object")),
+                (".bit Account", "type", 5, Some("identity")),
             ]
         );
         server.abort();
@@ -8370,14 +8580,13 @@ mod tests {
             .is_none());
         server.abort();
 
-        // …and one that counts them but names no inventory for any predates
-        // the field: a bar drawn from it would read every token as a script.
-        let (api_base, server) = spawn_script_family_census_api(
-            serde_json::json!([
-                { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "liveCellsCount": 57 },
-                { "familyId": "default-lock", "name": "Default Lock", "scriptKind": "lock", "liveCellsCount": 900 }
-            ]),
+        // …and one whose token registry cannot be read yet, with no roster
+        // held from an earlier hour: no classification, no bar. Withheld,
+        // and the next refresh asks the registry again.
+        let (api_base, server, token_requests) = spawn_family_census_api(
+            mainnet_like_families(),
             family_census_summary(1_000, 22, 70, 908),
+            false,
         )
         .await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
@@ -8387,24 +8596,12 @@ mod tests {
             .await
             .unwrap()
             .is_none());
-        server.abort();
-
-        // A kind this dashboard has no word for is refused, not folded away.
-        let (api_base, server) = spawn_script_family_census_api(
-            serde_json::json!([
-                { "familyId": "xudt", "name": "xUDT", "scriptKind": "type", "assetType": "voucher", "liveCellsCount": 57 }
-            ]),
-            family_census_summary(1_000, 22, 70, 908),
-        )
-        .await;
-        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
-        source.probe(&context()).await;
-        let error = source
+        assert!(source
             .enrich_script_family_census(&context())
             .await
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("unsupported inventory kind"), "{error}");
+            .unwrap()
+            .is_none());
+        assert_eq!(token_requests.load(Ordering::Relaxed), 2);
         server.abort();
     }
 

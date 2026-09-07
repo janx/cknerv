@@ -1918,7 +1918,7 @@ fn report_collection_walk(path: &str, listed: usize, resolved_from: usize, walk:
 /// synthetic ASCII. What does know the pair is the census: cknerv has already
 /// observed these scripts on stage, and the registry can name them. Names are
 /// ckbadger's catalogue spellings, read live on 2026-08-23.
-fn identity_standard_for_name(name: &str) -> Option<IdentityStandard> {
+pub(crate) fn identity_standard_for_name(name: &str) -> Option<IdentityStandard> {
     match name {
         ".bit Account" => Some(IdentityStandard::DotBit),
         ".bit Cell" => Some(IdentityStandard::BitCell),

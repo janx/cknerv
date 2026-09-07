@@ -308,10 +308,11 @@ export function assetFamilyBuckets(
 
 // ——— The chain by the index's own menu ———————————————————————————————
 //
-// The index counts the whole chain's live Cells by family and says, for each
-// family, which of its Inventory pages the cells are listed under — Tokens,
-// Objects, Identities — by the recognizers it classifies item deltas with.
-// CELL CENSUS draws the chain in that vocabulary rather than family by
+// The index counts the whole chain's live Cells by family, and the adapter
+// says, for each family, which of the index's Inventory pages its cells are
+// listed under — Tokens, Objects, Identities — from the index's own token
+// registry and its object and identity standards. CELL CENSUS draws the
+// chain in that vocabulary rather than family by
 // family: CKB, the three inventories, the DAO, and SCRIPTS for every typed
 // Cell that is none of those. What the record cannot place it says so
 // explicitly — bare CKB as `types_absent`, the DAO from the census's own
