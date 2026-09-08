@@ -20,6 +20,7 @@ rpc_url = "http://localhost:8114"
 
 [dashboard]
 port = 7001
+hosted = false
 open = true
 
 [galaxy]
@@ -93,3 +94,108 @@ trigger a controlled target-driven rebuild. A one-run `--backfill-blocks 0`
 keeps legacy tip-only historical replay behavior; cknerv still retains the
 exact rollback journal. Ordinary downtime catch-up always processes every
 missing block so spends and births in the middle of the gap cannot be lost.
+
+## Hosted Dashboards
+
+Run cknerv, the CKB node, and optional ckbadger on the service machine, and set:
+
+```toml
+[dashboard]
+port = 7001
+hosted = "Little Otter"
+```
+
+| `hosted` value | Behavior |
+|---|---|
+| Omitted or `false` | Local mode; API Host and Origin must name loopback |
+| Nonempty string | Public read-only mode; the string names the observed node |
+| `true`, empty/blank text, other types | Configuration error |
+
+Names are trimmed and preserve case and Unicode. Newlines and control
+characters are rejected. TOML has no `null`: omit the key or use `false` to
+disable it. The browser receives `hosted: string | null` in runtime config;
+older/development payloads that omit it use local mode. The name is display
+text, independent of domain, URL, RPC endpoint, and the stable `ckb:local` ID.
+It appears on the node anchor, its inspection card, and the page title.
+Peer heights and round trips are measurements from the service's node.
+
+Hosted mode always suppresses browser auto-open on the service machine,
+including when an existing generated config still says `open = true`.
+`open` and `--no-open` keep their existing behavior in local mode. There is no
+hosted CLI flag or environment override. Restart cknerv after editing the
+config and refresh open pages to reload runtime config. Renaming the service
+or returning to local mode re-registers the same node ID, preserving its
+telemetry and derived state; no schema change or `cknerv purge` is required.
+
+The listener remains `127.0.0.1:<port>` in both modes. Publish the hosted
+dashboard at a domain's **root path** through a same-machine HTTPS reverse
+proxy. Forward the SPA, `/runtime-config.js`, and `/api/*`, including WS
+upgrades. HTTP requests already use the page's origin, and HTTPS pages select
+`wss:` automatically. Subpath hosting and direct external binding are not
+configured by `hosted`.
+
+This deliberately publishes the existing read-only API, including node P2P
+identity, peer addresses, versions and status, to anonymous readers. Public
+Host/Origin headers and requests without Origin are accepted; public WS
+streams can also be read by other origins. The SPA uses same-origin HTTP,
+and no wildcard CORS policy is added. Leave Host/Origin intact at the proxy;
+the server does not trust forwarded headers to bypass local-mode checks.
+Keep CKB RPC and ckbadger behind the server-side boundary.
+
+The proxy owns public connection/request limits and transport timeouts. Each
+tab normally opens two long-lived streams, or three with enrichment, alongside
+short HTTP requests. All viewers share one ingestion/projection pipeline;
+their camera, quality, panels and audio controls remain browser-local.
+The Cell data route's two upstream permits and 2 MiB response bound continue
+to apply, but neither the permit waiters nor total WS connections have an
+application-wide admission limit.
+
+For example, the following belongs inside an nginx `http` block. Replace the
+domain and certificate paths. These limits are example deployment budgets;
+size them for concurrent viewers, shared-IP clients, snapshot bandwidth and
+the upstream node's capacity.
+
+```nginx
+map $http_upgrade $cknerv_connection {
+    default upgrade;
+    '' close;
+}
+limit_conn_zone $binary_remote_addr zone=cknerv_ip:10m;
+limit_conn_zone $server_name zone=cknerv_total:1m;
+limit_req_zone $binary_remote_addr zone=cknerv_rate:10m rate=20r/s;
+
+server {
+    listen 443 ssl;
+    server_name nerv.example;
+    ssl_certificate /etc/ssl/nerv.example/fullchain.pem;
+    ssl_certificate_key /etc/ssl/nerv.example/privkey.pem;
+    limit_conn cknerv_ip 16;
+    limit_conn cknerv_total 128;
+    limit_conn_status 429;
+    limit_req zone=cknerv_rate burst=80 nodelay;
+    limit_req_status 429;
+
+    location / {
+        proxy_pass http://127.0.0.1:7001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $cknerv_connection;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}
+```
+
+nginx requires explicit forwarding of the upgrade headers for WS; its
+[WebSocket guide](https://nginx.org/en/docs/http/websocket.html) explains the
+handshake and idle timeout. Its [connection limits](https://nginx.org/en/docs/http/ngx_http_limit_conn_module.html)
+and [request limits](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html)
+describe how the example budgets are enforced. Validate the proxy's config
+before reloading it, then follow the [hosted smoke checklist](../crates/cknerv-cli/SMOKE.md#hosted-mode).
+
+Detail-route failures and ckbadger probe status expose diagnostic summaries.
+Underlying errors are logged on the service machine; RPC/API URLs, request
+credentials and workdir paths are not added to browser runtime config.

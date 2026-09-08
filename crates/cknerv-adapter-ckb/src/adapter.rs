@@ -254,6 +254,39 @@ impl CkbDirectAdapter {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn startup_registers_the_hosted_label_under_the_same_local_id() {
+        for label in [None, Some("Little Otter"), Some("小水獭 CKB")] {
+            let mut adapter = CkbDirectAdapter::new(Url::parse("http://127.0.0.1:9").unwrap())
+                .with_backfill_blocks(0);
+            if let Some(label) = label {
+                adapter = adapter.with_node("ckb:local", label);
+            }
+            let (tx, mut rx) = mpsc::channel(8);
+            let (stop, stopped) = watch::channel(false);
+            let task = tokio::spawn(async move { adapter.run(tx, stopped).await });
+            let mutation = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            match mutation {
+                Mutation::ChainNodeRegistered {
+                    id, label: actual, ..
+                } => {
+                    assert_eq!(id, "ckb:local");
+                    assert_eq!(actual, label.unwrap_or("ckb-local"));
+                }
+                other => panic!("expected node registration, got {other:?}"),
+            }
+            stop.send(true).unwrap();
+            tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+    }
+
     #[test]
     fn new_defaults_to_target_driven_hydration() {
         let adapter = CkbDirectAdapter::new(Url::parse("http://localhost:8114").unwrap());

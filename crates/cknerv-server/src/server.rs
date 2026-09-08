@@ -35,6 +35,7 @@ use cknerv_core::{
 };
 
 use crate::adapter::Adapter;
+use crate::browser_guard::BrowserAccessPolicy;
 use crate::cell_data::CellDataReader;
 use crate::composition_store::CompositionStore;
 use crate::enrichment::{EnrichmentSource, GalaxyCompositionHydrator};
@@ -108,6 +109,7 @@ pub struct ServerBuilder {
     workdir: Option<PathBuf>,
     restore_persisted: bool,
     build_version: Option<String>,
+    browser_access: BrowserAccessPolicy,
 }
 
 impl ServerBuilder {
@@ -124,6 +126,7 @@ impl ServerBuilder {
             workdir: None,
             restore_persisted: true,
             build_version: None,
+            browser_access: BrowserAccessPolicy::default(),
         }
     }
 
@@ -228,6 +231,13 @@ impl ServerBuilder {
     /// the field null.
     pub fn build_version(mut self, version: impl Into<String>) -> Self {
         self.build_version = Some(version.into());
+        self
+    }
+
+    /// Explicitly publish the read-only API, or keep its default loopback
+    /// browser boundary. Applies to every HTTP route and WS upgrade.
+    pub fn browser_access(mut self, policy: BrowserAccessPolicy) -> Self {
+        self.browser_access = policy;
         self
     }
 
@@ -456,8 +466,13 @@ impl ServerBuilder {
         let cell_data = self
             .cell_data_reader
             .map(|reader| Arc::new(CellDataGate::new(reader)));
-        let router =
-            crate::routes::build_router(state.clone(), shutdown_rx, enrichment_source, cell_data);
+        let router = crate::routes::build_router(
+            state.clone(),
+            shutdown_rx,
+            enrichment_source,
+            cell_data,
+            self.browser_access,
+        );
         let handle = ServerHandle {
             state,
             workdir: self.workdir,

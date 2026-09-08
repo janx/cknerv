@@ -16,8 +16,7 @@
 //!     the `Host` header still says is the name, not the address.
 //!
 //! So the guard reads the two headers a browser fills in honestly and refuses
-//! anything that is not loopback. The rule is not configurable (there is
-//! nothing to configure while the listener is loopback-only): `localhost`,
+//! anything that is not loopback by default: `localhost`,
 //! any `*.localhost` name, any address in `127.0.0.0/8`, and `::1`, on any
 //! port and under any scheme.
 //!
@@ -28,12 +27,27 @@
 //! reason it works at all: `changeOrigin: true` rewrites `Host` to
 //! `localhost:7001` and forwards `Origin: http://localhost:5173`, and both
 //! sides of that are loopback.
+//!
+//! A host binary may explicitly select `PublicReadOnly` for a public
+//! dashboard. That mode publishes the same read-only data to all origins
+//! and hosts; the HTTPS reverse proxy owns the public transport and limits.
 
 use axum::extract::Request;
 use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+
+/// Access to the dashboard's read-only HTTP and WebSocket routes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BrowserAccessPolicy {
+    /// Keep local node telemetry private from foreign browser pages.
+    #[default]
+    LoopbackOnly,
+    /// Intentionally publish node telemetry, including peer addresses.
+    /// All hosts/origins may read it; this does not add cross-origin CORS.
+    PublicReadOnly,
+}
 
 /// Whether a `Host`-style `<host>[:<port>]` names something on this machine.
 pub(crate) fn authority_is_loopback(authority: &str) -> bool {

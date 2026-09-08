@@ -313,8 +313,10 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, scriptFamilyCensus, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
+function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, scriptFamilyCensus, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
+  /** Public service name; the tab continues to report the observed tip. */
+  hostedName?: string;
   /** The staged set counted by script identity, for the panel named after it.
    *  A different scope from `cellsStats.scripts`, which the backend counts
    *  over its whole retained window; the two never share a bar. */
@@ -797,8 +799,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // with.
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    document.title = `CKNERV · #${chain.tip.toLocaleString('en-US')}`;
-  }, [chain.tip]);
+    const name = hostedName === undefined ? 'CKNERV' : `CKNERV · ${hostedName}`;
+    document.title = `${name} · #${chain.tip.toLocaleString('en-US')}`;
+  }, [chain.tip, hostedName]);
 
   // persist the across-render baselines after each commit
   useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);

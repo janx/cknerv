@@ -44,6 +44,18 @@ function renderCard(props: Partial<Parameters<typeof PeerLinkCard>[0]> = {}) {
 }
 
 describe('PeerLinkCard header', () => {
+  it('identifies hosted telemetry as measured by the service node', () => {
+    const { container } = renderCard({ hostedNodeLabel: 'Little Otter', sighting: sighting() });
+    const ladder = container.querySelector('[data-peer-probe-module="sync"]');
+    expect(ladder?.textContent).toContain('NODE');
+    expect(ladder?.textContent).not.toContain('LOCAL');
+    expect(ladder?.querySelector('[title="Little Otter"]')).not.toBeNull();
+    expect(container.querySelector('[data-peer-probe-sync-local]')?.textContent)
+      .toBe(`#${TIP.toLocaleString('en-US')}`);
+    expect(container.textContent).toContain('NODE PING 84 MS');
+    expect(container.textContent).not.toContain('OUR PING');
+  });
+
   it('names the peer by its first eight id characters and states its evidence', () => {
     const { container } = renderCard();
     const text = container.textContent ?? '';

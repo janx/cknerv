@@ -64,6 +64,8 @@ export type NodeSelfLayoutSide = SceneInspectorPlacementSide;
 
 export interface NodeSelfCardProps {
   node: ChainNode;
+  /** Present when the observer is a public service's node. */
+  hostedNodeLabel?: string;
   chain: ChainEntry;
   /** The live peer list the STANCE plate measures the colony from. */
   peers: Peer[];
@@ -118,6 +120,7 @@ function ReadoutCaption({ children }: { children: ReactNode }) {
 
 export default function NodeSelfCard({
   node,
+  hostedNodeLabel,
   chain,
   peers,
   layoutSide = 'left',
@@ -155,7 +158,7 @@ export default function NodeSelfCard({
   // indictment of the local node is not a footnote to a peer count.
   const stanceDelta: string[] = [];
   if (consensus.behind > 0) {
-    stanceDelta.push(`BEHIND US ${blocks(consensus.behind)}`);
+    stanceDelta.push(`${hostedNodeLabel === undefined ? 'BEHIND US' : 'BEHIND NODE'} ${blocks(consensus.behind)}`);
   }
   if (consensus.unknown > 0) {
     stanceDelta.push(`${blocks(consensus.unknown)} HAVE NOT SAID WHERE THEIR HEAD IS`);
@@ -200,8 +203,11 @@ export default function NodeSelfCard({
         }}
       >
         <span
-          title={node.id}
+          title={hostedNodeLabel === undefined ? node.id : `${node.label} · Service observation node · ${node.id}`}
           style={{
+            minWidth: 0,
+            maxWidth: '100%',
+            overflowWrap: 'anywhere',
             color: accent,
             fontFamily: HUD_FONTS.display,
             fontSize: HUD_TYPE.title,
@@ -231,6 +237,7 @@ export default function NodeSelfCard({
           * case look like a verdict. */}
         <span
           data-node-probe-evidence="self"
+          title={hostedNodeLabel === undefined ? undefined : `Observed by ${hostedNodeLabel} · peer telemetry is measured by this service's node`}
           style={plateStateChip(accent)}
         >
           SELF
@@ -343,7 +350,7 @@ export default function NodeSelfCard({
         <div style={{ display: 'grid', rowGap: 3 }}>
           <SelfReadout
             row="head"
-            label="AT OUR HEAD"
+            label={hostedNodeLabel === undefined ? 'AT OUR HEAD' : 'AT NODE HEAD'}
             value={`${blocks(consensus.atTip)} OF ${blocks(consensus.total)} PEERS`}
             valueColor={HUD_COLORS.peerWire}
           >
@@ -389,6 +396,7 @@ export default function NodeSelfCard({
       {sighting ? (
         <PeerSightingPlate
           {...sighting}
+          hostedNodeLabel={hostedNodeLabel}
           module="SELF·04"
           variant="self"
           liveVersion={node.version}

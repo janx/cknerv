@@ -620,6 +620,19 @@ describe('HudOverlay', () => {
     expect(document.title).toBe('CKNERV · #20,361,090');
   });
 
+  it('keeps the hosted name and live tip together through updates and a return to local mode', () => {
+    const props = { chain, peers, localNode, cellsStats };
+    const { rerender } = render(<HudOverlay {...props} hostedName="小水獭 <CKB>" />);
+    expect(document.title).toBe(`CKNERV · 小水獭 <CKB> · #${chain.tip.toLocaleString('en-US')}`);
+    const advanced = { ...chain, tip: 20_361_090 };
+    rerender(<HudOverlay {...props} chain={advanced} hostedName="小水獭 <CKB>" />);
+    expect(document.title).toBe('CKNERV · 小水獭 <CKB> · #20,361,090');
+    rerender(<HudOverlay {...props} chain={advanced} hostedName="Red Panda" />);
+    expect(document.title).toBe('CKNERV · Red Panda · #20,361,090');
+    rerender(<HudOverlay {...props} chain={advanced} />);
+    expect(document.title).toBe('CKNERV · #20,361,090');
+  });
+
   it('controls each main panel independently from the top-bar menu', () => {
     const { container, getByRole } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,

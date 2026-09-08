@@ -265,5 +265,20 @@ canonical state rebuilds the stage with it.
 
 ckbadger-specific capability limits are documented in
 [ckbadger.md](ckbadger.md#known-limits), and the structural tradeoffs behind
-these — bounded windows, purge-over-migrate, the loopback-only boundary — are
+these — bounded windows, purge-over-migrate, the default loopback boundary — are
 [Design and Architecture §19](architecture.md#19-known-tradeoffs-and-limits).
+
+## Hosted Mode Development
+
+Set `[dashboard].hosted = "Little Otter"` in a test workdir to exercise
+public viewing. The CLI keeps its loopback listener, disables browser opening,
+registers the configured node label and publishes the read-only API. The Vite
+proxy also loads that runtime config. For HTTPS/WS and public admission limits,
+use the [reverse proxy example](configuration.md#hosted-dashboards).
+
+`tests/fixtures/runtime_config_hosted.json` pairs TOML inputs and normalized
+browser fields. Rust CLI tests and TS runtime tests consume it. The server's
+`tests/hosted.rs` exercises HTTP and WS with public proxy headers; the existing
+local-mode guard tests continue to require refusals. Node re-registration
+tests on both sides cover name changes without losing P2P identity or tip.
+The configuration and label change requires no purge or persistence bump.

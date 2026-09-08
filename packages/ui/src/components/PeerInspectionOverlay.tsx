@@ -83,6 +83,7 @@ export interface PeerInspectionOverlayProps {
   tip: number;
   /** Our own client version — the reference every mismatch is judged from. */
   localVersion: string;
+  hostedNodeLabel?: string;
   /** The peer has left `peers[]`; this is a retained snapshot in its epilogue. */
   linkLost: boolean;
   /** The crawler's dossier on this node, when the source can offer one. It
@@ -111,6 +112,7 @@ export default function PeerInspectionOverlay({
   peer,
   tip,
   localVersion,
+  hostedNodeLabel,
   linkLost,
   sighting,
   candidacy,
@@ -188,6 +190,7 @@ export default function PeerInspectionOverlay({
           peer={peer}
           tip={tip}
           localVersion={localVersion}
+          hostedNodeLabel={hostedNodeLabel}
           layoutSide={layoutSide}
           linkLost={linkLost}
           sighting={sighting}

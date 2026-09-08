@@ -6,7 +6,7 @@ cells, and peers of CKB — an [eternal digital realm](https://github.com/janx/c
 What it draws is a dual structure. One layer lives in the digital world: the
 living "world brain" woven from common knowledge cells and links, the hub where activity is coordinated. The other lives in the physical world: the peer-to-peer network of the distributed CKB full nodes that carry it. The two are inseparable — two faces of one body, each wearing a different form in its own world.
 
-cknerv reads from two sources. A CKB node on its own drives the basic view. The full visualization also needs ckbadger, which supplies the richer statistics and queries the panels are built on. Both are meant to run on the same machine with cknerv side by side.
+cknerv reads from two sources. A CKB node on its own drives the basic view. The full visualization also needs ckbadger, which supplies the richer statistics and queries the panels are built on. Both are meant to run on the same machine with cknerv side by side. That machine can also serve remote viewers: set `[dashboard].hosted` to a service name and publish the dashboard through a same-machine HTTPS reverse proxy. See [hosted dashboards](docs/configuration.md#hosted-dashboards).
 
 ## Principles
 

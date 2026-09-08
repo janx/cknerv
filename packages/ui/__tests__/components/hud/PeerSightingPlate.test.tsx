@@ -76,6 +76,12 @@ function value(container: HTMLElement, name: string): string {
 }
 
 describe('PeerSightingPlate absence', () => {
+  it('keeps the crawler dial separate from the hosted node ping', () => {
+    const { container } = renderPlate({ liveRttMs: 84, hostedNodeLabel: 'Little Otter' });
+    expect(container.textContent).toContain('THEIR DIAL 41 MS · NODE PING 84 MS');
+    expect(container.textContent).not.toContain('OUR PING');
+  });
+
   it('renders nothing at all when no source was asked', () => {
     const { container } = renderPlate({ phase: 'disabled', record: null });
     expect(container.innerHTML).toBe('');

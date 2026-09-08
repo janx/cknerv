@@ -60,6 +60,7 @@ export interface PeerSightingState {
 }
 
 export interface PeerSightingPlateProps extends PeerSightingState {
+  hostedNodeLabel?: string;
   /** Module stamp in the host card's own numbering — `LINK·05` / `SELF·04`. */
   module: string;
   /** Wall clock every CRAWLER age is measured from, when a host holds one —
@@ -364,6 +365,7 @@ export default function PeerSightingPlate({
   linkAgeMs,
   linkAgeSinceMs,
   liveRttMs,
+  hostedNodeLabel,
 }: PeerSightingPlateProps) {
   // Nothing was asked, so nothing is claimed. The card must read as complete
   // without this plate — enrichment is additive on every surface it touches.
@@ -453,7 +455,7 @@ export default function PeerSightingPlate({
       {sighting.rtt_ms != null && variant !== 'sighted' ? (
         <SightingCaption>
           {`THEIR DIAL ${count(sighting.rtt_ms)} MS`}
-          {liveRttMs != null ? ` · OUR PING ${count(liveRttMs)} MS` : ''}
+          {liveRttMs != null ? ` · ${hostedNodeLabel === undefined ? 'OUR PING' : 'NODE PING'} ${count(liveRttMs)} MS` : ''}
         </SightingCaption>
       ) : null}
     </SightingRow>

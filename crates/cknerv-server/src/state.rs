@@ -2029,6 +2029,38 @@ mod tests {
     }
 
     #[test]
+    fn restored_node_can_switch_hosted_names_without_losing_identity_or_tip() {
+        let mut saved = serde_json::json!({
+            "revision": 7,
+            "chain": { "tip": 99 },
+            "chain_nodes": [{
+                "id": "ckb:local", "label": "ckb-local", "is_miner": false,
+                "version": "0.116.1", "connections": 24, "p2p_node_id": "QmObserver"
+            }]
+        });
+        for label in ["Little Otter", "小水獭 CKB", "ckb-local"] {
+            let state = ServerState::new();
+            state.load_entities(saved).unwrap();
+            state.apply_mutation(Mutation::ChainNodeRegistered {
+                id: "ckb:local".into(),
+                label: label.into(),
+                is_miner: false,
+                at: 1000,
+            });
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot["chain"]["tip"], 99);
+            assert_eq!(
+                snapshot["chain_nodes"],
+                serde_json::json!([{
+                    "id": "ckb:local", "label": label, "is_miner": false,
+                    "version": "0.116.1", "connections": 24, "p2p_node_id": "QmObserver"
+                }])
+            );
+            saved = state.save_entities();
+        }
+    }
+
+    #[test]
     fn save_load_round_trips_chain() {
         let s = ServerState::new();
         s.apply_mutation(Mutation::BlockMined {

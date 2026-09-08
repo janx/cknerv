@@ -73,6 +73,21 @@ function renderCard(props: Partial<Parameters<typeof NodeSelfCard>[0]> = {}) {
 }
 
 describe('NodeSelfCard header', () => {
+  it('names the service observer without changing its evidence or measurements', () => {
+    const label = '小水獭 "CKB" <img src=x> '.repeat(12).trim();
+    const { container, getByRole } = renderCard({ node: { ...node, label }, hostedNodeLabel: label });
+    getByRole('region', { name: `Node ${label} self probe` });
+    expect(container.textContent).toContain(`NODE // ${label}`);
+    expect(container.querySelector('img')).toBeNull();
+    const evidence = container.querySelector<HTMLElement>('[data-node-probe-evidence="self"]');
+    expect(evidence?.textContent).toBe('SELF');
+    expect(evidence?.title).toContain("this service's node");
+    expect(container.textContent).toContain('AT NODE HEAD');
+    expect(container.textContent).toContain('BEHIND NODE 1');
+    expect(container.textContent).not.toContain('AT OUR HEAD');
+    expect(container.querySelector('[data-node-probe-fact="version"]')?.textContent).toContain(LOCAL_VERSION);
+  });
+
   it('names the node, claims SELF, and puts the role beside the chain', () => {
     const { container } = renderCard();
     const text = container.textContent ?? '';

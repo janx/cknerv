@@ -69,6 +69,8 @@ pub trait EnrichmentSource: Send + Sync + 'static {
     /// Probe reachability, indexing lag, and canonical-chain compatibility.
     /// Operational failures are represented in the returned status so the
     /// optional source can fail without affecting the canonical pipeline.
+    /// Status messages are public snapshot/stream data: use a diagnostic
+    /// summary and log underlying exceptions without publishing private URLs.
     async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus;
 
     /// Resolve additive detail for one selected canonical Cell.

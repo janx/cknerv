@@ -19,7 +19,7 @@ use cknerv_core::{
     CellGalaxy, CompositionDemandSink, ObservedScriptsSink, SemanticsProjection,
     DEFAULT_REORG_WINDOW_BLOCKS,
 };
-use cknerv_server::{EnrichmentSource, ServerBuilder};
+use cknerv_server::{BrowserAccessPolicy, EnrichmentSource, ServerBuilder};
 
 use axum::routing::get;
 
@@ -89,6 +89,9 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     if let Some(blocks) = cfg.backfill_blocks {
         adapter = adapter.with_backfill_blocks(blocks);
     }
+    if let Some(name) = cfg.hosted.as_deref() {
+        adapter = adapter.with_node("ckb:local", name);
+    }
     let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
         cell_cap: cfg.galaxy.cell_cap,
         recent_links_cap: cfg.galaxy.recent_links_cap,
@@ -100,6 +103,7 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     };
     let runtime_galaxy = cfg.galaxy.clone();
     let runtime_enrichment_source = cfg.ckbadger.as_ref().map(|_| "ckbadger");
+    let runtime_hosted = cfg.hosted.clone();
     let composition_rpc_url = cfg.rpc_url.clone();
     let composition_target = cfg.galaxy.cell_cap;
     let ckbadger_source = cfg
@@ -129,6 +133,11 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     // thing that can go find out what they are called.
     let observed_scripts = Arc::new(ObservedScriptsSink::new());
     let mut builder = ServerBuilder::new()
+        .browser_access(if cfg.hosted.is_some() {
+            BrowserAccessPolicy::PublicReadOnly
+        } else {
+            BrowserAccessPolicy::LoopbackOnly
+        })
         .add_adapter(adapter)
         .add_projection(
             CellGalaxy::with_config(galaxy_config)
@@ -164,7 +173,15 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
 
     let runtime_config_route = get(move || {
         let runtime_galaxy = runtime_galaxy.clone();
-        async move { runtime_config_response(BUILD_VERSION, runtime_galaxy, runtime_enrichment_source) }
+        let runtime_hosted = runtime_hosted.clone();
+        async move {
+            runtime_config_response(
+                BUILD_VERSION,
+                runtime_galaxy,
+                runtime_enrichment_source,
+                runtime_hosted.as_deref(),
+            )
+        }
     });
     let app = cknerv_router
         .route("/runtime-config.js", runtime_config_route)
@@ -173,7 +190,11 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], cfg.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    tracing::info!("dashboard at http://localhost:{}", cfg.port);
+    if let Some(name) = cfg.hosted.as_deref() {
+        tracing::info!(hosted = name, "public read-only dashboard listening at http://{addr}; publish through a same-machine HTTPS reverse proxy");
+    } else {
+        tracing::info!("dashboard at http://localhost:{}", cfg.port);
+    }
     if cfg.open {
         crate::open_browser::open(cfg.port);
     }

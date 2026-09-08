@@ -1325,7 +1325,10 @@ async fn an_unknown_outpoint_is_404_and_an_unreadable_node_is_502() {
     );
     let body: serde_json::Value = unreadable.json().await.unwrap();
     assert_eq!(body["error"], "node_unreachable");
-    assert_eq!(body["message"], "connection refused");
+    assert_eq!(
+        body["message"],
+        "the node could not serve this Cell's output data"
+    );
 
     handle.shutdown().await;
     server_task.abort();

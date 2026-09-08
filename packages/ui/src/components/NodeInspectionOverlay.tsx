@@ -72,6 +72,7 @@ export function NodeInspectionAnchor({
 export interface NodeInspectionOverlayProps {
   handles: NodeInspectionHandles;
   node: ChainNode;
+  hostedNodeLabel?: string;
   /** Chain truth the vitals are read from — tip, epoch, chain name. */
   chain: ChainEntry;
   /** The colony this node stands in, for the STANCE plate. */
@@ -95,6 +96,7 @@ export interface NodeInspectionOverlayProps {
 export default function NodeInspectionOverlay({
   handles,
   node,
+  hostedNodeLabel,
   chain,
   peers,
   sighting,
@@ -152,7 +154,7 @@ export default function NodeInspectionOverlay({
         data-node-probe-dismiss-boundary="true"
         data-node-probe-node={node.id}
         role="region"
-        aria-label={`Node ${node.id} inspection`}
+        aria-label={`Node ${hostedNodeLabel ?? node.id} inspection`}
         style={INSPECTION_CARD_STYLE}
       >
         <SceneInspectionConnector
@@ -162,6 +164,7 @@ export default function NodeInspectionOverlay({
         />
         <NodeSelfCard
           node={node}
+          hostedNodeLabel={hostedNodeLabel}
           chain={chain}
           peers={peers}
           layoutSide={layoutSide}

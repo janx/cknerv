@@ -1011,6 +1011,7 @@ mod tests {
             shutdown_rx,
             None,
             None,
+            crate::BrowserAccessPolicy::default(),
         ))
         .await;
 
@@ -1077,6 +1078,7 @@ mod tests {
             shutdown_rx,
             None,
             None,
+            crate::BrowserAccessPolicy::default(),
         ))
         .await;
 

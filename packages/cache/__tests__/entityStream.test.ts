@@ -9,6 +9,32 @@ const peerA: Peer = {
 };
 
 describe('entity stream peer handling', () => {
+  it('updates hosted names across snapshots without replacing node identity or telemetry', () => {
+    let cache = fromEntitiesSnapshot(7, {
+      chain: { ...emptyChainEntityCache().chain, tip: 99 },
+      chain_nodes: [{
+        id: 'ckb:local', label: 'ckb-local', is_miner: false,
+        version: '0.116.1', connections: 24, p2p_node_id: 'QmObserver',
+      }],
+      peers: [peerA],
+    });
+    for (const label of ['Little Otter', '小水獭 CKB', 'ckb-local']) {
+      cache = fromEntitiesSnapshot(cache.revision, {
+        chain: cache.chain, chain_nodes: cache.chainNodes, peers: cache.peers,
+      });
+      cache = applyEntityDelta(cache, [{
+        revision: cache.revision + 1,
+        mutation: { type: 'chain_node_registered', id: 'ckb:local', label, is_miner: false, at: 1000 },
+      }]);
+      expect(cache.chainNodes).toEqual([{
+        id: 'ckb:local', label, is_miner: false, version: '0.116.1',
+        connections: 24, p2p_node_id: 'QmObserver',
+      }]);
+      expect(cache.chain.tip).toBe(99);
+      expect(cache.peers).toEqual([peerA]);
+    }
+  });
+
   it('snapshot seeds peers', () => {
     const cache = fromEntitiesSnapshot(3, {
       chain: emptyChainEntityCache().chain,

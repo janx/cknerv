@@ -35,6 +35,8 @@ export interface EnrichmentRuntimeConfig {
 
 export interface CknervRuntimeConfig {
   buildVersion?: string;
+  /** Public service name, normalized by the CLI; absent/null is local. */
+  hosted?: string | null;
   galaxy?: Partial<Omit<GalaxyRuntimeConfig, 'topology' | 'pulses'>> & {
     topology?: Partial<GalaxyRuntimeConfig['topology']>;
     pulses?: Partial<GalaxyRuntimeConfig['pulses']>;
@@ -90,6 +92,12 @@ function runtimeConfigFromWindow(): CknervRuntimeConfig | undefined {
     return undefined;
   }
   return window.__CKNERV_RUNTIME_CONFIG__;
+}
+
+export function resolveHosted(
+  config: CknervRuntimeConfig = runtimeConfigFromWindow() ?? {},
+): string | null {
+  return config.hosted ?? null;
 }
 
 export function resolveBuildVersion(

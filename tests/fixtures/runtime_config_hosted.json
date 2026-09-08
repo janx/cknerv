@@ -1,0 +1,27 @@
+[
+  {
+    "toml": "",
+    "runtime": { "hosted": null },
+    "open": true
+  },
+  {
+    "toml": "[dashboard]\nhosted = false\nopen = false\n",
+    "runtime": { "hosted": null },
+    "open": false
+  },
+  {
+    "toml": "[dashboard]\nhosted = \"Little Otter\"\nopen = true\n",
+    "runtime": { "hosted": "Little Otter" },
+    "open": false
+  },
+  {
+    "toml": "[dashboard]\nhosted = '  小水獭 \"CKB\" <node>  '\n",
+    "runtime": { "hosted": "小水獭 \"CKB\" <node>" },
+    "open": false
+  },
+  {
+    "toml": "[dashboard]\nhosted = \"false\"\n",
+    "runtime": { "hosted": "false" },
+    "open": false
+  }
+]

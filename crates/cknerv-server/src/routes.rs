@@ -11,13 +11,14 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use tokio::sync::{watch, Semaphore};
 
 use cknerv_core::{EnrichmentEvent, OutPoint};
 
+use crate::browser_guard::BrowserAccessPolicy;
 use crate::cell_data::{CellDataReader, CELL_DATA_IN_FLIGHT, CELL_DATA_MAX_BYTES};
 use crate::enrichment::EnrichmentSource;
 use crate::projection_registry::{past_poison, SnapshotEnvelope};
@@ -28,6 +29,20 @@ use crate::state::ServerState;
 /// honest because an outpoint's bytes cannot change — see
 /// [`crate::cell_data`].
 const CELL_DATA_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+/// Upstream exceptions can contain private endpoints or credentials. Keep
+/// them in the operator's log; every detail route shares this public reply.
+fn enrichment_unavailable(error: anyhow::Error) -> Response {
+    tracing::warn!(error = %error, "enrichment detail request failed");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "enrichment_unavailable",
+            "message": "the enrichment source could not serve this detail"
+        })),
+    )
+        .into_response()
+}
 
 /// Composite router state: shared `ServerState` + the shutdown receiver
 /// WS handlers need. axum's `with_state` takes a single `Clone` value;
@@ -66,8 +81,9 @@ pub fn build_router(
     shutdown_rx: watch::Receiver<bool>,
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
     cell_data: Option<Arc<CellDataGate>>,
+    browser_access: BrowserAccessPolicy,
 ) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(health))
         .route("/api/entities/chain/snapshot", get(entities_chain_snapshot))
         .route("/api/entities/chain/stream", get(entities_chain_stream))
@@ -89,22 +105,21 @@ pub fn build_router(
         .route(
             "/api/cells/:tx_hash/:output_index/data",
             get(cell_output_data),
-        )
-        // Applied here rather than per handler so it covers every route above
-        // and only those: a caller that merges its own routes onto this
-        // router — the CLI adds `/runtime-config.js` and the SPA fallback —
-        // adds them after the layer and is not wrapped by it. See
-        // `crate::browser_guard` for why a loopback listener still needs a
-        // guard against the browser on the same machine.
-        .layer(axum::middleware::from_fn(
+        );
+    // One policy for HTTP and WS. Routes the host adds afterwards (the SPA
+    // and runtime config) remain outside this API-only layer.
+    let router = match browser_access {
+        BrowserAccessPolicy::LoopbackOnly => router.layer(axum::middleware::from_fn(
             crate::browser_guard::loopback_only,
-        ))
-        .with_state(RouterState {
-            state,
-            shutdown_rx,
-            enrichment_source,
-            cell_data,
-        })
+        )),
+        BrowserAccessPolicy::PublicReadOnly => router,
+    };
+    router.with_state(RouterState {
+        state,
+        shutdown_rx,
+        enrichment_source,
+        cell_data,
+    })
 }
 
 /// Liveness, in the shape an operator or a monitor reads it. Deliberately
@@ -245,14 +260,7 @@ async fn enrich_cell(
             })),
         )
             .into_response(),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": "enrichment_unavailable",
-                "message": error.to_string()
-            })),
-        )
-            .into_response(),
+        Err(error) => enrichment_unavailable(error),
     }
 }
 
@@ -296,14 +304,7 @@ async fn enrich_transaction(
             })),
         )
             .into_response(),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": "enrichment_unavailable",
-                "message": error.to_string()
-            })),
-        )
-            .into_response(),
+        Err(error) => enrichment_unavailable(error),
     }
 }
 
@@ -340,14 +341,7 @@ async fn enrich_peer(
     let context = router.state.canonical_context();
     match source.enrich_peer(&node_id, &context).await {
         Ok(lookup) => Json(lookup).into_response(),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": "enrichment_unavailable",
-                "message": error.to_string()
-            })),
-        )
-            .into_response(),
+        Err(error) => enrichment_unavailable(error),
     }
 }
 
@@ -424,11 +418,12 @@ async fn cell_output_data(
                 .into_response();
         }
         Err(error) => {
+            tracing::warn!(error = %error, "Cell output data request failed");
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
                     "error": "node_unreachable",
-                    "message": error.to_string()
+                    "message": "the node could not serve this Cell's output data"
                 })),
             )
                 .into_response();

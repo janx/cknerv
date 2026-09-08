@@ -1786,9 +1786,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let network_url = match self.endpoint("statistics/network") {
             Ok(url) => url,
             Err(error) => {
+                tracing::warn!(error = %error, "invalid ckbadger network status endpoint");
                 self.clear_anchor();
                 status.status = EnrichmentSourceState::Error;
-                status.message = Some(error.to_string());
+                status.message = Some("invalid ckbadger network status endpoint".to_string());
                 return status;
             }
         };
@@ -1796,9 +1797,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             Ok(response) if response.status().is_success() => match response.json().await {
                 Ok(network) => network,
                 Err(error) => {
+                    tracing::warn!(error = %error, "decode ckbadger network status failed");
                     self.clear_anchor();
                     status.status = EnrichmentSourceState::Error;
-                    status.message = Some(format!("decode ckbadger network status: {error}"));
+                    status.message = Some("could not decode ckbadger network status".to_string());
                     return status;
                 }
             },
@@ -1812,9 +1814,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
                 return status;
             }
             Err(error) => {
+                tracing::warn!(error = %error, "connect to ckbadger failed");
                 self.clear_anchor();
                 status.status = EnrichmentSourceState::Error;
-                status.message = Some(format!("connect to ckbadger: {error}"));
+                status.message = Some("could not connect to ckbadger".to_string());
                 return status;
             }
         };
@@ -1850,9 +1853,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let block_url = match self.endpoint(&format!("blocks/{}", canonical.number)) {
             Ok(url) => url,
             Err(error) => {
+                tracing::warn!(error = %error, "invalid ckbadger block anchor endpoint");
                 self.clear_anchor();
                 status.status = EnrichmentSourceState::Error;
-                status.message = Some(error.to_string());
+                status.message = Some("invalid ckbadger block anchor endpoint".to_string());
                 return status;
             }
         };
@@ -1860,9 +1864,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             Ok(response) if response.status().is_success() => match response.json().await {
                 Ok(block) => block,
                 Err(error) => {
+                    tracing::warn!(error = %error, "decode ckbadger block anchor failed");
                     self.clear_anchor();
                     status.status = EnrichmentSourceState::Error;
-                    status.message = Some(format!("decode ckbadger block anchor: {error}"));
+                    status.message = Some("could not decode ckbadger block anchor".to_string());
                     return status;
                 }
             },
@@ -1876,9 +1881,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
                 return status;
             }
             Err(error) => {
+                tracing::warn!(error = %error, "fetch ckbadger block anchor failed");
                 self.clear_anchor();
                 status.status = EnrichmentSourceState::Error;
-                status.message = Some(format!("fetch ckbadger block anchor: {error}"));
+                status.message = Some("could not fetch ckbadger block anchor".to_string());
                 return status;
             }
         };
@@ -6730,6 +6736,74 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[tokio::test]
+    async fn probe_failures_publish_summaries_to_snapshots_and_deltas() {
+        use cknerv_core::{EnrichmentEvent, EnrichmentProjection, Projection, SemanticsProjection};
+
+        for fail_network in [true, false] {
+            let app = Router::new()
+                .route("/PRIVATE_PATH/statistics/network", get(move || async move {
+                    Json(if fail_network {
+                        serde_json::json!({ "syncStatus": "PRIVATE_PAYLOAD" })
+                    } else {
+                        serde_json::json!({ "syncStatus": { "isSyncing": false, "syncedBlock": 100 } })
+                    })
+                }))
+                .route("/PRIVATE_PATH/blocks/100", get(|| async {
+                    Json(serde_json::json!({ "number": "PRIVATE_PAYLOAD" }))
+                }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let source = CkbadgerEnrichmentSource::new(
+                Url::parse(&format!(
+                    "http://PRIVATE_USER:PRIVATE_TOKEN@{addr}/PRIVATE_PATH"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            let status = source.probe(&context()).await;
+            assert_eq!(status.status, EnrichmentSourceState::Error);
+            assert_eq!(
+                status.message.as_deref(),
+                Some(if fail_network {
+                    "could not decode ckbadger network status"
+                } else {
+                    "could not decode ckbadger block anchor"
+                })
+            );
+            let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+            let deltas = projection.apply_enrichment(&EnrichmentEvent::SourceStatus(status));
+            assert!(!deltas.is_empty());
+            for wire in [
+                serde_json::to_string(&projection.snapshot()).unwrap(),
+                serde_json::to_string(&deltas).unwrap(),
+            ] {
+                assert!(wire.contains("could not decode ckbadger"));
+                assert!(!wire.contains("PRIVATE_"), "private diagnostic in {wire}");
+                assert!(!wire.contains(&addr.to_string()));
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn unreachable_probe_does_not_publish_its_private_url() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let source = CkbadgerEnrichmentSource::new(
+            Url::parse(&format!("http://{addr}/PRIVATE_PATH?token=PRIVATE_TOKEN")).unwrap(),
+        )
+        .unwrap();
+        let status = source.probe(&context()).await;
+        assert_eq!(status.status, EnrichmentSourceState::Error);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("could not connect to ckbadger")
+        );
     }
 
     #[test]

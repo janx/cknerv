@@ -171,6 +171,8 @@ import {
 
 interface CellGalaxyProps {
   ckbNodeIds: string[];
+  /** Optional display names. Node identities still own placement and selection. */
+  ckbNodeLabels?: Readonly<Record<string, string>>;
   /** Resolved server projection cap. The shared renderer hard ceiling still
    * bounds allocations, while smaller profiles keep AUTO honest. */
   cellCapacity?: number;
@@ -629,14 +631,16 @@ export function ckbNodeAnchorHaloTarget(
     : ckbNodeAnchorPresentation(selected).haloIntensity;
 }
 
-function CkbNodeAnchor({
+export function CkbNodeAnchor({
   id,
+  label,
   position,
   selected,
   onSelect,
   flashRef,
 }: {
   id: string;
+  label?: string;
   position: [number, number, number];
   selected: boolean;
   onSelect: (id: string | null) => void;
@@ -820,6 +824,8 @@ function CkbNodeAnchor({
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         <div
+          data-ckb-node-label={id}
+          title={label ?? ckbNodeLabel(id)}
           style={{
             color: presentation.labelColor,
             opacity: presentation.labelOpacity,
@@ -830,16 +836,19 @@ function CkbNodeAnchor({
             fontWeight: selected ? 500 : 400,
             letterSpacing: '0.24em',
             fontFamily:
-              "'Orbitron Local', 'JetBrains Mono Local', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              "'Orbitron Local', 'JetBrains Mono Local', system-ui, sans-serif",
             whiteSpace: 'nowrap',
+            maxWidth: 'min(240px, 60vw)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
             textShadow: presentation.labelShadow,
-            textTransform: 'uppercase',
+            textTransform: label === undefined ? 'uppercase' : 'none',
             transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase},`
               + ` opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase},`
               + ` text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`,
           }}
         >
-          {ckbNodeLabel(id)}
+          {label ?? ckbNodeLabel(id)}
         </div>
       </Html>
       {selected ? (
@@ -1834,6 +1843,7 @@ const CellIdentityCacheMarkers = memo(function CellIdentityCacheMarkers({
  */
 function CellGalaxy({
   ckbNodeIds,
+  ckbNodeLabels,
   cellCapacity,
   minerCkbNodeIds,
   universeSeed,
@@ -2815,6 +2825,7 @@ function CellGalaxy({
         <CkbNodeAnchor
           key={id}
           id={id}
+          label={ckbNodeLabels?.[id]}
           position={chainNodeWorldPosition(idx, Math.max(1, ckbNodeIds.length), universeSeed)}
           selected={selectedId === id}
           onSelect={onSelect}

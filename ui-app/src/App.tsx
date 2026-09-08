@@ -194,6 +194,7 @@ import {
   buildCommitHref,
   resolveEnrichmentConfig,
   resolveGalaxyConfig,
+  resolveHosted,
 } from './runtime-config';
 import { restoreCellGalaxyFocus } from './cell-galaxy-focus';
 import {
@@ -458,6 +459,7 @@ export default function App({
   // straight to NeuralNetwork as props — new identities every App render, which
   // would defeat the memo on every scene root below.
   const galaxyConfig = useMemo(() => resolveGalaxyConfig(), []);
+  const hosted = useMemo(() => resolveHosted(), []);
   // Deliberately NOT memoized: only its scalar fields are ever read
   // (`.enabled`, `.source`), never its identity, so a fresh object costs
   // nothing downstream.
@@ -966,6 +968,16 @@ export default function App({
   // the wrong node; fall back to the first entry.
   const localNode =
     chainNodes.find((n) => n.id === 'ckb:local') ?? chainNodes[0];
+  const hostedNodeId = hosted !== null ? localNode?.id : undefined;
+  const hostedNodeLabel = hosted !== null ? localNode?.label : undefined;
+  // Labels are presentation only. Polls that refresh node telemetry must not
+  // churn the scene root's props or the id-based topology memos.
+  const ckbNodeLabels = useMemo(
+    () => hostedNodeId !== undefined && hostedNodeLabel !== undefined
+      ? { [hostedNodeId]: hostedNodeLabel }
+      : undefined,
+    [hostedNodeId, hostedNodeLabel],
+  );
 
   // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
   // can write cell→cell pulse arrivals into the same Float32Array CellGalaxy
@@ -2261,6 +2273,7 @@ export default function App({
         chain={chain}
         peers={peers}
         localNode={localNode}
+        hostedName={hosted ?? undefined}
         cellsStats={cellsStats}
         stageScripts={stageScripts}
         cellPopulation={cellPopulation}
@@ -2425,6 +2438,7 @@ export default function App({
               new-block brightness shockwave now belongs to NetworkColony. */}
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
+            ckbNodeLabels={ckbNodeLabels}
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
             populationGainRef={populationGainRef}
@@ -2608,6 +2622,7 @@ export default function App({
           peer={inspectedPeer}
           tip={chain.tip}
           localVersion={localNode?.version ?? ''}
+          hostedNodeLabel={hostedNodeLabel}
           linkLost={peerInspection.linkLost}
           sighting={inspectedNetSighting}
           candidacy={inspectedPeerCandidacy}
@@ -2656,6 +2671,7 @@ export default function App({
           key={selectedNode.id}
           handles={nodeInspectionHandles}
           node={selectedNode}
+          hostedNodeLabel={hostedNodeLabel}
           chain={chain}
           peers={peers}
           sighting={inspectedNetSighting}

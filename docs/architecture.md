@@ -654,11 +654,11 @@ the reorg, rebuild, and replay behavior a consumer has to handle.
 | `GET /api/enrichment/cells/:tx_hash/:output_index` | JSON | Lazy semantic detail for a selected Cell |
 | `GET /api/enrichment/transactions/:tx_hash` | JSON | Lazy origin-transaction semantics |
 | `GET /api/enrichment/peers/:node_id` | JSON | Lazy crawler sighting for one linked peer |
-| `GET /runtime-config.js` | JavaScript | CLI-injected build, galaxy, and enrichment config |
+| `GET /runtime-config.js` | JavaScript | CLI-injected build, hosted name/null, galaxy, and enrichment config |
 | Other extensionless paths | Embedded SPA | Dashboard client-side routes |
 
-- Every `/api/*` row above, the WebSocket upgrades included, is served only
-  to loopback. An `Origin` or a `Host` naming anything but `localhost`, a
+- By default every `/api/*` row above, the WebSocket upgrades included, is
+  served only to loopback. An `Origin` or a `Host` naming anything but `localhost`, a
   `*.localhost` name, an address in `127.0.0.0/8`, or `::1` is refused with
   `403 forbidden_origin` / `403 forbidden_host`; an absent `Origin` is
   allowed, because non-browser clients send none and the header cannot be
@@ -666,6 +666,14 @@ the reorg, rebuild, and replay behavior a consumer has to handle.
   LAN out but not the operator's own browser: CORS does not apply to
   WebSockets, and DNS rebinding reaches the plain routes. The SPA fallback
   and `/runtime-config.js` are public bytes and stay outside the guard.
+- `[dashboard].hosted` selects the server's explicit `PublicReadOnly` access
+  policy instead. It accepts all Host/Origin values, including anonymous and
+  cross-origin WS readers of the public node telemetry. The default
+  `LoopbackOnly` policy continues to protect local deployments. Both policies
+  cover all API routes together; forwarded headers do not select the policy.
+  Public HTTPS transport, connection/request limits and timeouts belong to
+  the same-machine reverse proxy. The SPA keeps same-origin HTTP and selects
+  WSS on HTTPS pages; this does not add wildcard CORS.
 
 The Cell data route is canonical rather than enrichment — its bytes come from
 the node, the live cell or the transaction that created a spent one, so it
@@ -1206,7 +1214,10 @@ persistence-shape change must bump `SCHEMA_VERSION` and state whether
 
 The server binds only `127.0.0.1:<port>`. Defaults are
 `http://localhost:8114` for CKB RPC, port 7001 for the dashboard, and automatic
-browser opening; `--no-open` overrides the latter.
+browser opening; `--no-open` overrides the latter. An optional public service
+name in `[dashboard].hosted` suppresses browser opening, including an explicit
+`open = true`, and enables public API access behind a same-machine HTTPS
+reverse proxy. See [Configuration](configuration.md#hosted-dashboards).
 
 ### 13.2 Configuration Merge
 
@@ -1222,7 +1233,7 @@ sections are:
 
 - `[ckb]`: RPC URL;
 - `[ckbadger]`: optional API URL and maximum accepted lag;
-- `[dashboard]`: port and browser-open behavior;
+- `[dashboard]`: port, optional hosted name, and local browser-open behavior;
 - `[galaxy]`: profile and recent-link cap;
 - `[galaxy.topology]`: neighbor K, maximum edge length, and maximum hops;
 - `[galaxy.pulses]`: link ring, per-link pulses, parent fan-out, and active
@@ -1257,6 +1268,12 @@ for HUD and diagnostic display. Vite may run separately during development,
 but it must consume the same HTTP/WS contract; development must not acquire a
 browser-only data path.
 
+The runtime payload includes `hosted: string | null`; the CLI normalizes
+the file's `false | string` setting and also configures the adapter's node
+label through `with_node`, keeping the existing `ckb:local` identity. Node
+registration updates restored labels without changing the persistence schema.
+Refresh existing pages after changing deployment mode or name.
+
 ## 14. Correctness, Failure, and Security Boundaries
 
 | Scenario | Behavior |
@@ -1272,13 +1289,19 @@ browser-only data path.
 | Web Worker failure | Record diagnostics and perform a correct full topology build on the main thread |
 | High-throughput replay | Suppress pulses, clear rings, and coalesce display settlement and GC at the end |
 
-The local read-only boundary is layered: the CLI listens on loopback; the CKB
+The read-only boundary is layered: the CLI listens on loopback; the CKB
 adapter exposes only read behavior; the server provides snapshots, streams,
 and optional GET detail; ckbadger cannot write canonical entity or Cell state;
 only validated composition may update the display plane through an internal
 mutation; and external semantic records are anchored and bounded. If the
 product ever requires transaction submission, it should be designed as a new,
 explicit security domain rather than appended to the existing adapter.
+
+Local mode restricts API Host/Origin to loopback. Hosted mode deliberately
+publishes node telemetry through the operator's HTTPS proxy. Source probes
+publish diagnostic summaries and log underlying exceptions at their source;
+lazy detail routes do the same, so private upstream URLs do not become public
+error text. The source trait documents this requirement for future adapters.
 
 ## 15. Cross-language and Cross-layer Contracts
 
@@ -1440,9 +1463,10 @@ complete live-cell set, an indexer, a transaction submitter — is
   stall; counters and warnings make that path observable.
 - Exit persistence is best-effort. An abnormal process stop may lose recent
   derived state but cannot lose chain data; the next run can rebuild from CKB.
-- The server binds locally and has no public-deployment authentication or
-  multi-tenant design. A changed deployment boundary requires a separate
-  security design.
+- The server binds locally. Explicit hosted mode publishes the read-only
+  dashboard through a same-machine HTTPS proxy, which owns public admission
+  limits. There is no authentication or tenant isolation, and no direct
+  external bind or arbitrary subpath hosting configuration.
 - Current schema policy favors purge and rebuild over long-lived migration
   layers for stale local state.
 

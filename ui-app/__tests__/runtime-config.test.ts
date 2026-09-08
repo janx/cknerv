@@ -13,7 +13,24 @@ import {
   resolveBuildVersion,
   buildCommitHref,
   CKNERV_REPOSITORY_URL,
+  resolveHosted,
 } from '../src/runtime-config';
+
+describe('hosted runtime config', () => {
+  it('defaults to local when an older or development runtime omits hosted', () => {
+    expect(resolveHosted({})).toBeNull();
+    expect(resolveHosted({ hosted: null })).toBeNull();
+  });
+
+  it('reads the Rust payload without changing the operator-provided name', () => {
+    const cases = JSON.parse(readFileSync(resolve(
+      __dirname, '..', '..', 'tests', 'fixtures', 'runtime_config_hosted.json',
+    ), 'utf8'));
+    for (const { runtime } of cases) {
+      expect(resolveHosted(runtime)).toBe(runtime.hosted);
+    }
+  });
+});
 
 describe('constants pinned to a twin elsewhere', () => {
   it('the bundled reservoir default is exactly what the renderer can hold', () => {

@@ -8,8 +8,8 @@ contract is
 The CLI serves the API and embedded SPA on one localhost port. Non-API paths
 fall back to the SPA.
 
-Every `/api/*` route, the WebSocket upgrades included, is served only to
-loopback. A request whose `Origin` header names anything but `localhost`, a
+By default every `/api/*` route, the WebSocket upgrades included, is served
+only to loopback. A request whose `Origin` header names anything but `localhost`, a
 `*.localhost` name, an address in `127.0.0.0/8`, or `::1` is answered
 `403 {"error":"forbidden_origin"}`; one whose `Host` header names anything
 else is answered `403 {"error":"forbidden_host"}`. Browsers apply no CORS to
@@ -19,6 +19,20 @@ A client that sends no `Origin` at all — curl, a monitor, the crate's own
 smoke tests — is unaffected, and so is the Vite dev proxy, which rewrites the
 host to `localhost:7001` and forwards `Origin: http://localhost:5173`. The
 SPA bytes and `/runtime-config.js` are outside the guard.
+
+Setting `[dashboard].hosted` to a service name explicitly publishes all these
+read-only routes. Public Host/Origin headers and absent Origin are accepted,
+including cross-origin WS readers; there is no authentication or wildcard
+HTTP CORS. The listener stays on loopback behind a same-machine HTTPS reverse
+proxy. See [hosted dashboards](configuration.md#hosted-dashboards).
+
+`/runtime-config.js` assigns `{buildVersion, hosted, galaxy, enrichment}` to
+`window.__CKNERV_RUNTIME_CONFIG__`. `hosted` is the configured name or `null`,
+and it does not contain the RPC endpoint. The registered node keeps ID
+`ckb:local` and carries that name in its existing `label` field. Renaming it
+uses the existing registration/upsert path; snapshot and WS shapes stay the
+same. Upstream detail failures keep their status and error code with a public
+diagnostic summary; underlying exception details stay in server logs.
 
 | Method | Path | Shape |
 |---|---|---|

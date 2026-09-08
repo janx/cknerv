@@ -24,6 +24,34 @@ to `cknerv-adapter-ckb`, `cknerv-server`, or the SPA.
 ./target/release/cknerv run --no-open
 ```
 
+## Hosted mode
+
+Use a separate workdir and the freshly built release binary. Configure
+`[dashboard].hosted = "Little Otter"`, a free dashboard port, and the CKB
+RPC endpoint. Start without `--no-open`: hosted mode must suppress browser
+opening even if the file has `open = true`.
+
+- Confirm `/runtime-config.js` contains the name and uses `Cache-Control:
+  no-cache`. The chain snapshot's `ckb:local` row has the same `label`.
+- Open the service through a same-machine HTTPS reverse proxy at the domain
+  root, with normal public Host/Origin headers and WS upgrade forwarding.
+  Check the [proxy example](../../docs/configuration.md#hosted-dashboards).
+- The page title and node anchor preserve the name's case; inspect the node
+  and a peer. `NODE`, `AT NODE HEAD`, and `NODE PING` refer to service-node
+  observations. Also try a long Unicode name; the anchor is bounded and
+  the card keeps the full name. Picking still selects `ckb:local`.
+- Check chain, cells and (when enabled) semantics streams use WSS, show live
+  data, and reconnect after a short interruption. Multiple browsers share
+  the same source data and have independent presentation controls.
+- Confirm configured proxy request/connection limits reject excess traffic.
+  Simulated upstream failures show summaries, with details in server logs.
+- Stop with SIGTERM, confirm state is saved and the port is released. Restart
+  with a second name, then with `hosted = false`, refreshing the page each
+  time. The restored node keeps its ID, metadata and tip; no purge is needed.
+- Back in local mode, public Host/Origin requests must return 403 for both
+  HTTP and WS, while loopback requests still work. Verify Ctrl-C also saves
+  and releases the port.
+
 ## Endpoint shapes
 
 cknerv-server exposes two chain-generic snapshot endpoints. Verify the JSON

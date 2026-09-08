@@ -3941,7 +3941,7 @@ const READOUT_LABEL_SITES: ReadonlyArray<{
     surface: "the sync ladder's own rung",
     file: 'PeerLinkCard.tsx',
     within: ['en="SYNC LADDER"', 'data-peer-probe-sync-state'],
-    renders: 'LOCAL',
+    renders: "{hostedNodeLabel === undefined ? 'LOCAL' : 'NODE'}",
   },
   {
     surface: "the sync ladder's peer rung",

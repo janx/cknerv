@@ -34,6 +34,7 @@ pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");
 #[serde(rename_all = "camelCase")]
 struct RuntimeConfigPayload<'a> {
     build_version: &'a str,
+    hosted: Option<&'a str>,
     galaxy: &'a ResolvedGalaxyConfig,
     enrichment: RuntimeEnrichmentPayload<'a>,
 }
@@ -50,9 +51,11 @@ pub fn runtime_config_body(
     build_version: &str,
     galaxy: &ResolvedGalaxyConfig,
     enrichment_source: Option<&str>,
+    hosted: Option<&str>,
 ) -> String {
     let payload = serde_json::to_string(&RuntimeConfigPayload {
         build_version,
+        hosted,
         galaxy,
         enrichment: RuntimeEnrichmentPayload {
             enabled: enrichment_source.is_some(),
@@ -72,6 +75,7 @@ pub fn runtime_config_response(
     build_version: &str,
     galaxy: ResolvedGalaxyConfig,
     enrichment_source: Option<&str>,
+    hosted: Option<&str>,
 ) -> Response {
     (
         StatusCode::OK,
@@ -82,7 +86,7 @@ pub fn runtime_config_response(
             ),
             (header::CACHE_CONTROL, "no-cache"),
         ],
-        runtime_config_body(build_version, &galaxy, enrichment_source),
+        runtime_config_body(build_version, &galaxy, enrichment_source, hosted),
     )
         .into_response()
 }
@@ -152,6 +156,7 @@ mod tests {
             "61922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
             Some("ckbadger"),
+            None,
         );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
@@ -167,9 +172,40 @@ mod tests {
             "61\"922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
             None,
+            None,
         );
 
         assert!(body.contains("\"buildVersion\":\"61\\\"922ba@20260630\""));
+    }
+
+    #[test]
+    fn hosted_runtime_payload_matches_the_browser_fixture() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/runtime_config_hosted.json"
+        )))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let file = toml::from_str(case["toml"].as_str().unwrap()).unwrap();
+            let resolved = crate::config::resolve(None, None, false, None, &file).unwrap();
+            let body =
+                runtime_config_body("dev", &resolved.galaxy, None, resolved.hosted.as_deref());
+            let json = body
+                .split_once(" = ")
+                .unwrap()
+                .1
+                .strip_suffix(";\n})();\n")
+                .unwrap();
+            let payload: serde_json::Value = serde_json::from_str(json).unwrap();
+            assert_eq!(payload["hosted"], case["runtime"]["hosted"]);
+            let keys: Vec<_> = payload
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(keys, ["buildVersion", "enrichment", "galaxy", "hosted"]);
+        }
     }
 
     #[test]
@@ -177,6 +213,7 @@ mod tests {
         let response = runtime_config_response(
             "61922ba@20260630",
             crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
+            None,
             None,
         );
 

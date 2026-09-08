@@ -33,8 +33,9 @@
 //!     output data, read from chain truth rather than from an index, and
 //!     immutable by outpoint.
 //!
-//! Every one of them is served only to loopback origins and hosts; see
-//! `browser_guard` for what a listener on `127.0.0.1` alone does not stop.
+//! Routes default to loopback origins and hosts. A host binary can explicitly
+//! publish them with [`BrowserAccessPolicy::PublicReadOnly`]; see
+//! `browser_guard` for what a loopback listener alone does not stop.
 
 pub mod adapter;
 mod browser_guard;
@@ -51,6 +52,7 @@ pub mod state;
 pub mod ws;
 
 pub use adapter::Adapter;
+pub use browser_guard::BrowserAccessPolicy;
 pub use cell_data::{CellDataReader, CellOutputData, CELL_DATA_IN_FLIGHT, CELL_DATA_MAX_BYTES};
 pub use enrichment::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 pub use persistence::{peek_restored_chain_cursor, peek_restored_tip, RestoredChainCursor};

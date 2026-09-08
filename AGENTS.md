@@ -93,9 +93,11 @@ For any non-trivial task summary or PR description, use this shape:
 
 ## Development Status
 
-This is an actively developed project (workspace version 1.0.0), not a hosted
-production service. Derived state can be purged and rebuilt from the configured
-CKB node. Prefer simple, correct schema and projection design over
+This is an actively developed project (workspace version 1.0.0). Local mode
+is the default; `[dashboard].hosted` explicitly enables public read-only
+viewing through an operator-managed HTTPS reverse proxy. The API has no
+authentication or tenant isolation. Derived state can be purged and rebuilt
+from the configured CKB node. Prefer simple, correct schema and projection design over
 compatibility layers for stale local state. If a state shape changes
 incompatibly, bump the persistence schema, document whether
 `cknerv purge --confirm` is needed, and test bad-file/schema-mismatch behavior.

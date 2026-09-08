@@ -35,6 +35,37 @@ pub struct CkbSection {
 pub struct DashboardSection {
     pub port: Option<u16>,
     pub open: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_hosted")]
+    pub hosted: Option<String>,
+}
+
+/// Normalize the file-only `false | string` spelling before any consumer
+/// chooses a display name or access policy. TOML has no null literal.
+fn deserialize_hosted<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::{de::Error, Deserialize};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum HostedValue {
+        Disabled(bool),
+        Name(String),
+    }
+    const MESSAGE: &str =
+        "cknerv.toml [dashboard] hosted must be false or a nonempty, single-line name";
+    match HostedValue::deserialize(deserializer).map_err(|_| D::Error::custom(MESSAGE))? {
+        HostedValue::Disabled(false) => Ok(None),
+        HostedValue::Name(name)
+            if !name.trim().is_empty()
+                && !name
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')) =>
+        {
+            Ok(Some(name.trim().to_string()))
+        }
+        _ => Err(D::Error::custom(MESSAGE)),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -120,6 +151,8 @@ pub struct ResolvedConfig {
     pub rpc_url: Url,
     pub port: u16,
     pub open: bool,
+    /// Public dashboard name. The observed node keeps its stable identity.
+    pub hosted: Option<String>,
     /// Optional one-run hard limit for Cell hydration. `None` uses the
     /// target-driven policy (the built-in live-cell reservoir target).
     pub backfill_blocks: Option<u64>,
@@ -191,7 +224,8 @@ pub fn load(workdir: &Path) -> anyhow::Result<FileConfig> {
 
 /// Merge CLI overrides over the file config over built-in defaults.
 /// `cli_no_open` is the bare `--no-open` flag: true forces `open=false`;
-/// false defers to the file's `open` (or the default `true`).
+/// false defers to the file's `open` (or the default `true`) in local mode.
+/// Hosted mode always suppresses browser opening on the service machine.
 pub fn resolve(
     cli_rpc: Option<Url>,
     cli_port: Option<u16>,
@@ -208,11 +242,8 @@ pub fn resolve(
         },
     };
     let port = cli_port.or(file.dashboard.port).unwrap_or(DEFAULT_PORT);
-    let open = if cli_no_open {
-        false
-    } else {
-        file.dashboard.open.unwrap_or(true)
-    };
+    let hosted = file.dashboard.hosted.clone();
+    let open = !cli_no_open && hosted.is_none() && file.dashboard.open.unwrap_or(true);
     let profile = file.galaxy.profile.unwrap_or(GalaxyProfile::Auto);
     // Historical hydration is target-driven by the built-in reservoir
     // target. The CLI
@@ -269,6 +300,7 @@ pub fn resolve(
         rpc_url,
         port,
         open,
+        hosted,
         backfill_blocks,
         ckbadger,
         galaxy,
@@ -293,7 +325,11 @@ rpc_url = "http://localhost:8114"
 [dashboard]
 # HTTP/WS port for the dashboard SPA.
 port = 7001
-# Auto-open the browser on start (--no-open overrides).
+# Public read-only service name, e.g. hosted = "Little Otter".
+# false (or omission) keeps loopback-only access. Publish hosted mode through
+# a same-machine HTTPS reverse proxy; the listener stays on 127.0.0.1.
+hosted = false
+# Auto-open in local mode only (--no-open overrides; hosted always disables).
 open = true
 
 [galaxy]
@@ -520,6 +556,59 @@ mod tests {
     }
 
     #[test]
+    fn hosted_config_matches_shared_runtime_cases_and_keeps_cli_priority() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/runtime_config_hosted.json"
+        )))
+        .unwrap();
+        for case in cases.as_array().unwrap() {
+            let file: FileConfig = toml::from_str(case["toml"].as_str().unwrap()).unwrap();
+            let resolved = resolve(None, None, false, None, &file).unwrap();
+            assert_eq!(
+                serde_json::json!(resolved.hosted),
+                case["runtime"]["hosted"]
+            );
+            assert_eq!(serde_json::json!(resolved.open), case["open"]);
+
+            let overridden = resolve(
+                Some(Url::parse("http://cli:8114").unwrap()),
+                Some(17001),
+                true,
+                Some(7),
+                &file,
+            )
+            .unwrap();
+            assert_eq!(overridden.rpc_url.as_str(), "http://cli:8114/");
+            assert_eq!(overridden.port, 17001);
+            assert_eq!(overridden.backfill_blocks, Some(7));
+            assert!(!overridden.open);
+            assert_eq!(overridden.hosted, resolved.hosted);
+        }
+    }
+
+    #[test]
+    fn hosted_rejects_invalid_types_and_unusable_names() {
+        for raw in [
+            "true",
+            "12",
+            "[]",
+            "{}",
+            "\"\"",
+            "\"   \"",
+            "\"a\\nb\"",
+            "\"a\\tb\"",
+            "\"a\\u0000b\"",
+            "\"a\\u2028b\"",
+            "\"a\\u2029b\"",
+        ] {
+            let error = toml::from_str::<FileConfig>(&format!("[dashboard]\nhosted = {raw}"))
+                .expect_err(raw);
+            assert!(error.to_string().contains("[dashboard] hosted"), "{error}");
+        }
+    }
+
+    #[test]
     fn template_parses_to_documented_defaults() {
         assert!(!CKNERV_TOML_TEMPLATE.contains("[backfill]"));
         assert!(CKNERV_TOML_TEMPLATE.contains(
@@ -530,6 +619,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
+        assert!(r.hosted.is_none());
         assert_eq!(r.backfill_blocks, None);
         assert!(r.ckbadger.is_none());
         assert_eq!(r.galaxy.cell_cap, 50_000);

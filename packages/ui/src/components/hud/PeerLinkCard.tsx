@@ -79,6 +79,7 @@ export interface PeerLinkCardProps {
   tip: number;
   /** Our own client version — the reference every mismatch is judged from. */
   localVersion: string;
+  hostedNodeLabel?: string;
   /** Spatial fan direction chosen by the scene-anchor placement solver. */
   layoutSide?: PeerLinkLayoutSide;
   /** The peer has left `peers[]`; the card is showing a retained snapshot.
@@ -447,6 +448,7 @@ export default function PeerLinkCard({
   peer,
   tip,
   localVersion,
+  hostedNodeLabel,
   layoutSide = 'left',
   linkLost = false,
   sighting,
@@ -705,8 +707,8 @@ export default function PeerLinkCard({
           }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-            <span style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
-              LOCAL
+            <span title={hostedNodeLabel} style={{ fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.micro, letterSpacing: 1.4, color: HUD_COLORS.dim }}>
+              {hostedNodeLabel === undefined ? 'LOCAL' : 'NODE'}
             </span>
             <span data-peer-probe-sync-local style={{ marginLeft: 'auto', fontSize: HUD_TYPE.value, color: HUD_COLORS.cyanInk }}>
               #{blocks(instrument.localTip)}
@@ -816,6 +818,7 @@ export default function PeerLinkCard({
       {sighting ? (
         <PeerSightingPlate
           {...sighting}
+          hostedNodeLabel={hostedNodeLabel}
           module="LINK·05"
           nowMs={linkLost ? uptimeEpochMs : undefined}
           liveVersion={peer.version}
