@@ -58,8 +58,8 @@ describe('constants pinned to a twin elsewhere', () => {
 
 describe('resolveBuildVersion', () => {
   it('returns a configured nonblank build version', () => {
-    expect(resolveBuildVersion({ buildVersion: ' 61922ba@20260630 ' })).toBe(
-      '61922ba@20260630',
+    expect(resolveBuildVersion({ buildVersion: ' 1.0.1@61922ba ' })).toBe(
+      '1.0.1@61922ba',
     );
   });
 
@@ -134,7 +134,7 @@ describe('resolveGalaxyConfig', () => {
 
 describe('buildCommitHref', () => {
   it('deep-links to the exact commit when the version carries a hash', () => {
-    expect(buildCommitHref('61922ba@20260630')).toBe(
+    expect(buildCommitHref('1.0.1@61922ba')).toBe(
       `${CKNERV_REPOSITORY_URL}/commit/61922ba`,
     );
   });

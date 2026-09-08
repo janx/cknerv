@@ -1079,12 +1079,12 @@ describe('HudOverlay', () => {
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
       />,
     );
     const build = container.querySelector('[data-build-chip]');
-    expect(build?.getAttribute('aria-label')).toBe('61922ba@20260630');
-    expect(build?.textContent).toBe('BUILD61922ba');
+    expect(build?.getAttribute('aria-label')).toBe('1.0.1@61922ba');
+    expect(build?.textContent).toBe('BUILD1.0.1@61922ba');
   });
 
   it('passes product-owned actions through the shared top bar slot', () => {

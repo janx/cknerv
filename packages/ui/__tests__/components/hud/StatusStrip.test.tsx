@@ -94,14 +94,14 @@ describe('StatusStrip', () => {
     render(
       <StatusStrip
         uptimeMs={0}
-        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
       />,
     );
-    const link = screen.getByRole('link', { name: '61922ba@20260630' });
+    const link = screen.getByRole('link', { name: '1.0.1@61922ba' });
     expect(link.getAttribute('href')).toBe('https://github.com/janx/cknerv/commit/61922ba');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noreferrer');
-    expect(link.textContent).toBe('BUILD61922ba');
+    expect(link.textContent).toBe('BUILD1.0.1@61922ba');
   });
 
   it('omits the build link when no build prop is given', () => {
@@ -114,13 +114,13 @@ describe('StatusStrip', () => {
     const { container } = render(
       <StatusStrip
         uptimeMs={0}
-        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
         onPanelVisibilityChange={onPanelVisibilityChange}
       />,
     );
     const primary = container.querySelector('[data-status-primary]') as HTMLElement;
-    const build = screen.getByRole('link', { name: '61922ba@20260630' });
+    const build = screen.getByRole('link', { name: '1.0.1@61922ba' });
     const control = container.querySelector('[data-panel-visibility-control]') as HTMLElement;
     const toggle = screen.getByRole('button', {
       name: 'Configure HUD panels, 4 of 4 visible',
@@ -189,7 +189,7 @@ describe('StatusStrip', () => {
     const { container } = render(
       <StatusStrip
         uptimeMs={3_000}
-        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
         onPanelVisibilityChange={() => {}}
         compact
@@ -202,7 +202,7 @@ describe('StatusStrip', () => {
     expect(root.style.display).toBe('grid');
     expect(root.style.height).toBe('64px');
     expect(controls.style.overflowX).toBe('auto');
-    expect(screen.getByRole('link', { name: '61922ba@20260630' }).textContent).toBe('BUILD61922ba');
+    expect(screen.getByRole('link', { name: '1.0.1@61922ba' }).textContent).toBe('BUILD1.0.1@61922ba');
     expect(screen.getByRole('button', {
       name: 'Configure HUD panels, 4 of 4 visible',
     })).not.toBeNull();
@@ -215,7 +215,7 @@ describe('StatusStrip', () => {
     const { container } = render(
       <StatusStrip
         uptimeMs={3_000}
-        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
         onPanelVisibilityChange={() => {}}
         cellCount={5_000}
@@ -570,7 +570,7 @@ describe('StatusStrip', () => {
 describe('StatusStrip as a probe', () => {
   const probeProps = {
     uptimeMs: 0,
-    build: { version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' },
+    build: { version: '1.0.1@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' },
     panelControls,
     onPanelVisibilityChange: () => {},
     cellCount: 5_000,

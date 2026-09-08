@@ -90,13 +90,10 @@ function UptimeReadout({ uptimeMs, sinceMs }: { uptimeMs: number; sinceMs?: numb
   return <>{text}</>;
 }
 
-// Build identity sits on the same angular rail as the other HUD modules. The
-// date suffix remains available in the tooltip; the commit-sized head is the
-// useful, scannable identifier in the bar itself.
+// Build identity sits on the same angular rail as the other HUD modules and
+// shows the full package version and commit hash.
 function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boolean }) {
   const [hot, setHot] = useState(false);
-  const at = build.version.indexOf('@');
-  const head = at >= 0 ? build.version.slice(0, at) : build.version;
   return (
     <a
       href={build.href}
@@ -112,8 +109,6 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
       style={{
         ...NAV_MODULE_STYLE,
         gap: 5,
-        maxWidth: compact ? 86 : 112,
-        overflow: 'hidden',
         height: 22,
         padding: compact ? '0 6px' : '0 8px',
         borderLeftColor: rgba(HUD_COLORS.orange, hot ? 0.56 : 0.24),
@@ -126,7 +121,7 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
       }}
     >
       <span className="cknerv-build-label" style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>BUILD</span>
-      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}>{head}</span>
+      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: `color ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}, text-shadow ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}` }}>{build.version}</span>
     </a>
   );
 }

@@ -1279,8 +1279,9 @@ the Rust binary. At runtime, axum serves the API, `runtime-config.js`, and the
 SPA fallback on one port. Distribution therefore needs only one CLI binary and
 a work directory.
 
-The build version combines a seven-character git hash with that commit's date
-for HUD and diagnostic display. Vite may run separately during development,
+The build version combines the Cargo package version with a seven-character
+git hash as `<semver>@<hash>` (for example, `1.0.1@61922ba`) for HUD and
+diagnostic display. Vite may run separately during development,
 but it must consume the same HTTP/WS contract; development must not acquire a
 browser-only data path.
 

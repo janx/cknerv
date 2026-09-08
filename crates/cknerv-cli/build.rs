@@ -26,20 +26,14 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn emit_build_version(manifest_dir: &Path) -> anyhow::Result<()> {
-    let commit_date = git_stdout(
-        manifest_dir,
-        &["show", "-s", "--date=format:%Y%m%d", "--format=%cd", "HEAD"],
-    )?;
+    let package_version = env::var("CARGO_PKG_VERSION")?;
     let commit_hash = git_stdout(manifest_dir, &["rev-parse", "--short=7", "HEAD"])?;
 
-    if commit_date.is_empty() {
-        anyhow::bail!("git show --format=%cd HEAD returned an empty commit date");
-    }
     if commit_hash.is_empty() {
         anyhow::bail!("git rev-parse --short=7 HEAD returned an empty commit hash");
     }
 
-    let build_version = build_version_format::format_build_version(&commit_date, &commit_hash);
+    let build_version = build_version_format::format_build_version(&package_version, &commit_hash);
     println!("cargo:rustc-env=CKNERV_BUILD_VERSION={build_version}");
 
     Ok(())

@@ -153,14 +153,14 @@ mod tests {
     #[test]
     fn runtime_config_body_assigns_build_version() {
         let body = runtime_config_body(
-            "61922ba@20260630",
+            "1.0.1@61922ba",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
             Some("ckbadger"),
             None,
         );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
-        assert!(body.contains("\"buildVersion\":\"61922ba@20260630\""));
+        assert!(body.contains("\"buildVersion\":\"1.0.1@61922ba\""));
         assert!(body.contains("\"profile\":\"devnet\""));
         assert!(body.contains("\"neighborK\":5"));
         assert!(body.contains("\"enrichment\":{\"enabled\":true,\"source\":\"ckbadger\"}"));
@@ -169,13 +169,13 @@ mod tests {
     #[test]
     fn runtime_config_body_json_escapes_build_version() {
         let body = runtime_config_body(
-            "61\"922ba@20260630",
+            "1.0.1@61\"922ba",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
             None,
             None,
         );
 
-        assert!(body.contains("\"buildVersion\":\"61\\\"922ba@20260630\""));
+        assert!(body.contains("\"buildVersion\":\"1.0.1@61\\\"922ba\""));
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn runtime_config_response_sets_javascript_headers() {
         let response = runtime_config_response(
-            "61922ba@20260630",
+            "1.0.1@61922ba",
             crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
             None,
             None,
