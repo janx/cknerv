@@ -426,7 +426,22 @@ function EnrichmentChip({ source, compact = false }: {
       }}
     >
       <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 5px ${color}` }} />
-      <span style={{ color: HUD_COLORS.dim }}>{source.source.toUpperCase()}</span>
+      {source.source === 'ckbadger' ? (
+        <a
+          className="cknerv-hud-link"
+          href="https://ckbadger.web5.info/"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open ckbadger.web5.info in a new tab"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{ display: 'inline-flex', alignItems: 'center', height: '100%', pointerEvents: 'auto' }}
+        >
+          CKBADGER
+        </a>
+      ) : (
+        <span style={{ color: HUD_COLORS.dim }}>{source.source.toUpperCase()}</span>
+      )}
       <span style={{ color, textShadow: `0 0 6px ${rgba(color, 0.34)}` }}>{source.status.toUpperCase()}{lag}</span>
     </span>
   );

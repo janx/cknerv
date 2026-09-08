@@ -984,6 +984,9 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
+    + `\n.cknerv-hud-link{color:${HUD_COLORS.dim};text-decoration:underline;text-decoration-color:${rgba(HUD_COLORS.cyanWire, 0.25)};text-underline-offset:3px}`
+    + `\n.cknerv-hud-link:hover,.cknerv-hud-link:focus-visible{color:${HUD_COLORS.cyanInk};text-decoration-color:currentColor}`
+    + `\n.cknerv-hud-link:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:2px}`
     // THE FOCUS RING IS THE HUD'S, ON EVERY BUTTON.
     //
     // The class rule below it covered the four strip controls and the Jukebox;

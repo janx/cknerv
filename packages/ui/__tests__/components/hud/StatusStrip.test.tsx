@@ -259,6 +259,8 @@ describe('StatusStrip', () => {
     expect(performance.querySelector('[data-render-quality-control]')).not.toBeNull();
     expect(context.style.overflowX).toBe('auto');
     expect(context.textContent).toContain('CKBADGERCONNECTING');
+    expect(within(context).getByRole('link', { name: 'CKBADGER' }).getAttribute('href'))
+      .toBe('https://ckbadger.web5.info/');
   });
 
   it('shows optional indexed-context freshness without changing chain status', () => {
@@ -284,6 +286,29 @@ describe('StatusStrip', () => {
     expect(chip.textContent).toContain('CKBADGERSTALE · LAG 18');
     expect(chip.textContent).not.toContain('↓');
     expect(container.textContent).toContain('NOMINAL');
+    const sourceLink = within(chip).getByRole('link', { name: 'CKBADGER' });
+    expect(sourceLink.getAttribute('href')).toBe('https://ckbadger.web5.info/');
+    expect(sourceLink.getAttribute('target')).toBe('_blank');
+    expect(sourceLink.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('keeps source navigation out of canvas pointer and click handlers', () => {
+    const onPointerDown = vi.fn();
+    const onClick = vi.fn();
+    render(
+      <div onPointerDown={onPointerDown} onClick={onClick}>
+        <StatusStrip
+          level="nominal"
+          enrichmentSource={{ source: 'ckbadger', status: 'ready', capabilities: [] }}
+          compact
+        />
+      </div>,
+    );
+    const link = screen.getByRole('link', { name: 'CKBADGER' });
+    fireEvent.pointerDown(link);
+    fireEvent.click(link);
+    expect(onPointerDown).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it('renders product-owned actions without coupling them to status semantics', () => {

@@ -39,10 +39,16 @@ describe('HudOverlay wiring', () => {
     // that switch rather than unconditionally — and it UNMOUNTS, because a
     // player switched off should not still be playing.
     expect(APP_SOURCE).toContain(
-      '{soundVisible ? <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} /> : null}',
+      '{soundVisible ? (\n        <Jukebox',
     );
     expect(APP_SOURCE).toContain('onSoundVisibleChange={setSoundVisible}');
     expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox');
+  });
+
+  it('keeps the site link outside Canvas and independent of the sound module', () => {
+    expect(APP_SOURCE).toContain('closedActions={<CanvasSiteLink />}');
+    expect(APP_SOURCE).toContain(') : <CanvasSiteLink floating />}');
+    expect(APP_SOURCE.indexOf('<CanvasSiteLink')).toBeLessThan(APP_SOURCE.indexOf('<Canvas\n'));
   });
 
   it('routes each resolved identity proof from the scene inspector to the matching galaxy Cell', () => {

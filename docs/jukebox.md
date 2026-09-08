@@ -25,6 +25,10 @@ once, its equalizer idles slowly and ticks with each arriving block — the one
 chain-driven detail in the whole feature. Opening the Jukebox retires that
 motion for the rest of the page's life, as does `prefers-reduced-motion`.
 
+The `WEB5.INFO` link sits to the chip's right. It hides while the Jukebox is
+open and returns when closed; disabling the sound module leaves the link in
+the bottom-right corner.
+
 ## Opening and closing
 
 Clicking the chip replaces it with SoundCloud's official HTML5 player and

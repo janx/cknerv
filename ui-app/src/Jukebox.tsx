@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from 'react';
 import { HUD_COLORS, HUD_MOTION, rgba } from '@cknerv/ui';
 import {
@@ -188,8 +189,9 @@ const floatingStyle: CSSProperties = {
   bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
   zIndex: 22,
   display: 'inline-flex',
-  alignItems: 'flex-end',
+  alignItems: 'center',
   justifyContent: 'flex-end',
+  gap: 12,
   pointerEvents: 'auto',
   fontFamily: MONO,
 };
@@ -396,9 +398,11 @@ export interface JukeboxProps {
    *  breathes with the chain rather than on a decorative clock of its own.
    *  Optional — the Jukebox is complete without it. */
   blockPulseAtMs?: number;
+  /** Content to the right of the closed chip, unmounted while the player is open. */
+  closedActions?: ReactNode;
 }
 
-export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
+export default function Jukebox({ blockPulseAtMs, closedActions }: JukeboxProps) {
   const [open, setOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] =
     useState<JukeboxTrackId>(DEFAULT_JUKEBOX_TRACK_ID);
@@ -731,6 +735,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
           </span>
         </button>
       ) : null}
+      {!open ? closedActions : null}
 
       {open ? (
         <section

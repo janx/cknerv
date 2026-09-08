@@ -147,6 +147,7 @@ import type {
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
+import CanvasSiteLink from './CanvasSiteLink';
 import { ingestCellsCacheIntoField } from './cell-field-hook';
 import { connectNodeHealth } from './connect';
 import {
@@ -2316,7 +2317,12 @@ export default function App({
           UNMOUNTS rather than hiding, which is what OFF means everywhere else
           in that menu — and for a music player it is also the honest reading:
           a chip you have switched off should not still be playing. */}
-      {soundVisible ? <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} /> : null}
+      {soundVisible ? (
+        <Jukebox
+          blockPulseAtMs={cellsCache.lastPulseAtMs}
+          closedActions={<CanvasSiteLink />}
+        />
+      ) : <CanvasSiteLink floating />}
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
       {forceRenderStats ? <RenderStatsPanel /> : null}
