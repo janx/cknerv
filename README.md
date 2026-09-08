@@ -88,19 +88,25 @@ never submits transactions.
 
 ## Work Directory Structure
 
-`cknerv init -C <workdir>` creates the local runtime workspace:
+`cknerv init -C <workdir>` creates `cknerv.toml` and `data/`. Running cknerv
+adds the derived state files:
 
 ```text
 <workdir>/
 ├── cknerv.toml                     # Sole local config file
 └── data/
-    ├── cknerv-state.json           # Derived chain/projection state, written on clean shutdown
+    ├── cknerv-state.json           # Derived chain/projection checkpoint
     └── galaxy-composition.json     # With ckbadger only: the curated stage, remembered across runs
 ```
 
-Both files hold derived data. If either is stale, corrupt, or no longer
-matches the current schema, delete it with `cknerv purge --confirm` and let
-cknerv rehydrate from the live node.
+`cknerv-state.json` is written when boot replay completes and on graceful
+shutdown (SIGINT or SIGTERM). Unreadable, corrupt, or older-schema state is
+rebuilt automatically on the next launch. To force a fresh hydration, stop
+cknerv and run `cknerv purge -C <workdir> --confirm`; this clears all derived
+`data/` contents while preserving `cknerv.toml`. See
+[persistence and local state](docs/development.md#persistence-and-local-state)
+for restore eligibility and the current limitations on backups when running
+an older binary.
 
 ## Considering
 

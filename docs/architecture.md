@@ -1184,22 +1184,38 @@ on two switches is how a boot ends up half restored and half rebuilt.
 ### 12.3 Restore Eligibility and Bad Files
 
 The CLI first performs a lightweight read of the saved tip, recent hashes, and
-`hydrated_cell_target`. It restores the full state only when there is no
-one-shot `--backfill-blocks` override and the saved target covers the current
-fixed 50k target. Otherwise it starts from empty derived state and rehydrates,
-so an old small window is never presented as a complete reservoir.
+`hydrated_cell_target`. It restores the full state only when the schema matches
+the running build, there is no one-shot `--backfill-blocks` override, and the
+saved target covers the current fixed 50k target. Otherwise it starts from
+empty derived state and rehydrates, so an old small window is never presented
+as a complete reservoir.
 
 After restore, the adapter validates saved recent hashes against the node to
 detect an offline reorg before choosing forward catch-up, exact reorg, or
 rebuild. A saved height alone is not trusted as proof of the old main chain.
 
-A missing file is a normal empty boot. Parse failure or an older schema logs a
-warning, discards the bad file, and rebuilds. A schema *newer* than the running
-build is never discarded: it is renamed beside itself as
-`cknerv-state.json.schema<N>.bak` and the boot starts empty, so an older binary
-run once cannot destroy what a newer one wrote. An incompatible
-persistence-shape change must bump `SCHEMA_VERSION` and state whether
-`cknerv purge --confirm` is required.
+A missing file is a normal empty boot. Unreadable, corrupt, or older-schema
+state also leads to an automatic rebuild; schema-v4 state needs no manual
+purge for a v5 launch. A successful checkpoint or shutdown save replaces the
+rejected state.
+
+The server's `persistence::load` logs read and parse failures, removes corrupt
+or older-schema files, and attempts to move a readable newer-schema file to
+`cknerv-state.json.schema<N>.bak`. The composition reader applies the same
+policy to `galaxy-composition.json`, with its own schema number. These backups
+are attempted only when the respective reader runs.
+
+**Current CLI limitation:** a schema mismatch makes the cursor precheck return
+no cursor, so the CLI sets `restore_persisted = false`. That skips
+`persistence::load` and its cleanup/backup path; the same flag skips the
+composition reader. A later checkpoint, shutdown save, or fresh composition
+write can overwrite the corresponding newer-schema file without a backup.
+Before running an older binary against an existing workdir, stop cknerv and
+copy `data/` outside that directory. `cknerv purge --confirm` clears the whole
+`data/` directory, including any backups stored there.
+
+An incompatible persistence-shape change must bump `SCHEMA_VERSION` and state
+whether `cknerv purge --confirm` is required.
 
 ## 13. CLI, Configuration, and Delivery
 
@@ -1454,9 +1470,9 @@ complete live-cell set, an indexer, a transaction submitter — is
   queries belong in a separate index service.
 - A reorg beyond the 48-block journal rebuilds the derived window rather than
   attempting an unprovable partial rollback.
-- Between index refreshes, a display resident's spend may be invisible to
-  cknerv. The next refresh or degradation corrects presentation; canonical
-  structure and counters remain unaffected.
+- Canonical transaction inputs retire spent display residents without waiting
+  for an index refresh. Replenishing curated classes still depends on available
+  node-revalidated supply; canonical structure and counters remain unaffected.
 - Binary snapshots optimize bootstrap and resync. Routine WebSocket deltas stay
   JSON for generality and diagnostics.
 - A Web Worker fallback preserves correctness but can cause one main-thread

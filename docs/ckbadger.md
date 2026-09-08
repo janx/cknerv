@@ -1115,9 +1115,11 @@ had: canonical staffing, upgraded once the first live refresh lands.
 
 - Direct CKB ingestion retains at most the first 1,024 Cell-data bytes. The
   indexed content record retains at most the first 4,096 bytes while preserving
-  the exact total size and an explicit completeness flag. Larger payloads can
-  therefore be analyzed by ckbadger but are not transferred in full to the
-  dashboard.
+  the exact total size and an explicit completeness flag. These are the preview
+  limits for ingestion and enrichment records. The Cell reader fetches complete
+  output data on demand through `GET /api/cells/:tx_hash/:output_index/data`
+  in every mode, directly from the node. That route serves payloads up to
+  2 MiB and returns `413 cell_data_too_large` for larger ones.
 - Transaction participants expose exact capacity deltas only when every
   attributed input and output includes capacity.
 - Selected-transaction protocol activities are not populated because ckbadger

@@ -192,23 +192,22 @@ persists the chain entity and registered projections to:
 ```
 
 On the next boot, the CLI first peeks at the saved tip and completed Cell
-target. It restores the file only when that target satisfies the built-in
-reservoir target; otherwise it starts a fresh hydration and replaces the
-checkpoint when that replay completes. A valid restored tip skips historical
-hydration, and the normal forward poll processes the complete downtime gap.
+target. It restores the file only when the schema matches, that target
+satisfies the built-in reservoir target, and no `--backfill-blocks` override
+is active; otherwise it starts a fresh hydration and replaces the checkpoint
+when that replay completes. A valid restored tip skips historical hydration,
+and the normal forward poll processes the complete downtime gap.
 
-Persistence is best-effort: unreadable, corrupt, or older-schema state is
-discarded and the server starts empty. State written by a *newer* schema than
-the running build is the one thing that is never deleted — it is renamed beside
-itself as `cknerv-state.json.schema<N>.bak`, where `N` is the schema that wrote
-it, so running an older binary once does not destroy what a newer one saved.
-`cknerv purge --confirm` deletes derived `data/` state while preserving
-`cknerv.toml`.
+Persistence is best-effort: unreadable, corrupt, or schema-incompatible state
+is skipped and the server starts empty. The next successful checkpoint or
+shutdown save replaces that state. To force a rebuild, stop cknerv and run
+`cknerv purge -C <workdir> --confirm`; it deletes all derived `data/` contents
+while preserving `cknerv.toml`.
 
 The current schema is v5, which added canonical per-component Cell morphology
-seeds and the complete output-data byte length. Schema-v4 state is
-incompatible: run `cknerv purge --confirm` before the first v5 launch, then let
-cknerv rebuild the derived state from the configured node.
+seeds and the complete output-data byte length. Schema-v4 state is incompatible
+and is rebuilt automatically from the configured node on the first v5 launch;
+no manual purge is required.
 
 Optional semantics are intentionally not persisted. They are bounded in memory
 and rehydrated from the configured source, so changing optional enrichment does
@@ -220,12 +219,19 @@ ckbadger enabled the server writes the composition it last proved to
 outpoints back through the same node revalidation a fresh composition goes
 through — every one re-read against the node, dead ones dropped — so a warm
 boot stages a proven set in seconds instead of curating one from nothing. The
-file carries its own schema version: an older one is discarded, while one
-written by a *newer* build is renamed beside itself as
-`galaxy-composition.json.schema<N>.bak` rather than deleted, the same way
-`cknerv-state.json` is. The trust boundary does not move either way: nothing
-reaches the stage that the node has not just re-affirmed. A boot that rebuilds
-canonical state rebuilds the stage with it.
+file carries its own schema version. On a resuming boot, its reader discards
+corrupt or older-schema files and attempts to move a readable newer-schema file
+aside as `galaxy-composition.json.schema<N>.bak`. Nothing reaches the stage
+that the node has not just re-affirmed. A boot that rebuilds canonical state
+rebuilds the stage with it.
+
+Automatic downgrade backups have a current CLI limitation. The canonical
+loader can likewise move newer state to `cknerv-state.json.schema<N>.bak`, but
+the CLI skips both recovery readers when its saved-cursor check rejects
+canonical state. Later writes can therefore overwrite newer-schema files
+without a backup. Before running an older binary against an existing workdir,
+stop cknerv and copy `data/` outside that directory. The exact paths and
+conditions are in [Design and Architecture §12.3](architecture.md#123-restore-eligibility-and-bad-files).
 
 ## Known Limits
 

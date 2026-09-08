@@ -17,7 +17,7 @@ WebSockets, so without this any page the operator has open could read the
 chain and cell streams, and a rebound DNS name could reach the plain routes.
 A client that sends no `Origin` at all — curl, a monitor, the crate's own
 smoke tests — is unaffected, and so is the Vite dev proxy, which rewrites the
-host to `localhost:7001` and forwards `Origin: http://localhost:5173`. The
+host to `localhost:7001` and forwards `Origin: http://localhost:5181`. The
 SPA bytes and `/runtime-config.js` are outside the guard.
 
 Setting `[dashboard].hosted` to a service name explicitly publishes all these
