@@ -20,18 +20,11 @@
 // ── Layout (Y planes + chain-node positioning) ──────────────────────
 export * from './layout';
 
-// ── The HUD's own occluding boxes, and the hole they leave ──────────
-// The app reads these for one thing only: fitting the camera to the hole the
-// rails leave. Additive, and deliberately the SAME reader — and now the same
-// HOLE — the inspector's solver and the cell card compose into, rather than a
-// fifth `querySelectorAll('[data-hud-occlusion]')` on its own cadence and a
-// second opinion about where the stage ends.
-export {
-  hudHoleFromRects,
-  useHudOcclusionRects,
-  type HudHole,
-  type HudOcclusionRect,
-} from './components/hudOcclusion';
+// ── Stable HUD framing for the app's camera ───────────────────────
+// Inspection still reads live occlusion inside the package. The overview
+// camera uses the rails' horizontal reservation, independent of loaded data.
+export type { HudHole } from './components/hudOcclusion';
+export type { HudCameraFrame } from './components/hud/useHudCameraFrame';
 
 // ── Tweaks (sim-clock, useSimFrame, leva presets) ───────────────────
 export * from './tweaks/simClock';

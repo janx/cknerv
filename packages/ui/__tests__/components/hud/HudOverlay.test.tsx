@@ -201,6 +201,34 @@ const daoState: DaoStateRecord = {
 };
 
 describe('HudOverlay', () => {
+  it('publishes camera framing during layout and holds it through boot and enrichment', () => {
+    viewport(1920);
+    resetBootSequenceForTest();
+    let panelTop = 78;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      const root = this.hasAttribute('data-hud-boot');
+      const leftRail = this.hasAttribute('data-hud-left-rail');
+      const rightRail = this.classList.contains('cknerv-mesh-rail');
+      if (!root && !leftRail && !rightRail) return RECT_ORIGINAL.call(this);
+      const left = root ? 0 : leftRail ? 14 : 1574;
+      const top = root ? 0 : panelTop;
+      const width = root ? 1920 : leftRail ? 370 : 332;
+      const height = root ? 1080 : 500;
+      return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON() {} };
+    };
+    const onCameraFrame = vi.fn();
+    const props = { chain, peers, localNode, cellsStats, onCameraFrame };
+    const { rerender } = render(<HudOverlay {...props} />);
+    expect(getBootSequence().active).toBe(true);
+    expect(onCameraFrame).toHaveBeenCalledWith({
+      width: 1920, height: 1080, hole: { left: 384, right: 1574 },
+    });
+    panelTop = 48;
+    act(() => { finishBootRecord(); });
+    rerender(<HudOverlay {...props} enrichmentSource={enrichmentSource} daoState={daoState} networkAtlas={networkAtlas} />);
+    expect(onCameraFrame).toHaveBeenCalledTimes(1);
+  });
+
   it('mounts a non-interactive overlay containing every panel', () => {
     // Past the boot count-off: this test is about the HUD the user settles
     // into, not the half-second in which it lights itself up.

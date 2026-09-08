@@ -267,8 +267,9 @@ profile seed, but the production bootstrap does not yet wire one through.
 
 The production Canvas uses:
 
-- camera position `[110, 108, 110]`;
-- target `[0, CELLS_Y, 0]`;
+- camera position and target fitted to the HUD's horizontal rail reservation
+  before the first Canvas mount, using `fitCameraToHole` (the default view ray
+  remains `(110, 70, 110)` above `CELLS_Y`);
 - FOV `50`, near `1`, and far `3000`;
 - WebGL antialiasing and an opaque drawing buffer (`alpha: false`);
 - scene background `#02030a`, with the same colour as CSS below the canvas for
@@ -279,6 +280,21 @@ The production Canvas uses:
 These are composition defaults rather than wire contracts. A change still
 requires desktop and narrow-layout review because camera composition controls
 Cell readability, network separation, picking density, and HUD occlusion.
+
+`HudOverlay` publishes a measured `HudCameraFrame` in its layout phase. A
+missing measurement holds the Canvas mount; deliberately disabled rails leave
+a valid full-width stage. Both the camera and OrbitControls start from the
+same fitted pose, without a temporary default or a dependency on boot/data
+readiness. Only viewport dimensions and user-selected panel layouts can update
+that frame. Boot banners, panel reveals, fonts, and enrichment arrival do not
+reposition the camera. Inspection still uses live occlusion rectangles to
+place its cards. A user orbit or a memory-route flight takes camera ownership
+for the session, including after the gesture or flight has ended.
+
+Regression checks must compare camera position, orientation, and projection
+from the first visible frame through boot completion at desktop and narrow
+widths, then verify resize/panel fitting and preservation of a user-owned pose.
+This is browser-only state; no persistence purge is required.
 
 ### 5.3 Pass ownership and compositing
 

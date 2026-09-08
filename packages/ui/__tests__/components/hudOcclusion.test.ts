@@ -159,9 +159,8 @@ describe('dimHudPanelsUnder', () => {
 });
 
 describe('hudHoleFromRects', () => {
-  // ONE definition of the hole, for every surface that composes into it: the
-  // camera's distance and aim (`ui-app/src/camera-hole-fit.ts`) and the cell
-  // card's own measure (`CARD_BESIDE_HOLE_PX`) are both read from this.
+  // The inspector's live clearance. The overview camera reserves rail width
+  // independently of these panels' changing heights (useHudCameraFrame).
   const RAILS = [
     { left: 14, top: 48, right: 384, bottom: 519 },
     { left: 1574, top: 48, right: 1906, bottom: 519 },

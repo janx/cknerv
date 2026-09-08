@@ -67,6 +67,7 @@ import {
 import StreamHealthBanner from './StreamHealthBanner';
 import { subscribeHudClock, useHudClockMs, useHudClockSelector } from './hudClock';
 import { invalidateHudOcclusionRects } from '../hudOcclusion';
+import { useHudCameraFrame, type HudCameraFrame } from './useHudCameraFrame';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -313,7 +314,7 @@ function prefersFullMotion(): boolean {
   return !window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, scriptFamilyCensus, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange }: {
+function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScripts, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, scriptFamilyCensus, backfill, streamHealth, build, topBarActions, colonyCount, producerView, onSoundVisibleChange, onCameraFrame }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Public service name; the tab continues to report the observed tip. */
   hostedName?: string;
@@ -353,6 +354,9 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
    *  The registry stays here — one list, one menu, one "diverged" reading —
    *  and this is the one entry whose flag has to travel back out. */
   onSoundVisibleChange?: (visible: boolean) => void;
+  /** Measured rail footprint, available before the scene's first paint and
+   *  updated only for viewport or user-selected panel-layout changes. */
+  onCameraFrame?: (frame: HudCameraFrame) => void;
   /** Who has been making the chain's blocks lately, with the window every
    *  share is measured over. Chain-derived and local-first — it needs no
    *  crawler — so it reads in the peer mesh beside the other network facts. */
@@ -473,6 +477,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   // for a touch screen, not an answer to a fit question — so it stays a media
   // query and wins over the measurement.
   const rootRef = useRef<HTMLDivElement>(null);
+  const leftRailRef = useRef<HTMLDivElement>(null);
   const stripProbeRef = useRef<HTMLDivElement>(null);
   const stripEstimate = useMediaQuery(STATUS_STRIP_FOLD_ESTIMATE_QUERY);
   const stripFolded = useStatusStripFold(stripProbeRef, rootRef, stripEstimate);
@@ -642,6 +647,8 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   // overflows, so click-through to the 3D scene is preserved the rest of the
   // time.
   const railRef = useRef<HTMLDivElement>(null);
+  const cameraLayoutKey = `${railsCollapsed}:${HUD_PANEL_IDS.filter((id) => panelVisibility[id]).join(',')}`;
+  useHudCameraFrame(rootRef, leftRailRef, railRef, cameraLayoutKey, onCameraFrame);
   const [railScrolls, setRailScrolls] = useState(false);
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
@@ -933,6 +940,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
       || daoPanelVisible
       || panelVisibility.pulse ? (
         <div
+          ref={leftRailRef}
           data-hud-left-rail
           style={{ ...LEFT_HUD_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
         >

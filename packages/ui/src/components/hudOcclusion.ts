@@ -94,11 +94,9 @@ function measureNow(): void {
 /**
  * The hole the HUD leaves the stage, from the panel boxes it publishes.
  *
- * ONE definition, for every surface that has to compose into it: the camera
- * fits its distance and its aim to this (`ui-app/src/camera-hole-fit.ts`), and
- * the cell card picks its own measure by it (`CellDetailPanel`'s
- * `CARD_BESIDE_HOLE_PX`). Two definitions of "the hole" would be two frames,
- * and the card and the galaxy would each be composing into a different one.
+ * Inspection uses the current obstacles to place and size its cards. The
+ * overview camera instead reads `useHudCameraFrame`'s stable rail reservation:
+ * a panel growing or moving out of this band must not reframe the scene.
  *
  * A panel counts only if it crosses the stage's own middle band — the rows the
  * galaxy is actually drawn in, and the rows a tethered card sits in. The

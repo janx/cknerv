@@ -30,9 +30,9 @@
  * moved to the pose and the form is what falls out of it — see
  * `CAMERA_STAGE_SHARE`.
  *
- * ⚠️ Initial pose and reset only. A reader who has orbited owns the camera
- * from that moment; a resize that re-framed their view out from under them
- * would be the instrument overruling the hand on it.
+ * Initial pose and explicit viewport/panel-layout changes only. A reader who
+ * has orbited owns the camera from that moment. Loading data, banners and
+ * fonts never trigger another fit; `CameraFraming` applies this before paint.
  */
 
 import type { HudHole } from '@cknerv/ui';
@@ -92,10 +92,9 @@ const MAX_DISTANCE = 400;
  *  tenth of a pixel at every distance this solves for. */
 const ELLIPSE_SAMPLES = 256;
 
-/** The hole is read ONCE, by `hudHoleFromRects` in `@cknerv/ui` — the same
- *  reading the inspector's cards compose into. This module used to carry its
- *  own copy of that rule; two definitions of the hole would be two frames, and
- *  the card and the galaxy would each be composing into a different one. */
+/** HUD publishes the rails' horizontal reservation before the first Canvas
+ *  mount. Inspection separately reads live occlusion: panel heights and
+ *  transient banners may move a card, but must not move the whole camera. */
 export type CameraHole = HudHole;
 
 export interface CameraExtent {
