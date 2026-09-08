@@ -67,45 +67,32 @@ afterEach(() => {
 });
 
 describe('StatusStrip', () => {
-  it('shows the wordmark and a nominal indicator', () => {
-    const { container } = render(<StatusStrip level="nominal" uptimeMs={0} />);
+  it('shows the wordmark and uptime', () => {
+    const { container } = render(<StatusStrip uptimeMs={0} />);
     const root = container.firstElementChild as HTMLElement;
     expect(container.textContent).toContain('CKNERV');
-    expect(container.textContent).toContain('NOMINAL');
-    expect(container.textContent).toContain('状态');
+    expect(container.textContent).toContain('UP 00:00:00');
     expect(root.dataset.statusLayout).toBe('wide');
     expect(root.style.height).toBe('36px');
-    expect(container.querySelector('[data-status-health]')).not.toBeNull();
+    expect(container.querySelector('[data-status-uptime]')).not.toBeNull();
     expect(container.querySelector('[data-status-accent-rail]')).not.toBeNull();
   });
-  it('tags the indicator dot with the alert level', () => {
-    const { container } = render(<StatusStrip level="danger" uptimeMs={0} />);
-    const dot = container.querySelector('[data-dot]') as HTMLElement;
-    expect(dot.getAttribute('data-level')).toBe('danger');
-    expect(container.textContent).toContain('DANGER');
-  });
-  // The calm half of the ramp states itself and stops. Only warning and above
-  // invert into a filled block — escalation you can read without matching two
-  // warm hues against each other.
-  it.each(['nominal', 'syncing', 'caution'] as const)('keeps %s in outline', (level) => {
-    const { container } = render(<StatusStrip level={level} uptimeMs={0} />);
+  it.each([
+    { layout: 'wide', compact: false, mobile: false },
+    { layout: 'compact', compact: true, mobile: false },
+    { layout: 'mobile', compact: true, mobile: true },
+  ])('omits the overall status indicator in the $layout layout', ({ compact, mobile }) => {
+    const { container } = render(<StatusStrip compact={compact} mobile={mobile} />);
+    expect(container.textContent).not.toContain('状态');
+    expect(container.textContent).not.toContain('NOMINAL');
+    expect(container.querySelector('[data-status-indicator]')).toBeNull();
     expect(container.querySelector('[data-status-level-chip]')).toBeNull();
-    expect(container.textContent).toContain(level.toUpperCase());
+    expect(container.querySelector('[data-status-summary]')).toBeNull();
+    expect(container.querySelector('[data-dot]')).toBeNull();
   });
-  it.each(['warning', 'danger', 'crit'] as const)('fills the %s word into a chip', (level) => {
-    const { container } = render(<StatusStrip level={level} uptimeMs={0} />);
-    const chip = container.querySelector('[data-status-level-chip]') as HTMLElement;
-    expect(chip.textContent).toBe(level.toUpperCase());
-    // Inverted: the level's color is behind the word, the ground is in it.
-    expect(chip.style.backgroundColor).not.toBe('');
-    expect(chip.style.color).toBe('rgb(0, 0, 0)');
-    // The lamp survives the escalation — it is the constant across all six.
-    expect(container.querySelector('[data-dot]')).not.toBeNull();
-  });
-  it('renders the build version as a commit link before the status chip', () => {
+  it('renders the build version as a commit link beside the wordmark', () => {
     render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
       />,
@@ -118,7 +105,7 @@ describe('StatusStrip', () => {
   });
 
   it('omits the build link when no build prop is given', () => {
-    const { queryByRole } = render(<StatusStrip level="nominal" uptimeMs={0} />);
+    const { queryByRole } = render(<StatusStrip uptimeMs={0} />);
     expect(queryByRole('link')).toBeNull();
   });
 
@@ -126,7 +113,6 @@ describe('StatusStrip', () => {
     const onPanelVisibilityChange = vi.fn();
     const { container } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
@@ -163,7 +149,6 @@ describe('StatusStrip', () => {
     // load, beside a BUILD chip whose rail is also orange (report A, A-2).
     const { container, rerender } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         panelControls={shippedPanelControls}
         onPanelVisibilityChange={() => {}}
@@ -176,7 +161,6 @@ describe('StatusStrip', () => {
     // Hiding a panel that ships shown IS a divergence…
     rerender(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         panelControls={shippedPanelControls.map((panel) => (
           panel.id === 'cells' ? { ...panel, visible: false } : panel
@@ -190,7 +174,6 @@ describe('StatusStrip', () => {
     // panels reads as MORE default rather than less.
     rerender(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         panelControls={shippedPanelControls.map((panel) => (
           panel.id === 'render' ? { ...panel, visible: true } : panel
@@ -205,7 +188,6 @@ describe('StatusStrip', () => {
   it('uses a prioritized two-row layout when horizontal space is constrained', () => {
     const { container } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={3_000}
         build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
@@ -220,7 +202,6 @@ describe('StatusStrip', () => {
     expect(root.style.display).toBe('grid');
     expect(root.style.height).toBe('64px');
     expect(controls.style.overflowX).toBe('auto');
-    expect(container.querySelector('[data-status-summary]')?.textContent).toContain('NOMINAL');
     expect(screen.getByRole('link', { name: '61922ba@20260630' }).textContent).toBe('BUILD61922ba');
     expect(screen.getByRole('button', {
       name: 'Configure HUD panels, 4 of 4 visible',
@@ -233,7 +214,6 @@ describe('StatusStrip', () => {
   it('keeps primary controls visible in a dedicated mobile layout', () => {
     const { container } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={3_000}
         build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
         panelControls={panelControls}
@@ -263,10 +243,9 @@ describe('StatusStrip', () => {
       .toBe('https://ckbadger.web5.info/');
   });
 
-  it('shows optional indexed-context freshness without changing chain status', () => {
+  it('shows optional indexed-context freshness', () => {
     const { container } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         enrichmentSource={{
           source: 'ckbadger',
@@ -285,7 +264,6 @@ describe('StatusStrip', () => {
     expect(chip.getAttribute('aria-label')).toBe('ckbadger stale · LAG 18');
     expect(chip.textContent).toContain('CKBADGERSTALE · LAG 18');
     expect(chip.textContent).not.toContain('↓');
-    expect(container.textContent).toContain('NOMINAL');
     const sourceLink = within(chip).getByRole('link', { name: 'CKBADGER' });
     expect(sourceLink.getAttribute('href')).toBe('https://ckbadger.web5.info/');
     expect(sourceLink.getAttribute('target')).toBe('_blank');
@@ -298,7 +276,6 @@ describe('StatusStrip', () => {
     render(
       <div onPointerDown={onPointerDown} onClick={onClick}>
         <StatusStrip
-          level="nominal"
           enrichmentSource={{ source: 'ckbadger', status: 'ready', capabilities: [] }}
           compact
         />
@@ -311,21 +288,25 @@ describe('StatusStrip', () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it('renders product-owned actions without coupling them to status semantics', () => {
+  it.each([
+    { layout: 'wide', compact: false, mobile: false },
+    { layout: 'compact', compact: true, mobile: false },
+    { layout: 'mobile', compact: true, mobile: true },
+  ])('places product-owned actions after source status in the $layout layout', ({ compact, mobile }) => {
     const { container } = render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
-        actions={<button type="button">JUKEBOX</button>}
+        enrichmentSource={{ source: 'ckbadger', status: 'ready', capabilities: [] }}
+        actions={<a href="https://web5.info/">WEB5.INFO</a>}
+        compact={compact}
+        mobile={mobile}
       />,
     );
 
-    const actions = container.querySelector('[data-status-actions]');
-    expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByRole('button', {
-      name: 'JUKEBOX',
-    })).not.toBeNull();
-    expect(container.textContent).toContain('NOMINAL');
+    const source = container.querySelector('[data-enrichment-chip]') as HTMLElement;
+    const actions = container.querySelector('[data-status-actions]') as HTMLElement;
+    expect(source.nextElementSibling).toBe(actions);
+    expect(within(actions).getByRole('link', { name: 'WEB5.INFO' })).not.toBeNull();
   });
 
   it('names the tier AUTO chose without lending it to the button beside it', () => {
@@ -335,7 +316,7 @@ describe('StatusStrip', () => {
     // peer of the tier buttons, it is what AUTO chose (report A, A-13).
     setQualityMode('auto');
     setAdaptiveQuality('high');
-    const { container } = render(<StatusStrip level="nominal" uptimeMs={0} />);
+    const { container } = render(<StatusStrip uptimeMs={0} />);
     const auto = container.querySelector('[data-quality-option="auto"]') as HTMLElement;
 
     expect(auto.textContent).toBe('AUTO(H)');
@@ -344,7 +325,7 @@ describe('StatusStrip', () => {
 
   it('offers a tiered AUTO Cell cap with an immediate manual slider override', () => {
     const { container } = render(
-      <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
+      <StatusStrip uptimeMs={0} cellCount={5_000} />,
     );
     const control = screen.getByRole('group', { name: 'Cell display count' });
     const automatic = within(control).getByRole(
@@ -401,7 +382,7 @@ describe('StatusStrip', () => {
 
   it('says when the automatic tier has stopped being a live reading', () => {
     const { rerender } = render(
-      <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
+      <StatusStrip uptimeMs={0} cellCount={5_000} />,
     );
     const control = screen.getByRole('group', { name: 'Cell display count' });
     const automatic = within(control).getByRole(
@@ -413,7 +394,7 @@ describe('StatusStrip', () => {
     expect(automatic.getAttribute('title')).toContain('active · HIGH =');
 
     setAdaptiveQualityLocked(true);
-    rerender(<StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />);
+    rerender(<StatusStrip uptimeMs={0} cellCount={5_000} />);
 
     expect(control.getAttribute('title')).toContain('adaptive HIGH (locked) cap');
     expect(automatic.getAttribute('title')).toContain('active · HIGH (locked) =');
@@ -422,7 +403,6 @@ describe('StatusStrip', () => {
   it('keeps a 50K manual range while AUTO respects a smaller server cap', () => {
     render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         cellCount={2_000}
         cellCapacity={2_000}
@@ -461,7 +441,7 @@ describe('StatusStrip', () => {
 
   it('separates the shown count from the cap while exposing unused headroom', () => {
     render(
-      <StatusStrip level="nominal" uptimeMs={0} cellCount={2_700} />,
+      <StatusStrip uptimeMs={0} cellCount={2_700} />,
     );
     const control = screen.getByRole('group', { name: 'Cell display count' });
     const automatic = within(control).getByRole(
@@ -516,7 +496,7 @@ describe('StatusStrip', () => {
   });
 
   it('offers an always-visible auto/high/med/low render-quality control', () => {
-    render(<StatusStrip level="nominal" uptimeMs={0} />);
+    render(<StatusStrip uptimeMs={0} />);
     const control = screen.getByRole('group', { name: 'Render quality' });
     const scoped = within(control);
 
@@ -536,7 +516,7 @@ describe('StatusStrip', () => {
   });
 
   it('applies a manual quality mode and synchronizes the developer control', () => {
-    render(<StatusStrip level="nominal" uptimeMs={0} />);
+    render(<StatusStrip uptimeMs={0} />);
     const low = screen.getByRole('button', { name: 'Low render quality' });
 
     fireEvent.click(low);
@@ -558,7 +538,6 @@ describe('StatusStrip', () => {
     // both stay hidden.
     render(
       <StatusStrip
-        level="nominal"
         uptimeMs={0}
         panelControls={panelControls}
         onPanelVisibilityChange={() => {}}
@@ -590,7 +569,6 @@ describe('StatusStrip', () => {
 // and none of its presence.
 describe('StatusStrip as a probe', () => {
   const probeProps = {
-    level: 'nominal',
     uptimeMs: 0,
     build: { version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' },
     panelControls,
@@ -649,7 +627,7 @@ describe('StatusStrip as a probe', () => {
     expect(container.querySelector('[data-panel-visibility-control]')).not.toBeNull();
     expect(container.querySelector('[data-enrichment-chip]')?.textContent)
       .toContain('CKBADGERREADY · LAG 2');
-    expect(container.querySelector('[data-status-health]')).not.toBeNull();
+    expect(container.querySelector('[data-status-uptime]')).not.toBeNull();
 
     // …and none of it reachable: `aria-hidden` takes the whole subtree out of
     // the accessible tree, so a screen reader is told about ONE bar and a

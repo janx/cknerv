@@ -836,7 +836,6 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
    *  reader is actually looking at and the two `memo`s see one set of
    *  identities. */
   const stripProps = {
-    level: alert.level,
     uptimeSinceMs: mountAt.current,
     build,
     cellCount: cellCount ?? cellsStats.inView,

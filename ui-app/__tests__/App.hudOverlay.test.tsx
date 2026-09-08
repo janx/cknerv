@@ -45,10 +45,13 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox');
   });
 
-  it('keeps the site link outside Canvas and independent of the sound module', () => {
-    expect(APP_SOURCE).toContain('closedActions={<CanvasSiteLink />}');
-    expect(APP_SOURCE).toContain(') : <CanvasSiteLink floating />}');
-    expect(APP_SOURCE.indexOf('<CanvasSiteLink')).toBeLessThan(APP_SOURCE.indexOf('<Canvas\n'));
+  it('mounts the site link in the top bar independently of the sound module', () => {
+    const hudWiring = APP_SOURCE.slice(APP_SOURCE.indexOf('<HudOverlay'), APP_SOURCE.indexOf('{soundVisible ?'));
+    expect(hudWiring).toContain('topBarActions={TOP_BAR_ACTIONS}');
+    expect(APP_SOURCE).toContain('const TOP_BAR_ACTIONS = <TopBarSiteLink />;');
+    expect(APP_SOURCE.match(/<TopBarSiteLink/g)).toHaveLength(1);
+    expect(APP_SOURCE).not.toContain('CanvasSiteLink');
+    expect(APP_SOURCE).not.toContain('closedActions=');
   });
 
   it('routes each resolved identity proof from the scene inspector to the matching galaxy Cell', () => {

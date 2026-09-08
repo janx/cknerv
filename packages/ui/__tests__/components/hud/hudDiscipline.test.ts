@@ -3510,8 +3510,9 @@ describe('one type scale', () => {
       }
     }
     expect(offenders).toEqual([]);
+    // Nine remain after removing the status strip's 状态 companion.
     expect(companions, 'no companion found — did HUD_FONTS.cjk move?')
-      .toBeGreaterThanOrEqual(10);
+      .toBeGreaterThanOrEqual(9);
   });
 });
 

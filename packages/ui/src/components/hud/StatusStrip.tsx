@@ -3,7 +3,6 @@ import type { CSSProperties, ReactNode, Ref } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
 import { useHudClockSelector } from './hudClock';
-import type { AlertLevel } from '../../derives/alertLevel';
 import {
   QUALITY_MODE_CONTROL,
   setQualityMode,
@@ -21,8 +20,8 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
-import { CJK_BASELINE_LIFT, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
-import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP, severityChip } from './primitives';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
+import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
 export type BuildInfo = { version: string; href: string };
@@ -71,18 +70,6 @@ const NAV_MODULE_STYLE: CSSProperties = {
   borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, STRIP_RAIL_ALPHA)}`,
   background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent 78%)`,
 };
-
-const LEVEL_COLOR: Record<AlertLevel, string> = {
-  nominal: HUD_COLORS.nominal, syncing: HUD_COLORS.cyanWire, caution: HUD_COLORS.caution,
-  warning: HUD_COLORS.warning, danger: HUD_COLORS.danger, crit: HUD_COLORS.danger,
-};
-
-// Where the strip stops speaking in outline. Below this line the level is a
-// reading — the lamp says it, the word states it, and the bar stays furniture.
-// At and above it the word inverts into a filled block, so escalation is
-// legible as a change of TREATMENT and not only of hue. On a frame this warm,
-// hue alone was never going to carry the middle of the ramp.
-const FILLED_LEVELS: readonly AlertLevel[] = ['warning', 'danger', 'crit'];
 
 function fmtUptime(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -878,7 +865,6 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
 }
 
 function StatusStrip({
-  level,
   uptimeMs = 0,
   uptimeSinceMs,
   build,
@@ -893,7 +879,6 @@ function StatusStrip({
   probe = false,
   probeRef,
 }: {
-  level: AlertLevel;
   /** A fixed uptime, for labs and tests. Ignored when `uptimeSinceMs` is set. */
   uptimeMs?: number;
   /** The instant the host mounted: the uptime counts from it on the shared
@@ -906,7 +891,8 @@ function StatusStrip({
   cellCapacity?: number;
   /** Optional indexed-context health. Omitted when no source is configured. */
   enrichmentSource?: EnrichmentSourceStatus;
-  /** Product-specific controls rendered without coupling the shared HUD to them.
+  /** Product-specific controls rendered after the indexed-context status,
+   *  with the strip's module styling and typography.
    *
    *  ⚠️ Whatever is put here is MOUNTED TWICE by a host that probes (the HUD
    *  overlay does): once in the strip a reader sees and once inside the hidden
@@ -918,7 +904,7 @@ function StatusStrip({
   /** Individually configurable dashboard panels; status/navigation stays visible. */
   panelControls?: readonly HudPanelControl[];
   onPanelVisibilityChange?: (id: string, visible: boolean) => void;
-  /** Two-row navigation layout: identity and status on the first row, the
+  /** Two-row navigation layout: identity on the first row, the
    *  controls scrolling on the second.
    *
    *  The strip does not choose it and never asks how wide the screen is. The
@@ -935,7 +921,7 @@ function StatusStrip({
    *
    *  The only thing that knows how wide one row wants to be is the row —
    *  its width IS content (the ckbadger status word and its lag digits, the
-   *  level word, the uptime, `PANELS n/m`, whatever the host puts in
+   *  uptime, `PANELS n/m`, whatever the host puts in
    *  `actions`), so any number typed for it is right for one content state and
    *  wrong the moment the content moves. A probe makes the fold a function of
    *  what is actually there, at every moment.
@@ -956,7 +942,6 @@ function StatusStrip({
 }) {
   const layout = probe ? 'wide' : mobile ? 'mobile' : compact ? 'compact' : 'wide';
   const dense = layout !== 'wide';
-  const color = LEVEL_COLOR[level];
   const mobileHasContext = layout === 'mobile'
     && Boolean(enrichmentSource || actions);
   const barHeight = mobileHasContext
@@ -1024,35 +1009,18 @@ function StatusStrip({
     <div
       data-status-actions
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        flexShrink: 0,
+        ...NAV_MODULE_STYLE,
+        padding: dense ? '0 7px' : '0 9px',
+        fontFamily: HUD_FONTS.mono,
+        fontSize: HUD_TYPE.tech,
+        letterSpacing: 0.6,
+        whiteSpace: 'nowrap',
         pointerEvents: 'auto',
       }}
     >
       {actions}
     </div>
   ) : null;
-  const statusIndicator = (
-    <span
-      data-status-indicator
-      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 700, fontSize: dense ? HUD_TYPE.tech : HUD_TYPE.label, letterSpacing: dense ? 0.9 : 1.6, color }}
-    >
-      {/* It has ALWAYS rendered at `label`: the row above asks for `label`
-          whenever it is not dense, and 状态 is not drawn when it is. Stating
-          it changes no pixel and closes the gap the weight closed first — a
-          companion that says nothing is taking whatever an ancestor says, and
-          the dense branch of that very ternary says `tech`, which is under
-          the mincho floor. */}
-      {!dense ? <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, color: HUD_COLORS.dim }}>状态</span> : null}
-      {/* The lamp is the constant across all six levels — it is what you find
-        * in the corner of your eye. Only the word escalates. */}
-      <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
-      {FILLED_LEVELS.includes(level)
-        ? <span data-status-level-chip style={severityChip(color)}>{level.toUpperCase()}</span>
-        : level.toUpperCase()}
-    </span>
-  );
   const performanceControls = (
     <>
       <CellDisplayControl
@@ -1085,9 +1053,8 @@ function StatusStrip({
           height: barHeight,
           boxSizing: 'border-box',
           display: 'grid',
-          gridTemplateColumns: 'minmax(0,1fr) auto',
+          gridTemplateColumns: 'minmax(0,1fr)',
           gridTemplateRows: mobileHasContext ? '30px 29px 29px' : '30px 29px',
-          columnGap: 6,
           padding: '0 8px',
           overflow: 'visible',
           background: `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.965)})`,
@@ -1095,9 +1062,6 @@ function StatusStrip({
         }}
       >
         {primary}
-        <div data-status-summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
-          {statusIndicator}
-        </div>
         <div
           className="cknerv-status-controls"
           data-status-controls
@@ -1154,9 +1118,8 @@ function StatusStrip({
           height: barHeight,
           boxSizing: 'border-box',
           display: 'grid',
-          gridTemplateColumns: 'minmax(0,1fr) auto',
+          gridTemplateColumns: 'minmax(0,1fr)',
           gridTemplateRows: '32px 32px',
-          columnGap: 8,
           padding: '0 8px',
           overflow: 'visible',
           background: `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.96)})`,
@@ -1164,9 +1127,6 @@ function StatusStrip({
         }}
       >
         {primary}
-        <div data-status-summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
-          {statusIndicator}
-        </div>
         <div
           className="cknerv-status-controls"
           data-status-controls
@@ -1215,13 +1175,10 @@ function StatusStrip({
       {performanceControls}
       {contextControls}
       <span
-        data-status-health
-        style={{ ...NAV_MODULE_STYLE, gap: 9, padding: '0 1px 0 10px' }}
+        data-status-uptime
+        style={{ ...NAV_MODULE_STYLE, padding: '0 1px 0 10px', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.6 }}
       >
-        {statusIndicator}
-        <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.6 }}>
-          <UptimeReadout uptimeMs={uptimeMs} sinceMs={uptimeSinceMs} />
-        </span>
+        <UptimeReadout uptimeMs={uptimeMs} sinceMs={uptimeSinceMs} />
       </span>
       {probe ? null : accentRail}
     </div>
@@ -1232,5 +1189,5 @@ function StatusStrip({
 // hand this strip a fresh `uptimeMs` every time, which re-rendered its three
 // control groups for one span. The uptime is a leaf now and every other prop
 // is a value, a record or a callback the overlay holds by identity, so the
-// strip renders when the alert level, the count or a control changes.
+// strip renders when its data or a control changes.
 export default memo(StatusStrip);

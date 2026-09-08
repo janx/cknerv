@@ -18,7 +18,7 @@ describe('StatusStrip uptime', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-28T10:00:00Z'));
     const { container } = render(
-      <StatusStrip level="nominal" uptimeSinceMs={Date.now()} />,
+      <StatusStrip uptimeSinceMs={Date.now()} />,
     );
     expect(container.textContent).toContain('UP 00:00:00');
     act(() => { vi.advanceTimersByTime(3_000); });
@@ -29,7 +29,7 @@ describe('StatusStrip uptime', () => {
 
   it('prints a fixed uptime as it stands when a host hands one down', () => {
     vi.useFakeTimers();
-    const { container } = render(<StatusStrip level="nominal" uptimeMs={3_000} />);
+    const { container } = render(<StatusStrip uptimeMs={3_000} />);
     expect(container.textContent).toContain('UP 00:00:03');
     act(() => { vi.advanceTimersByTime(5_000); });
     expect(container.textContent).toContain('UP 00:00:03');

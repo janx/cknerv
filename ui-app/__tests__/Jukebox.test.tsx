@@ -21,7 +21,6 @@ import Jukebox, {
   SOUNDCLOUD_PLAYER_SCALE,
 } from '../src/Jukebox';
 import { SOUNDCLOUD_WIDGET_ORIGIN } from '../src/soundcloud-widget';
-import CanvasSiteLink from '../src/CanvasSiteLink';
 
 const OPEN_LABEL = 'Open Jukebox and play default SoundCloud track';
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
@@ -498,30 +497,6 @@ describe('Jukebox', () => {
     expect(frame.style.transform).toBe(`scale(${SOUNDCLOUD_PLAYER_SCALE})`);
     expect(frame.style.filter).toContain('invert(0.9)');
   });
-
-  it.each(['close button', 'Escape'])(
-    'hides the adjacent site link while open and restores it via %s',
-    (closeMethod) => {
-      render(<Jukebox closedActions={<CanvasSiteLink />} />);
-      const opener = screen.getByRole('button', { name: OPEN_LABEL });
-      const link = screen.getByRole('link', { name: 'WEB5.INFO' });
-      expect(opener.nextElementSibling).toBe(link);
-
-      fireEvent.click(opener);
-      expect(screen.queryByRole('link', { name: 'WEB5.INFO' })).toBeNull();
-      expect(link.isConnected).toBe(false);
-
-      if (closeMethod === 'Escape') {
-        fireEvent.keyDown(window, { key: 'Escape' });
-      } else {
-        fireEvent.click(screen.getByRole('button', { name: 'Close Jukebox player' }));
-      }
-      const restoredLink = screen.getByRole('link', { name: 'WEB5.INFO' });
-      expect(restoredLink.getAttribute('href')).toBe('https://web5.info/');
-      expect(screen.getByRole('button', { name: OPEN_LABEL }).nextElementSibling)
-        .toBe(restoredLink);
-    },
-  );
 
   it('unmounts the player on close or Escape so audio cannot remain hidden', () => {
     const { container } = render(<Jukebox />);

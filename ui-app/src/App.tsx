@@ -147,7 +147,7 @@ import type {
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
-import CanvasSiteLink from './CanvasSiteLink';
+import TopBarSiteLink from './TopBarSiteLink';
 import { ingestCellsCacheIntoField } from './cell-field-hook';
 import { connectNodeHealth } from './connect';
 import {
@@ -443,6 +443,7 @@ function initialStreamHealth(): StreamHealth {
 /** Stable empty overlay list: a fresh array each render would re-run the
  *  population derive on every App render for no reason. */
 const EMPTY_OVERLAY_IDS: number[] = [];
+const TOP_BAR_ACTIONS = <TopBarSiteLink />;
 
 export default function App({
   initialChain,
@@ -2308,6 +2309,7 @@ export default function App({
         backfill={cellsCache.backfill}
         streamHealth={hudStreamHealth}
         build={build}
+        topBarActions={TOP_BAR_ACTIONS}
         colonyCount={topology.nodes.length}
         producerView={producerView}
         onSoundVisibleChange={setSoundVisible}
@@ -2320,9 +2322,8 @@ export default function App({
       {soundVisible ? (
         <Jukebox
           blockPulseAtMs={cellsCache.lastPulseAtMs}
-          closedActions={<CanvasSiteLink />}
         />
-      ) : <CanvasSiteLink floating />}
+      ) : null}
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
       {forceRenderStats ? <RenderStatsPanel /> : null}
