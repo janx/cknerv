@@ -102,6 +102,77 @@ Both files hold derived data. If either is stale, corrupt, or no longer
 matches the current schema, delete it with `cknerv purge --confirm` and let
 cknerv rehydrate from the live node.
 
+## Considering
+
+Things considered and not built. Each is listed with the question it still
+has to answer rather than as a plan; nothing here is promised, and the order
+is not a ranking.
+
+- **Fiber channels**: ckbadger already indexes every Fiber channel with its
+  funding outpoint, participants, state, and timeline, and a channel opening
+  or closing already counts as a PROTOCOL event in the ACTIVITY rows. The
+  channel itself is not drawn. Its funding Cell is a real outpoint the node
+  can re-affirm, so it could stand in the world brain like any other Cell;
+  but the payments that cross it never touch the chain, and its two ends are
+  addresses, which the peer mesh cannot place. What a channel looks like in a
+  body drawn from chain data, and whether a local Fiber node's own view of
+  the channel graph earns a place as a third local source, are the open
+  questions. Even the channel-wide counts wait on a bounded endpoint; see
+  [`docs/ckbadger.md`](docs/ckbadger.md#known-limits).
+- **The mempool as a place**: cknerv polls the node's transaction pool, and
+  CKB·01 prints two counts, pending and proposed. What waits there is the one
+  thing the node knows that is not yet common knowledge: transitions the
+  chain has not confirmed and may never. CKB commits in two steps — a
+  transaction is proposed in one block and committed in a later one — so a
+  waiting transaction has a real intermediate state of its own. Where those
+  stand, Cells not yet born drawn as something less than a Cell, and how one
+  is un-drawn when the pool lets it go, are open.
+- **RGB++ and the Bitcoin end of the wormhole**: the world view calls RGB++ a
+  wormhole between Bitcoin and CKB. An RGB++ Cell's lock names a Bitcoin
+  UTXO, and ckbadger recognizes those locks; cknerv draws such a Cell like any
+  other. Bitcoin has no presence in cknerv, and cknerv has no Bitcoin node to
+  check an anchor against, so drawing the far end would break the rule that
+  the stage shows only what the local node has affirmed. Whether the binding
+  becomes a mark on the Cell, a second physical-world layer beside the peer
+  mesh, or stays unmarked is undecided.
+- **Issuance and the treasury**: this README opens by calling CKB a realm
+  sustained by continuous work. The product of that work is CKByte, minted
+  every block by primary and secondary issuance and divided between block
+  producers, Nervos DAO depositors, and — until the community treasury
+  exists — the burn. DAO·05 shows the depositors' side. Nothing shows the
+  energy input itself: how much matter an epoch mints and where it goes.
+  Whether that is a readout on CKB·01 or a visible flow, matter entering the
+  body at the producers and settling into the DAO, is undecided.
+- **The whole live set**: the galaxy stages a bounded sample of the newest
+  and the curated, and the panels count the rest from aggregate statistics.
+  Mainnet's live set is far larger than anything the stage holds, and beyond
+  those numbers it has no presence. Whether there is a level of detail at
+  which the whole set can be seen — a density the eye reads as a population,
+  without pretending each grain is a Cell the node has affirmed — is open.
+- **An address lens**: today the only way into a Cell is to click it. The
+  world view puts all of an owner's activities and assets under its address,
+  and ckbadger already answers for one — its Cells, assets, activities, and
+  Fiber channels. A lens that takes an address, lock hash, outpoint, or
+  transaction hash and lights what it owns across the galaxy is the obvious
+  way in, with one honesty problem: the galaxy stages a sample, so most of
+  what an address owns is not on stage, and the lens has to say what it
+  cannot show.
+- **Time**: everything drawn is the present plus a short journal of recent
+  blocks. The epochs the world view calls the realm's clock — constant in
+  real-world time however the blocks inside them pace — are two readouts on
+  CKB·01, and the branches NC-Max absorbed as uncles are not shown at all.
+  Walking backward, to an earlier block or through a whole epoch, is cheap
+  inside the journal and a different thing past it: the chain's history is in
+  the index, but the galaxy's is not, and the stage would have to be
+  recomposed for a moment the node no longer holds as live.
+- **A light client as the node**: Local First assumes a full node. CKB's
+  light client syncs headers and only the Cells of the scripts it is told to
+  watch, and it is the practical choice for anyone not keeping a full node.
+  A cknerv over one would see the whole arrow of time and only the part of
+  the world brain it was pointed at, a body honest about being partially
+  sighted. Whether the adapter boundary can carry that — a chain with every
+  block and a galaxy with only some of its Cells — is the question.
+
 ## License
 
 GPL-3.0. See [`LICENSE`](LICENSE).
