@@ -49,7 +49,8 @@ function formatBytes(bytes: number): string {
  * which of thirty families they belong to. Then the stage's two
  * script-family taxonomies at chain scope, six families named and the rest
  * folded, with a LOCKS bar beside them. The user struck the lock bar and
- * asked for the index's own inventory instead: the ASSETS bar is now the
+ * asked for the index's own inventory instead: the TYPES bar (ASSETS until
+ * the user renamed it, 2026-09-08) is now the
  * chain by ckbadger's menu — CKB, then TOKENS · OBJECTS · IDENTITIES as its
  * Inventory pages classify them, the DAO, and SCRIPTS for every other typed
  * Cell — read from the index's whole-chain family counts, each family
@@ -195,7 +196,7 @@ export default function CellCensusReadout({
         // has counted every family and said which inventory each one is.
         <div data-indexed-context data-chain-taxonomy style={{ opacity: familyStale ? STALE_OPACITY : 1 }}>
           <TaxonomyBar
-            title="ASSETS"
+            title="TYPES"
             scope={familyStale ? 'STALE' : undefined}
             buckets={chainInventoryBuckets(families)}
           />

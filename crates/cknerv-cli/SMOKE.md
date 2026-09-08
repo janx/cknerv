@@ -360,7 +360,7 @@ With a local ckbadger service configured:
       `<total>/H` section, the `+` present only when a kind's count is a floor
 - [ ] `COMMON KNOWLEDGE BASE` carries a `CELL CENSUS` section: live capacity,
       knowledge, the validated live-Cell count printed bare (no `CHAIN`, no
-      `AS OF` of its own — `STALE` only when stale), one `ASSETS` bar over the
+      `AS OF` of its own — `STALE` only when stale), one `TYPES` bar over the
       whole chain by ckbadger's menu (`CKB · TOKENS · OBJECTS · IDENTITIES ·
       DAO · SCRIPTS`, by live-Cell COUNT, never by capacity; absent until the
       roster has classified the index's families), no `LOCKS` bar and no

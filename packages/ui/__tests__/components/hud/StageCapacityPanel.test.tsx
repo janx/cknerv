@@ -359,17 +359,15 @@ describe('the block', () => {
     // identities existed: an empty census is not a distribution.
     const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
     const text = container.textContent ?? '';
-    expect(text).toContain('ASSETS');
-    expect(text).toContain('LOCKS');
     expect(text).toContain('default 64%');
     expect(text).toContain('multisig 22%');
-    // And they say so: these counts are the local retained window, which is
-    // the one thing this panel must not quietly present as its stage.
-    for (const bar of ['ASSETS', 'LOCKS']) {
-      expect(
-        container.querySelector(`[data-taxonomy-scope="${bar}"]`)?.textContent,
-      ).toBe('LOCAL WINDOW');
-    }
+    // And they say so, as the first word of each title: these counts are the
+    // local retained window, which is the one thing this panel must not
+    // quietly present as its stage.
+    expect(container.querySelector('[data-taxonomy-bar="LOCAL WINDOW TYPES"]')).not.toBeNull();
+    expect(container.querySelector('[data-taxonomy-bar="LOCAL WINDOW LOCKS"]')).not.toBeNull();
+    expect(text).not.toContain('STAGE TYPES');
+    expect(container.querySelector('[data-taxonomy-scope]')).toBeNull();
   });
 
   it('bars the real script families once the stage is counted by identity', () => {
@@ -473,12 +471,11 @@ describe('the block', () => {
     expect(text).toContain('xUDT 38%');
     expect(text).toContain('CKB 21%');
     expect(text).not.toContain('CKB 99%');
-    // And every bar carries the population it counted.
-    for (const bar of ['ASSETS', 'LOCKS']) {
-      expect(
-        container.querySelector(`[data-taxonomy-scope="${bar}"]`)?.textContent,
-      ).toBe('STAGE');
-    }
+    // And every bar carries the population it counted, in its title.
+    expect(container.querySelector('[data-taxonomy-bar="STAGE TYPES"]')).not.toBeNull();
+    expect(container.querySelector('[data-taxonomy-bar="STAGE LOCKS"]')).not.toBeNull();
+    expect(text).not.toContain('LOCAL WINDOW TYPES');
+    expect(container.querySelector('[data-taxonomy-scope]')).toBeNull();
   });
 
   it('collapses the legend names a 99% bar cannot show', () => {

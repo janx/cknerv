@@ -422,7 +422,7 @@ Chain-scope and stage-scope readings live on two surfaces, and they are a
 census and a sample of one population. **CELL CENSUS** is a fused readout
 inside `COMMON KNOWLEDGE BASE`, in the same header system as `TX HORIZON` and
 `ACTIVITY`: everything true of the whole chain — indexed live capacity,
-knowledge bytes, the validated live-Cell count, the chain's `ASSETS` bar. The
+knowledge bytes, the validated live-Cell count, the chain's `TYPES` bar. The
 record's top-asset list (ckbadger's tokens by last-day transfers, then
 holders) is validated on the wire but not drawn. No anchor is printed
 anywhere on CKB·01's three sections — not on a
@@ -910,7 +910,7 @@ panel already holds those code hashes from the cells projection's census, so the
 record only has to say that asking produced nothing.
 
 `STAGE SAMPLE` joins the two planes in the browser on `(code_hash, hash_type)`
-and renders the real families in its **ASSETS** and **LOCKS** bars in place
+and renders the real families in its **STAGE TYPES** and **STAGE LOCKS** bars in place
 of the four lock and seven asset families cknerv pins itself — never beside them.
 Without a census at all, from a backend predating it or a galaxy restored from
 older state, the pinned families remain rather than an empty panel. A family
@@ -954,7 +954,7 @@ floors at zero, while anything past that is refused naming both figures.
 
 This is the chain-scope twin of the cells projection's script census: that one
 counts the stage's identities and refuses to name them, this one arrives named,
-classified and counted. `CELL CENSUS` draws it as one `ASSETS` bar in the
+classified and counted. `CELL CENSUS` draws it as one `TYPES` bar in the
 index's own vocabulary — `CKB · TOKENS · OBJECTS · IDENTITIES · DAO · SCRIPTS`,
 the DAO's family taken off the scripts once, the unlisted typed Cells counted
 as scripts — so a dashboard reading "inventory" means what ckbadger means by

@@ -52,7 +52,7 @@ describe('CellsPanel', () => {
   it('keeps chain capacity and taxonomy out of the mesh panel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';
-    expect(t).not.toContain('STAGE ASSETS');
+    expect(t).not.toContain('STAGE TYPES');
     expect(t).not.toContain('STAGE LOCKS');
     expect(t).not.toContain('sighash');
   });

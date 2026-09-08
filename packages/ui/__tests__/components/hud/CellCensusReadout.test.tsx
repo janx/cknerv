@@ -165,7 +165,7 @@ describe('CellCensusReadout', () => {
     expect(text).not.toContain('.bit Income Cell');
     expect(container.querySelector('[data-taxonomy-bar="LOCKS"]')).toBeNull();
 
-    expect(segments(container, 'ASSETS').map((segment) => segment.dataset.taxonomySegment)).toEqual([
+    expect(segments(container, 'TYPES').map((segment) => segment.dataset.taxonomySegment)).toEqual([
       'native',
       'token',
       'object',
@@ -178,13 +178,13 @@ describe('CellCensusReadout', () => {
     // tail rather than a name claiming to be absent. SCRIPTS is every other
     // typed Cell — the keeper's income cells, COTA, the typed Cells the
     // index has no family for — with the DAO's own family taken off it.
-    expect(legend(container, 'ASSETS')).toBe(
+    expect(legend(container, 'TYPES')).toBe(
       'CKB 66% · TOKENS 4% · OBJECTS 6% · DAO 2% · SCRIPTS 22% · +1 <1%',
     );
-    expect(bar(container, 'ASSETS')?.title).toBe(
+    expect(bar(container, 'TYPES')?.title).toBe(
       'CKB 66% · TOKENS 4% · OBJECTS 6% · IDENTITIES <1% · DAO 2% · SCRIPTS 22%',
     );
-    const widths = segments(container, 'ASSETS').map((segment) => parseFloat(segment.style.width));
+    const widths = segments(container, 'TYPES').map((segment) => parseFloat(segment.style.width));
     expect(widths.reduce((sum, width) => sum + width, 0)).toBeCloseTo(100, 6);
     expect(widths[0]).toBeCloseTo((972_811 / 1_471_373) * 100, 3);
     expect(widths[5]).toBeCloseTo((324_363 / 1_471_373) * 100, 3);
@@ -195,7 +195,7 @@ describe('CellCensusReadout', () => {
       probe.style.backgroundColor = hex;
       return probe.style.backgroundColor;
     };
-    const asset = segments(container, 'ASSETS');
+    const asset = segments(container, 'TYPES');
     expect(asset.map((segment) => segment.style.backgroundColor)).toEqual(
       ['native', 'token', 'object', 'identity', 'dao', 'script'].map((key) => hue(INVENTORY_COLORS[key])),
     );
@@ -235,7 +235,7 @@ describe('CellCensusReadout', () => {
         scriptFamilyCensus={familyCensus({ updated_at_ms: Date.now() - 400_000 })}
       />,
     );
-    expect(stale.container.querySelector('[data-taxonomy-scope="ASSETS"]')?.textContent).toBe('STALE');
+    expect(stale.container.querySelector('[data-taxonomy-scope="TYPES"]')?.textContent).toBe('STALE');
     expect(stale.container.querySelector<HTMLElement>('[data-chain-taxonomy]')?.style.opacity)
       .toBe(String(STALE_OPACITY));
     expect(stale.container.querySelector('[data-readout-title]')?.parentElement?.textContent)
@@ -262,7 +262,7 @@ describe('CellCensusReadout', () => {
     );
     expect(families.container.textContent).toContain('CELL CENSUS');
     expect(families.container.textContent).not.toContain('AS OF');
-    expect(families.container.querySelector('[data-taxonomy-bar="ASSETS"]')).not.toBeNull();
+    expect(families.container.querySelector('[data-taxonomy-bar="TYPES"]')).not.toBeNull();
     expect(families.container.textContent).not.toContain('Live capacity');
     cleanup();
 

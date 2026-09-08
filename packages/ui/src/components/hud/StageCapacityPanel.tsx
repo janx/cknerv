@@ -261,11 +261,13 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
           </div>
         ) : null}
 
-        {/* Each bar carries the population it counted, because the two
-            sources are not the same set: the census is the stage, the
-            fallback is the local retained window the funnel above labels
-            with the same words. */}
-        <TaxonomyBar title="ASSETS" scope={census ? POPULATION_SCOPE.stage : 'LOCAL WINDOW'} buckets={census
+        {/* Each bar carries the population it counted as the first word of
+            its title — `STAGE TYPES`, `STAGE LOCKS`, the user's spelling
+            (2026-09-08), where a tag after the word `ASSETS` used to read
+            `ASSETS STAGE` — because the two sources are not the same set:
+            the census is the stage, the fallback is the local retained
+            window the funnel above labels with the same words. */}
+        <TaxonomyBar title={census ? `${POPULATION_SCOPE.stage} TYPES` : 'LOCAL WINDOW TYPES'} buckets={census
           ? assetFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native, named: true, families: 1 },
@@ -277,7 +279,7 @@ export default function StageCapacityPanel({ stats, stageScripts, scriptRegistry
             { key: 'identity', label: 'ID', color: ASSET_COLORS.identity, count: stats.byAsset.identity, named: true, families: 1 },
             { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other, named: false, families: 1 },
           ]} />
-        <TaxonomyBar title="LOCKS" scope={census ? POPULATION_SCOPE.stage : 'LOCAL WINDOW'} buckets={census
+        <TaxonomyBar title={census ? `${POPULATION_SCOPE.stage} LOCKS` : 'LOCAL WINDOW LOCKS'} buckets={census
           ? lockFamilyBuckets(census, scriptRegistry)
           : [
             { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash, named: true, families: 1 },
