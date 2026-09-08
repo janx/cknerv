@@ -9,6 +9,7 @@
 
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
 import type { SemanticContentSegment } from '@cknerv/types';
 
 import CellDataReader, {
@@ -71,6 +72,8 @@ interface ReaderOverrides {
   visibleRows?: number;
   focus?: CellDataReaderFocus | null;
   onFocusChange?: (segment: number | null) => void;
+  reading?: ReactNode;
+  revealed?: boolean;
 }
 
 function reader(overrides: ReaderOverrides = {}) {
@@ -89,6 +92,8 @@ function reader(overrides: ReaderOverrides = {}) {
       visibleRows={overrides.visibleRows ?? READER_VISIBLE_ROWS}
       focus={overrides.focus ?? null}
       onFocusChange={onFocusChange}
+      reading={overrides.reading}
+      revealed={overrides.revealed}
     />,
   );
   return { ...view, onFocusChange };
@@ -692,5 +697,140 @@ describe('CellDataReader', () => {
     // pinned where it is written.
     expect(READER_WIDTH_PX).toBe(408);
     expect(READER_WIDTH_PX - 280 - 8).toBe(120);
+  });
+});
+
+
+// ——— The reading over the bytes, and the one stage the bytes light on ————————
+//
+// The user's direction of 2026-09-08 — 「scan01中的data decode section, 能不能
+// 移动到 scan02 里面?」 — gave this zone the analysis plate's decode window: it
+// stands between the header and the dump, in a slot the CARD fills, over the
+// very bytes its rows are about. What that costs the reader is a band of its
+// height, which the panel takes out of the dump's room before it counts rows
+// (`READER_CHROME_PX + readingPx`, pinned in the derive's own suite).
+//
+// And it splits the zone's reveal in two. The frame, the header and the reading
+// are drawn from the first frame — a plate that draws itself is not evidence
+// about a Cell, and the reading has a walk of its own inside the slot — while
+// the dump, its map and the foot line light TOGETHER, at the instant the
+// reading finishes decoding. One wrapper carries that stage, so there is one
+// element to ask and one element to ghost.
+
+describe('CellDataReader reading slot', () => {
+  /** What the card mounts in the slot, standing in for `CellContentMemory`. */
+  function readingRows(): ReactNode {
+    return <div data-reading-probe="true">DECODE · SPORE CELL</div>;
+  }
+
+  /** The zone's children, in the order a reader meets them. */
+  function band(container: HTMLElement): HTMLElement[] {
+    return Array.from(root(container).children) as HTMLElement[];
+  }
+
+  function revealWrapper(container: HTMLElement): HTMLElement {
+    return root(container).lastElementChild as HTMLElement;
+  }
+
+  function copyOf(container: HTMLElement): HTMLButtonElement {
+    return container.querySelector(
+      '[data-cell-data-reader-copy]',
+    ) as HTMLButtonElement;
+  }
+
+  function moduleTagOf(container: HTMLElement): HTMLElement {
+    const tag = (Array.from(container.querySelectorAll('span')) as HTMLElement[])
+      .find((span) => span.textContent === 'SCAN·02');
+    expect(tag, 'the zone counts itself off as SCAN·02').toBeDefined();
+    return tag as HTMLElement;
+  }
+
+  it('mounts no slot for a Cell that has no reading', () => {
+    // ~98% of the Cells this zone opens on: nobody indexed them, so there is
+    // no decode to print and the card hands in nothing. An empty slot would
+    // be six pixels of nothing between the header and the dump on nearly
+    // every card.
+    const { container } = reader();
+    expect(container.querySelector('[data-cell-data-reader-reading]')).toBeNull();
+    const children = band(container);
+    expect(children).toHaveLength(2);
+    expect(children[1].contains(dumpOf(container))).toBe(true);
+  });
+
+  it('stands the reading between the header and the dump', () => {
+    // The order the card is read in, top to bottom: what these bytes ARE, then
+    // the bytes. A legend under the foot line would invert it.
+    const { container } = reader({ reading: readingRows() });
+    const children = band(container);
+    expect(children).toHaveLength(3);
+    expect(children[0].textContent).toContain('CKBYTES');
+    expect(children[1].getAttribute('data-cell-data-reader-reading')).toBe('true');
+    expect(children[1].querySelector('[data-reading-probe]')).not.toBeNull();
+    expect(children[1].style.marginBottom).toBe('6px');
+    expect(children[2].contains(dumpOf(container))).toBe(true);
+    expect(children[2].contains(footOf(container))).toBe(true);
+    expect(children[2].contains(children[1])).toBe(false);
+  });
+
+  it('ghosts the bytes and the line that reads them, and nothing above them', () => {
+    const { container } = reader({ reading: readingRows(), revealed: false });
+    const wrapper = revealWrapper(container);
+
+    // One wrapper, one stage: the dump, its map and the foot line are one
+    // claim, and a foot line lit over a dark dump is a caption under a ghost.
+    expect(wrapper.dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(wrapper.style.opacity).toBe(String(REVEAL_GHOST_OPACITY));
+    expect(wrapper.style.pointerEvents).toBe('none');
+    expect(wrapper.getAttribute('inert')).toBe('');
+    expect(wrapper.getAttribute('aria-hidden')).toBe('true');
+    expect(wrapper.contains(dumpOf(container))).toBe(true);
+    expect(wrapper.contains(footOf(container))).toBe(true);
+
+    // …and the frame's own furniture is NOT in it. The plate draws itself from
+    // the first frame, the reading stages on its own clock inside its slot,
+    // and the module tag is how the card is counted off rather than anything
+    // it claims about this Cell.
+    const slot = container.querySelector(
+      '[data-cell-data-reader-reading]',
+    ) as HTMLElement;
+    const header = band(container)[0];
+    const tag = moduleTagOf(container);
+    for (const above of [header, slot, tag]) {
+      expect(wrapper.contains(above)).toBe(false);
+      expect(above.style.opacity).not.toBe(String(REVEAL_GHOST_OPACITY));
+    }
+
+    // COPY is a control over ghosted content: it would put a payload on the
+    // clipboard that the card has not finished saying it holds.
+    expect(copyOf(container).disabled).toBe(true);
+    expect(copyOf(container).style.opacity).toBe(String(REVEAL_GHOST_OPACITY));
+  });
+
+  it('lights the bytes when the walk reaches them', () => {
+    const { container } = reader({ reading: readingRows(), revealed: true });
+    const wrapper = revealWrapper(container);
+    expect(wrapper.dataset.cellDataReaderRevealState).toBe('resolved');
+    expect(wrapper.style.opacity).toBe('1');
+    expect(wrapper.getAttribute('inert')).toBeNull();
+    expect(wrapper.getAttribute('aria-hidden')).toBeNull();
+    expect(copyOf(container).disabled).toBe(false);
+    expect(copyOf(container).style.opacity).toBe('1');
+  });
+
+  it('reports no stage at all when nobody is walking the zone', () => {
+    // ⚠️ OMITTED IS NOT `resolved`. The tuning lab and every test of the bare
+    // zone mount this reader with no walk behind it, and a reader with no walk
+    // draws its bytes lit — but it claims no reveal state, because "there is no
+    // walk" and "the walk finished" are different answers and only one of them
+    // is evidence. The card passes the boolean every frame, so the state is
+    // there whenever there is a walk to report.
+    const { container } = reader({ reading: readingRows() });
+    const wrapper = revealWrapper(container);
+    expect(wrapper.dataset.cellDataReaderRevealState).toBeUndefined();
+    expect(wrapper.style.opacity).toBe('');
+    expect(wrapper.getAttribute('inert')).toBeNull();
+    expect(wrapper.getAttribute('aria-hidden')).toBeNull();
+    expect(wrapper.contains(dumpOf(container))).toBe(true);
+    expect(copyOf(container).disabled).toBe(false);
   });
 });

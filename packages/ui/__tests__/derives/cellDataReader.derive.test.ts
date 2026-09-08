@@ -29,6 +29,12 @@ import {
   READER_CHROME_PX,
   READER_ROW_HEIGHT_PX,
 } from '../../src/components/hud/CellDataReader';
+import {
+  READING_DECODE_LINE_PX,
+  READING_SEGMENT_ROW_PX,
+  READING_SLOT_CHROME_PX,
+  READING_TALLEST_DECODE_ROWS,
+} from '../../src/components/hud/CellContentMemory';
 
 function segment(
   label: string,
@@ -607,6 +613,38 @@ describe('readerRowsUnderScan', () => {
     // Every row is sixteen bytes, which is the number a reader actually cares
     // about: a spore dossier stands 656 B of payload at once.
     expect(rowsAt(905) * READER_BYTES_PER_ROW).toBe(656);
+  });
+
+  it('takes the reading standing over the dump out of the room first', () => {
+    // The user's direction of 2026-09-08 moved the decode window into this
+    // zone, so the plate leaves the reader a band it did not used to spend.
+    // The plan's §2 spore row, composed: a plate that measured 949 px with the
+    // reading still in it gives that block up and stands ≈ 795, the reading is
+    // handed to the reader as its own term of the chrome, and what divides
+    // into rows is what is left.
+    const SPORE_READING_PX = READING_SLOT_CHROME_PX
+      + READING_DECODE_LINE_PX
+      + READING_TALLEST_DECODE_ROWS * READING_SEGMENT_ROW_PX;
+    expect(SPORE_READING_PX).toBe(161);
+    expect(readerRowsUnderScan(
+      795,
+      ABOVE_READER_PX,
+      READER_CHROME_PX + SPORE_READING_PX,
+      READER_ROW_HEIGHT_PX,
+    )).toBe(21);
+    // The same plate with no reading in the reader keeps the eleven rows the
+    // reading costs — the height is spent once, wherever the window stands.
+    expect(rowsUnderScan(795)).toBe(32);
+    // ⚠️ And it is spent against the plate the card ACTUALLY stands at. 949 is
+    // the plate WITH the window inside it; charging the reading against that
+    // number would count the block twice — once as plate the window fills and
+    // once as room the dump gives back.
+    expect(readerRowsUnderScan(
+      949,
+      ABOVE_READER_PX,
+      READER_CHROME_PX + SPORE_READING_PX,
+      READER_ROW_HEIGHT_PX,
+    )).toBe(32);
   });
 
   it('answers an unmeasured plate with the declared count, not with the floor', () => {

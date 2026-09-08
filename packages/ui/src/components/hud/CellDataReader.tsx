@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import type { SemanticContentSegment } from '@cknerv/types';
 import {
@@ -38,6 +39,8 @@ import {
   REVEAL_GHOST_OPACITY,
   SpatialPlateHeader,
   moduleTag,
+  revealStageAttributes,
+  revealStageStyle,
 } from './primitives';
 
 // CKBYTES · SCAN·02 — the Cell's own bytes, under the CELL SCAN square, for
@@ -60,7 +63,18 @@ import {
 // 缩小 UX 面积」 and 「hex reader 应该总是展示」: keep the core, shrink the
 // surface, and stop making anyone open it.
 //
-// So the reader is a ZONE now, and it holds exactly four things:
+// So the reader is a ZONE now, and it holds exactly five things:
+//
+//   THE READING, at the top. `CellContentMemory`: what the decode called these
+//   bytes, and one row for each field it found with that field's range and
+//   value. Handed in as a slot rather than built here — it is the analysis
+//   plate's own window, moved, on the user's direction of 2026-09-08 (「scan01
+//   中的data decode section, 能不能移动到 scan02 里面?」). It is a TABLE OF
+//   CONTENTS for the dump under it, which is what makes this its home: a press
+//   on one of its rows scrolls this reader to that field's first byte and
+//   lights it. ⚠️ It is NOT the segment rail R2 took out of this zone — that
+//   was 660 px of list, inspector, GO TO and keys legend — but one line and at
+//   most seven short rows, and the dump keeps everything they do not take.
 //
 //   THE DUMP. Sixteen bytes a row, a five-digit offset gutter, the same
 //   sixteen bytes as characters on the SAME line, coloured by the segment that
@@ -75,9 +89,11 @@ import {
 //
 //   ONE FOOT LINE. Three readings in priority — the byte under the pointer,
 //   the selection, or the payload's own status — where a table of contents, a
-//   READS AS block and a five-column inspector used to be. The DATA cluster
-//   above lists the segments and names the decode (R2-b); this line is what
-//   only the reader can say, which is what is under the pointer right now.
+//   READS AS block and a five-column inspector used to be. The reading at the
+//   top of this zone lists the segments and names the decode (R2-b), and now
+//   does it four pixels above the bytes instead of on another plate; this line
+//   is what neither of them can say, which is what is under the pointer RIGHT
+//   NOW.
 //
 //   ONE COPY. The selection if there is one, else the whole payload, as `0x…`.
 //
@@ -99,9 +115,9 @@ import {
 //   `scrollTop`, which is a scroll position rather than a measurement.
 //
 //   ONE COLOUR RULE. A segment's slot comes from `segmentColorSlots`, the same
-//   function the DATA cluster and the portrait's byte rail ask, so a reader
-//   moving their eye between the three surfaces is reading one claim about the
-//   same bytes rather than three.
+//   function the reading over the dump and the portrait's byte rail ask, so a
+//   reader moving their eye between the three surfaces is reading one claim
+//   about the same bytes rather than three.
 //
 // HEX ONLY (the user's E4 ruling, 2026-09-04): there is no TEXT view and no
 // image view. The foot line's text clause is where a reader asks what a range
@@ -136,6 +152,13 @@ export const READER_ROW_HEIGHT_PX = HUD_TYPE.label * 1.5;
  *     the foot line's own box (one `micro` line, fixed)         16
  *                                                            —————
  *                                                               62
+ *
+ * ⚠️ THE READING IS NOT IN THIS NUMBER, and must never be added to it. The band
+ * between the header and the dump is sized by the RECORD rather than by the
+ * reader — `cellContentReadingLayout` in `CellContentMemory.tsx` sums it from
+ * the rows the decode will bring — and the panel hands it in as its own term,
+ * added to this one before the remainder is divided into rows. A reader that
+ * counted it here as well would take the same height out of the dump twice.
  *
  * It was 117 for the satellite, and every one of the terms that is gone is a
  * thing the user asked to remove: the loading bar (7), the inspector's rule,
@@ -263,7 +286,7 @@ interface ReaderSelection {
   start: number;
   end: number;
   /** Set only when the selection arrived through `focus` — a click on a row of
-   *  the DATA cluster. A segment selection dims its neighbours; a hand-made
+   *  the reading above. A segment selection dims its neighbours; a hand-made
    *  range does not, because the reader who dragged it is not asking about the
    *  decode. */
   segment: number | null;
@@ -273,7 +296,7 @@ function caretAt(byte: number): ReaderSelection {
   return { caret: byte, anchor: byte, start: byte, end: byte + 1, segment: null };
 }
 
-/** The DATA cluster's control grammar, in the word-width COPY needs.
+/** The reading's control grammar, in the word-width COPY needs.
  *
  *  Copied rather than imported: `navButtonStyle` is private to
  *  `CellContentMemory.tsx` and lifting it into `primitives.tsx` would mean
@@ -296,7 +319,7 @@ function commandButtonStyle(): CSSProperties {
 }
 
 /**
- * Where the DATA cluster sent the reader.
+ * Where the reading sent the reader.
  *
  * `nonce` is what makes it a GESTURE rather than a value. Clicking the same
  * segment row twice has to scroll back to it twice — a reader who wandered off
@@ -327,8 +350,8 @@ export interface CellDataReaderFocus {
  */
 export interface CellDataReaderProps {
   /** The record's decoded segments, in record order. They colour the bytes and
-   *  name the one under the pointer; the LIST of them is the DATA cluster's,
-   *  which is where a click on one comes from. */
+   *  name the one under the pointer; the LIST of them is the reading's, in the
+   *  band over the dump, which is where a click on one comes from. */
   segments: readonly SemanticContentSegment[];
   /** What the browser is holding. Shorter than `totalBytes` until the node
    *  answers, and the rows past it are drawn as ghosts. */
@@ -345,12 +368,37 @@ export interface CellDataReaderProps {
    *  ceiling, not the box's height. The box takes the payload's own height
    *  inside it (`readerBoxRows`). */
   visibleRows: number;
-  /** A segment row of the DATA cluster was clicked. Null means nothing is
-   *  being pointed at, which is also the state a byte click returns it to. */
+  /** A segment row of the reading was clicked. Null means nothing is being
+   *  pointed at, which is also the state a byte click returns it to. */
   focus: CellDataReaderFocus | null;
   /** Called with `null` when the reader's own selection stops being the focus
-   *  — a byte click or a key move — so the DATA cluster's row unpresses. */
+   *  — a byte click or a key move — so the reading's row unpresses. */
   onFocusChange?: (segment: number | null) => void;
+  /** THE READING, mounted in the band between the header and the dump: the
+   *  rows that say what these bytes decode to (`CellContentMemory`, through
+   *  the card's own leaf, so the window keeps the card's state and its stage
+   *  clock).
+   *
+   *  A SLOT and not a record, because everything the window needs — the
+   *  source, the phase, the pressed row, the walk — is the card's, and a
+   *  reader that took all of it to hand it straight back would be a second
+   *  place the card's wiring is written down. Absent for the ~98% of Cells
+   *  nobody indexed: no reading renders for them, so no slot mounts, so there
+   *  is no phantom 6 px between the header and the dump. */
+  reading?: ReactNode;
+  /** Whether the walk has reached the BYTES. The frame, the header and the
+   *  reading are lit from the first frame — a plate that draws itself is not
+   *  evidence, and the reading stages on its own clock inside the slot — and
+   *  this stages the dump and the foot line together, at
+   *  `CONTENT_DECODED_AT`, the instant the reading finishes decoding.
+   *
+   *  ⚠️ OMITTED IS NOT `true`. It means NOBODY IS STAGING THIS READER — the
+   *  tuning lab, a test of the bare zone — and such a reader draws its bytes
+   *  lit, as it always has, with no reveal state to report. A card that walks
+   *  this zone passes the boolean every frame, so `resolved` and `scanning`
+   *  are what a walk says about the bytes rather than what a reader with no
+   *  walk would have to claim about itself. */
+  revealed?: boolean;
 }
 
 export default function CellDataReader({
@@ -365,7 +413,15 @@ export default function CellDataReader({
   visibleRows,
   focus,
   onFocusChange,
+  reading,
+  revealed,
 }: CellDataReaderProps) {
+  // A walk owns the bytes, or nobody does. `staged` is which of those it is —
+  // the attributes and the reveal state belong to a walk and are absent when
+  // there is none — and `bytesLit` is what the reader draws, which is LIT
+  // either way unless a walk says the bytes are still on their way.
+  const staged = revealed !== undefined;
+  const bytesLit = revealed ?? true;
   const dumpRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLCanvasElement | null>(null);
   const footRef = useRef<HTMLDivElement | null>(null);
@@ -457,12 +513,12 @@ export default function CellDataReader({
     });
     hoverRef.current = null;
     keepByteInView(clamped);
-    // The reader's own gesture outranks the DATA cluster's: whatever row was
-    // pressed up there is no longer what is being pointed at down here.
+    // The reader's own gesture outranks the reading's: whatever row is pressed
+    // in the band above is no longer what is being pointed at down here.
     onFocusChange?.(null);
   }, [keepByteInView, onFocusChange, totalBytes]);
 
-  // The DATA cluster's hand-off, applied on the NONCE rather than on the range
+  // The reading's hand-off, applied on the NONCE rather than on the range
   // (§4's trap): re-clicking the same row after the reader scrolled away has
   // to take it back there, and an effect keyed on `start`/`end` would not fire.
   const focusNonce = focus?.nonce ?? null;
@@ -570,7 +626,7 @@ export default function CellDataReader({
     } else if (phase === 'error') {
       // Not `danger`. A node that could not be asked is a fact about the scope
       // of our knowledge, not a condition of the Cell — the same ruling the
-      // DATA cluster's own byte count already carries. The whole line is
+      // analysis plate's own DATA fact already carries. The whole line is
       // `dim`, so the message needs no colour of its own.
       say(`${formatReaderInteger(heldBytes)}`, HUD_COLORS.ink);
       say(` / ${formatReaderInteger(totalBytes)} B · `);
@@ -954,12 +1010,20 @@ export default function CellDataReader({
           }}
           >
             {/* The only command left. What it copies follows what is selected,
-                so it needs no second button to say which. */}
+                so it needs no second button to say which.
+
+                It is also a control OVER GHOSTED CONTENT while the walk is
+                still on its way to the bytes, so it ghosts with them: a lit
+                COPY over a dark dump offers to put on the clipboard a payload
+                the card has not finished saying it holds. The module tag
+                beside it stays lit, because a plate's own number is not
+                evidence about the Cell — it is how the card is counted off. */}
             <button
               type="button"
               data-cell-data-reader-copy="true"
+              disabled={!bytesLit}
               onClick={() => void onCopy()}
-              style={commandButtonStyle()}
+              style={{ ...commandButtonStyle(), ...revealStageStyle(bytesLit) }}
             >
               {copied ?? 'COPY'}
             </button>
@@ -968,110 +1032,153 @@ export default function CellDataReader({
         )}
       />
 
-      {/* The dump and its bar. Two tracks when the map is drawn, one when it
-          is not — a hidden map that still held its 8 px track and its seam
-          would leave a fourteen-pixel gutter of nothing between the frame's
-          edge and the zone's, which is the same complaint one rank smaller. */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: showsMap
-          ? `minmax(0,1fr) ${READER_MAP_WIDTH_PX}px`
-          : 'minmax(0,1fr)',
-        columnGap: 6,
-        alignItems: 'start',
-        minWidth: 0,
-      }}
-      >
+      {/* THE READING, over the bytes it reads.
+
+          Mounted only when there IS one: a Cell nobody indexed has no reading,
+          and a slot rendered empty for it would be six pixels of nothing
+          between the header and the dump on ~98% of the cards this zone opens
+          on. The window inside stages itself on the card's clock — it is lit
+          before the bytes are, which is the order the card is read in: what
+          these bytes are, then the bytes. */}
+      {reading != null ? (
         <div
-          ref={dumpRef}
-          className={READER_DUMP_CLASS}
-          data-cell-data-reader-dump="true"
-          aria-label="Cell output data, sixteen bytes to a row"
-          tabIndex={0}
-          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-          onKeyDown={onDumpKeyDown}
-          onClick={(event) => {
-            const index = byteFromEvent(event.target);
-            if (index === null) return;
-            moveCaret(index, event.shiftKey);
-            dumpRef.current?.focus({ preventScroll: true });
-          }}
-          onMouseOver={(event) => {
-            const index = byteFromEvent(event.target);
-            if (index === null) return;
-            hoverRef.current = index;
-            paintFoot();
-          }}
-          onMouseLeave={() => {
-            if (hoverRef.current === null) return;
-            hoverRef.current = null;
-            paintFoot();
-          }}
-          style={{
-            position: 'relative',
-            width: `calc(${READER_ROW_CH}ch + 8px)`,
-            height: viewHeight,
-            paddingRight: 8,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            // A wheel that runs out of dump stops there rather than taking the
-            // scene's camera with it.
-            overscrollBehavior: 'contain',
-            border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
-            background: rgba(HUD_COLORS.stageGround, 0.38),
-            fontFamily: HUD_FONTS.mono,
-            fontSize: HUD_TYPE.label,
-            letterSpacing: 0.35,
-            lineHeight: 1.5,
-          }}
+          data-cell-data-reader-reading="true"
+          style={{ minWidth: 0, marginBottom: 6 }}
         >
-          {/* The spacer carries the whole payload's height, so the map beside
-              it tells the truth about a 37 KB Cell while forty rows exist. */}
-          <div style={{ position: 'relative', height: rowCount * rowHeight }}>
-            {rows}
+          {reading}
+        </div>
+      ) : null}
+
+      {/* ONE STAGE FOR THE BYTES. The dump, its map and the foot line light
+          together, at the instant the reading finishes decoding — they are one
+          claim (here are the bytes, here is the one under your pointer) and a
+          foot line that lit before the rows it reads would be a caption under
+          a ghost. The frame, the header and the reading are NOT in here: a
+          plate that draws itself is not evidence, and the reading has a walk of
+          its own. The reveal state rides this wrapper rather than the section,
+          so what the attribute names is the thing that actually stages — and a
+          reader nobody walks reports no state at all, because "there is no
+          walk" and "the walk finished" are different answers and only one of
+          them is evidence. The wrapper itself is in every frame either way:
+          mount at final geometry. */}
+      <div
+        data-cell-data-reader-reveal-state={staged
+          ? (bytesLit ? 'resolved' : 'scanning')
+          : undefined}
+        {...(staged ? revealStageAttributes(bytesLit) : {})}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          minHeight: 0,
+          ...(staged ? revealStageStyle(bytesLit) : null),
+        }}
+      >
+        {/* The dump and its bar. Two tracks when the map is drawn, one when it
+            is not — a hidden map that still held its 8 px track and its seam
+            would leave a fourteen-pixel gutter of nothing between the frame's
+            edge and the zone's, which is the same complaint one rank smaller. */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: showsMap
+            ? `minmax(0,1fr) ${READER_MAP_WIDTH_PX}px`
+            : 'minmax(0,1fr)',
+          columnGap: 6,
+          alignItems: 'start',
+          minWidth: 0,
+        }}
+        >
+          <div
+            ref={dumpRef}
+            className={READER_DUMP_CLASS}
+            data-cell-data-reader-dump="true"
+            aria-label="Cell output data, sixteen bytes to a row"
+            tabIndex={0}
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+            onKeyDown={onDumpKeyDown}
+            onClick={(event) => {
+              const index = byteFromEvent(event.target);
+              if (index === null) return;
+              moveCaret(index, event.shiftKey);
+              dumpRef.current?.focus({ preventScroll: true });
+            }}
+            onMouseOver={(event) => {
+              const index = byteFromEvent(event.target);
+              if (index === null) return;
+              hoverRef.current = index;
+              paintFoot();
+            }}
+            onMouseLeave={() => {
+              if (hoverRef.current === null) return;
+              hoverRef.current = null;
+              paintFoot();
+            }}
+            style={{
+              position: 'relative',
+              width: `calc(${READER_ROW_CH}ch + 8px)`,
+              height: viewHeight,
+              paddingRight: 8,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              // A wheel that runs out of dump stops there rather than taking the
+              // scene's camera with it.
+              overscrollBehavior: 'contain',
+              border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
+              background: rgba(HUD_COLORS.stageGround, 0.38),
+              fontFamily: HUD_FONTS.mono,
+              fontSize: HUD_TYPE.label,
+              letterSpacing: 0.35,
+              lineHeight: 1.5,
+            }}
+          >
+            {/* The spacer carries the whole payload's height, so the map beside
+                it tells the truth about a 37 KB Cell while forty rows exist. */}
+            <div style={{ position: 'relative', height: rowCount * rowHeight }}>
+              {rows}
+            </div>
           </div>
+
+          {showsMap && (
+            <canvas
+              ref={mapRef}
+              data-cell-data-reader-map="true"
+              aria-hidden="true"
+              onPointerDown={onMapPointerDown}
+              onPointerMove={onMapPointerMove}
+              onPointerUp={endMapDrag}
+              onPointerCancel={endMapDrag}
+              style={{
+                display: 'block',
+                width: READER_MAP_WIDTH_PX,
+                height: viewHeight,
+                background: HUD_COLORS.trackGround,
+                cursor: 'pointer',
+                touchAction: 'none',
+              }}
+            />
+          )}
         </div>
 
-        {showsMap && (
-          <canvas
-            ref={mapRef}
-            data-cell-data-reader-map="true"
-            aria-hidden="true"
-            onPointerDown={onMapPointerDown}
-            onPointerMove={onMapPointerMove}
-            onPointerUp={endMapDrag}
-            onPointerCancel={endMapDrag}
-            style={{
-              display: 'block',
-              width: READER_MAP_WIDTH_PX,
-              height: viewHeight,
-              background: HUD_COLORS.trackGround,
-              cursor: 'pointer',
-              touchAction: 'none',
-            }}
-          />
-        )}
+        {/* One line, and the whole of what the rail, the READS AS block and the
+            inspector strip used to say between them. Its children are written by
+            `paintFoot` and never by React — see the comment over it. */}
+        <div
+          ref={footRef}
+          data-cell-data-reader-foot="true"
+          style={{
+            height: 16,
+            marginTop: 4,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            fontFamily: HUD_FONTS.mono,
+            fontSize: HUD_TYPE.micro,
+            letterSpacing: 0.6,
+            lineHeight: '16px',
+            color: HUD_COLORS.dim,
+          }}
+        />
       </div>
-
-      {/* One line, and the whole of what the rail, the READS AS block and the
-          inspector strip used to say between them. Its children are written by
-          `paintFoot` and never by React — see the comment over it. */}
-      <div
-        ref={footRef}
-        data-cell-data-reader-foot="true"
-        style={{
-          height: 16,
-          marginTop: 4,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          fontFamily: HUD_FONTS.mono,
-          fontSize: HUD_TYPE.micro,
-          letterSpacing: 0.6,
-          lineHeight: '16px',
-          color: HUD_COLORS.dim,
-        }}
-      />
     </div>
   );
 }
