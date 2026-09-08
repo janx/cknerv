@@ -352,29 +352,40 @@ deliberately no-scroll summaries. The Cell Scan and portrait own the exact
 WHERE / WHAT / WHEN identity proofs; **CONSENSUS MEMORY** does not repeat their
 outpoint, content-hash, and birth-anchor rows. It presents the remembered Cell
 content directly, without a nested **CELL CONTENT** frame. It reads the content
-rather than printing it. With validated indexed content it upgrades in place to
-**INDEX ANALYSIS**: the resolved asset value, the deterministic decode and its
-kind, every deterministic segment as its own row carrying that segment's label,
-its exact byte range and its value, the heuristic evidence, and the protocol
-role — each independently labeled, and not one raw byte among them. Without an
-optional source there is no window at all: the Cell Scan's DATA fact states the
-size, and the bytes are shown one plate down.
+rather than printing it. What the analysis plate keeps about a Cell's payload is
+the **DATA** fact — the size, and the proof of what the payload is — beside the
+five other identity facts of its register. The READING of the payload is not
+here: it stands one plate down, over the bytes it reads.
 
-**CKBYTES** (`SCAN·03`) is that plate. It stands under the CELL SCAN square for
-every Cell that holds bytes — from the first frame, lit at the decode step of
-the scan like every other zone — as tall as the analysis plate beside it and
-128 px wider than the square, so its far edge notches into the Cell's side of
-the card: a virtualised hex dump, sixteen bytes to a row with an offset gutter
-and printable ASCII on the same row, a scrollbar that IS the byte map of the
-whole payload, and one foot line that names the segment under the pointer and
-reads a selection as a single little-endian integer and as text. It shows the
-complete payload rather than a prefix, fetched from the node through
+**CKBYTES** (`SCAN·02`) is that plate, and it holds both. It stands under the
+CELL SCAN square for every Cell that holds bytes — mounted at final size from
+the first frame, its frame and header drawn lit, so nothing in it is waiting to
+appear — as tall as the analysis plate beside it and 128 px wider than the
+square, so its far edge notches into the Cell's side of the card.
+
+Under the header is **the reading**, the band this zone gives to what the bytes
+SAY: the deterministic decode and its kind on one line, then every deterministic
+segment as its own row carrying that segment's label, its exact byte range and
+its value; where there is no decode, one line saying so and the heuristic guess
+under it; and not one raw byte among them, because the bytes themselves are
+directly below. Without an optional source there is no reading at all — only the
+bytes.
+
+Under the reading is the dump: virtualised, sixteen bytes to a row with an
+offset gutter and printable ASCII on the same row, a scrollbar that IS the byte
+map of the whole payload, and one foot line that names the segment under the
+pointer and reads a selection as a single little-endian integer and as text. Its
+row count is what the reading leaves. It shows the complete payload rather than
+a prefix, fetched from the node through
 `GET /api/cells/:tx_hash/:output_index/data` when the bytes already held are
 shorter than the Cell, and it is there in every mode, index or none. A click on
-a segment row up in the analysis plate moves the reader to that segment's bytes
-and lights them; a click on a byte gives the reading back to the pointer. Hex
-only: a payload the chain stores as bytes is read as bytes, never guessed into
-text or an image.
+a segment row — in this same zone, a hand's width above the bytes it names —
+moves the dump to that segment's bytes and lights them; a click on a byte gives
+the reading back to the pointer. The dump and its foot line are the one thing
+here that waits on the scan: they light at the instant the reading finishes
+decoding, because a dump lit before the line that says what its bytes mean would
+be read as noise. Hex only: a payload the chain stores as bytes is read as
+bytes, never guessed into text or an image.
 
 **CONSENSUS MEMORY** retains a one-glance causal provenance line;
 activating recall temporarily opens **MEMORY TRACE** as a separate evidence
