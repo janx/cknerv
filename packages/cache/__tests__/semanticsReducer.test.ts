@@ -108,14 +108,28 @@ function activityFeed(block: number): ActivityFeedRecord {
     source: 'ckbadger',
     as_of: { block, hash: `0xblock${block}` },
     updated_at_ms: block,
-    activities: [{
-      tx_hash: '0xactivity',
-      block,
-      timestamp_ms: block,
-      category: 'script',
-      label: 'Example Script',
-      participant_count: 1,
-    }],
+    window_ms: 3_600_000,
+    kinds: [
+      { kind: 'transfer', in_window: 42, in_window_capped: false },
+      { kind: 'dao', in_window: 6, in_window_capped: false },
+      { kind: 'token', in_window: 0, in_window_capped: false },
+      { kind: 'object', in_window: 0, in_window_capped: false },
+      { kind: 'identity', in_window: 0, in_window_capped: false },
+      { kind: 'protocol', in_window: 0, in_window_capped: false },
+      {
+        kind: 'script',
+        in_window: 100,
+        in_window_capped: true,
+        latest: {
+          tx_hash: '0xactivity',
+          block,
+          timestamp_ms: block,
+          category: 'script',
+          label: 'Example Script',
+          participant_count: 1,
+        },
+      },
+    ],
   };
 }
 
@@ -765,7 +779,9 @@ const refreshArms: RefreshArm[] = [
     }),
     makeChanged: (block) => {
       const record = reanchored(activityFeed(10), block);
-      record.activities[0].label = 'Renamed Script';
+      // Nested content change: the deep walk has to see into the kind that
+      // carries the newest event, not only into the seven counts.
+      record.kinds[6].latest!.label = 'Renamed Script';
       return { type: 'activity_feed_replace', activity_feed: record };
     },
     read: (cache) => cache.activityFeed,

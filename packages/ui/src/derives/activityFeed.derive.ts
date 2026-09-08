@@ -3,7 +3,7 @@ import type {
   ActivityFeedRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
-import { CONTENT_BANDS } from '../components/hud/cellFormat';
+import { CONTENT_BANDS, formatCkb } from '../components/hud/cellFormat';
 import {
   anchoredRecordVisualState,
   type AnchoredRecordVisualState,
@@ -11,19 +11,9 @@ import {
 
 export type ActivityFeedVisualState = AnchoredRecordVisualState;
 
-export const ACTIVITY_FEED_STALE_AFTER_MS = 45_000;
-export const ACTIVITY_FEED_MAX_ITEMS = 8;
-
-export interface ActivityFeedBucket {
-  category: string;
-  count: number;
-  color: string;
-}
-
-export interface ActivityFeedVisual {
-  items: ActivityFeedItem[];
-  buckets: ActivityFeedBucket[];
-}
+/** The record re-reads seven filtered pages once a minute, so three missed
+ *  turns is the point at which the reading stopped being about now. */
+export const ACTIVITY_FEED_STALE_AFTER_MS = 180_000;
 
 // Seven words the feed shares with the house's content bands, and for the life
 // of the file it disagreed with the bands about five of them. `identity` was
@@ -40,8 +30,9 @@ export interface ActivityFeedVisual {
 // its own. The one that needed thinking about is `protocol`, which has no band
 // named for it: a protocol action is a rule about who may act, which is what
 // `authority` means, and it is the reading the band's own comment already
-// gives. All 21 pairs clear the separation floor, which is the binding
-// constraint here because these seven share ONE stacked bar.
+// gives. All 21 pairs clear the separation floor, which used to bind because
+// these seven shared ONE stacked bar; they are seven rows now, and the floor
+// still binds because a reader picks a row out by its word's colour.
 export const ACTIVITY_CATEGORY_COLORS: Record<string, string> = {
   transfer: CONTENT_BANDS.consensus,
   dao: CONTENT_BANDS.value,
@@ -74,89 +65,157 @@ export function activityFeedVisualState(
   return anchoredRecordVisualState(source, record, ACTIVITY_FEED_STALE_AFTER_MS, nowMs);
 }
 
-/** Validate and group the fixed-size sample before drawing its fingerprint. */
-export function deriveActivityFeedVisual(
-  record: ActivityFeedRecord,
-): ActivityFeedVisual | null {
-  if (record.activities.length > ACTIVITY_FEED_MAX_ITEMS) return null;
-  const seenTransactions = new Set<string>();
-  const counts = new Map<string, number>();
-  let previousBlock: number | null = null;
+/**
+ * The seven kinds, in the ONE order a reader learns once.
+ *
+ * ⚠️ The order is the reading, not a convenience. The section used to print
+ * the newest eight transactions on the chain, and the chain's newest
+ * transactions are two keepers writing state every block: 43 of the latest 64
+ * were `.bit Time Index State`, so the panel said `SCRIPT 8` and nothing else,
+ * every time anybody looked. Anything slower than one a minute — a DAO
+ * withdrawal, a token mint, a Fiber channel closing — was never in the sample
+ * at all. Seven fixed rows say what each kind DID; a kind that has done
+ * nothing this hour still says when it last did anything.
+ */
+export const ACTIVITY_KINDS = [
+  'transfer', 'dao', 'token', 'object', 'identity', 'protocol', 'script',
+] as const;
 
-  for (const item of record.activities) {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(item.tx_hash)) return null;
-    if (seenTransactions.has(item.tx_hash)) return null;
-    if (!Number.isSafeInteger(item.block) || item.block < 0) return null;
-    if (item.block > record.as_of.block) return null;
-    if (previousBlock !== null && item.block > previousBlock) return null;
-    if (!Number.isSafeInteger(item.timestamp_ms) || item.timestamp_ms < 0) return null;
-    if (!Number.isSafeInteger(item.participant_count)
-      || item.participant_count < 0
-      || item.participant_count > 512) return null;
-    const category = item.category.trim().toLowerCase();
-    if (!category || category.length > 32) return null;
-    if (item.label !== undefined) {
-      const label = item.label.trim();
-      if (!label || [...label].length > 96) return null;
-    }
-    seenTransactions.add(item.tx_hash);
-    previousBlock = item.block;
-    counts.set(category, (counts.get(category) ?? 0) + 1);
-  }
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
-  const buckets = [...counts].map(([category, count]) => ({
-    category,
-    count,
-    color: ACTIVITY_CATEGORY_COLORS[category] ?? ACTIVITY_UNLISTED_COLOR,
-  }));
-  return { items: record.activities, buckets };
+/** The wire's word, and the word the rail prints. `transfer` is CKB because
+ *  that is what moved — the row beneath it that says `TOKEN` is a transfer
+ *  too, and naming this one "transfer" would make the other six look like
+ *  something else. */
+const KIND_LABELS: Record<ActivityKind, string> = {
+  transfer: 'CKB',
+  dao: 'DAO',
+  token: 'TOKEN',
+  object: 'OBJECT',
+  identity: 'IDENTITY',
+  protocol: 'PROTOCOL',
+  script: 'SCRIPT',
+};
+
+/** One printed row: a kind, what it did this hour, and the newest one of it. */
+export interface ActivityKindRow {
+  kind: ActivityKind;
+  /** `CKB` · `DAO` · `TOKEN` · `OBJECT` · `IDENTITY` · `PROTOCOL` · `SCRIPT`. */
+  label: string;
+  color: string;
+  /** `'42'`, or `'100+'` when the index's page ran out inside the window and
+   *  the count is a floor, or `'0'`. */
+  count: string;
+  countIsZero: boolean;
+  /** How old the newest event of this kind is — `now`, `3 min`, `2 h`, `5 d` —
+   *  or null when the index has never seen one. */
+  age: string | null;
+  /** What that event was, in words a reader reads: `526.69 CKB`, `withdraw
+   *  complete · 10 K·CKB`, `0.0005 BTC`, `burn`, `fiber · channel close`. */
+  what: string | null;
+  latest: ActivityFeedItem | null;
 }
 
-/** One printed line of the feed: a row, and how many identical rows it stands
- *  for. */
-export interface ActivityFeedLine {
-  /** The first of the run — its hash keys the line and titles the hover. */
-  item: ActivityFeedRecord['activities'][number];
-  /** How many rows this line folds. 1 is an ordinary row. */
-  repeat: number;
+const HASH32 = /^0x[0-9a-fA-F]{64}$/;
+const DECIMAL = /^\d+$/;
+
+/** The page size the adapter asks for, and therefore the largest count a kind
+ *  can honestly claim in one turn. A record over it is not this record. */
+const MAX_IN_WINDOW = 100;
+
+const MAX_LABEL_CHARS = 96;
+const MAX_PARTICIPANTS = 512;
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+/**
+ * How long ago, at the coarseness the reading is worth.
+ *
+ * A rate per hour beside an age in seconds would be a false precision: the
+ * record is rebuilt once a minute, so a minute is the finest true unit, and
+ * anything inside one is `now`. The ladder stops at days because the kinds
+ * this exists for — a token mint, an object burn — are days apart, and a
+ * reader who needs the exact moment has the transaction hash on the hover.
+ */
+export function activityAge(timestampMs: number, nowMs: number): string {
+  const elapsed = Math.max(0, nowMs - timestampMs);
+  if (elapsed < MINUTE_MS) return 'now';
+  if (elapsed < HOUR_MS) return `${Math.floor(elapsed / MINUTE_MS)} min`;
+  if (elapsed < DAY_MS) return `${Math.floor(elapsed / HOUR_MS)} h`;
+  return `${Math.floor(elapsed / DAY_MS)} d`;
+}
+
+function validItem(item: ActivityFeedItem, kind: ActivityKind, record: ActivityFeedRecord): boolean {
+  if (!HASH32.test(item.tx_hash)) return false;
+  if (!Number.isSafeInteger(item.block) || item.block < 0) return false;
+  // The safe-suffix rule: nothing is drawn past the anchor the source
+  // revalidated, because past it there is no proof the chain still holds it.
+  if (item.block > record.as_of.block) return false;
+  if (!Number.isSafeInteger(item.timestamp_ms) || item.timestamp_ms < 0) return false;
+  if (!Number.isSafeInteger(item.participant_count)
+    || item.participant_count < 0
+    || item.participant_count > MAX_PARTICIPANTS) return false;
+  if (item.category !== kind) return false;
+  if (item.label !== undefined) {
+    const label = item.label.trim();
+    if (!label || [...label].length > MAX_LABEL_CHARS) return false;
+  }
+  if (item.amount_shannons !== undefined && !DECIMAL.test(item.amount_shannons)) return false;
+  return true;
+}
+
+/** The amount and the label are two halves of one sentence, and either half
+ *  may be missing: a CKB transfer has only the figure, an object burn has only
+ *  the verb, a DAO withdrawal has both. */
+function activityWhat(item: ActivityFeedItem): string | null {
+  const parts: string[] = [];
+  const label = item.label?.trim();
+  if (label) parts.push(label);
+  if (item.amount_shannons !== undefined) parts.push(formatCkb(BigInt(item.amount_shannons)));
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 /**
- * The feed folds a run of identical rows into one line.
+ * Validate the seven summaries and turn them into the seven rows, or draw
+ * nothing at all.
  *
- * ⚠️ The section's own meta says `LATEST 8` and it printed FOUR rows, and on a
- * live chain those four were regularly the same four: `#20,355,937 SCRIPT .bit
- * Time Index State 1P`, four times (report A, A-13). One transaction batch
- * touching one script four times is ONE thing that happened, and spending the
- * whole visible feed saying it four times means the other four activities the
- * meta counted are never seen at all.
- *
- * Identical means everything the row PRINTS — the block, the category, the
- * label and the participant count. The transaction hashes differ, and that is
- * precisely the difference the row does not show; it is on the hover, where the
- * folded line names the first of the run and how many followed it.
- *
- * Only a CONSECUTIVE run folds. The feed is in block order and a reader reads
- * it as an order; collapsing two runs that were not adjacent would be a
- * histogram, which is what the fingerprint bar above it already is.
+ * Null is the whole safety story of this section: the panel prints nothing it
+ * cannot prove, and a record whose kinds are not exactly the seven in order,
+ * or whose newest event names a block the anchor does not cover, is a record
+ * this browser does not understand. Half a table drawn from it would be worse
+ * than no table, because a reader cannot tell which half.
  */
-export function foldActivityLines(
-  items: ActivityFeedRecord['activities'],
-): ActivityFeedLine[] {
-  const lines: ActivityFeedLine[] = [];
-  const same = (
-    a: ActivityFeedRecord['activities'][number],
-    b: ActivityFeedRecord['activities'][number],
-  ) => a.block === b.block
-    && a.category.trim().toLowerCase() === b.category.trim().toLowerCase()
-    && (a.label ?? null) === (b.label ?? null)
-    && a.participant_count === b.participant_count;
-  for (const item of items) {
-    const last = lines[lines.length - 1];
-    if (last && same(last.item, item)) last.repeat += 1;
-    else lines.push({ item, repeat: 1 });
+export function deriveActivityRows(
+  record: ActivityFeedRecord,
+  nowMs = Date.now(),
+): ActivityKindRow[] | null {
+  if (!Number.isSafeInteger(record.window_ms) || record.window_ms <= 0) return null;
+  if (!Array.isArray(record.kinds) || record.kinds.length !== ACTIVITY_KINDS.length) return null;
+
+  const rows: ActivityKindRow[] = [];
+  for (let index = 0; index < ACTIVITY_KINDS.length; index += 1) {
+    const kind = ACTIVITY_KINDS[index];
+    const summary = record.kinds[index];
+    if (summary.kind !== kind) return null;
+    if (!Number.isSafeInteger(summary.in_window)
+      || summary.in_window < 0
+      || summary.in_window > MAX_IN_WINDOW) return null;
+    const latest = summary.latest ?? null;
+    if (latest !== null && !validItem(latest, kind, record)) return null;
+    rows.push({
+      kind,
+      label: KIND_LABELS[kind],
+      color: activityCategoryColor(kind),
+      count: `${summary.in_window}${summary.in_window_capped ? '+' : ''}`,
+      countIsZero: summary.in_window === 0,
+      age: latest ? activityAge(latest.timestamp_ms, nowMs) : null,
+      what: latest ? activityWhat(latest) : null,
+      latest,
+    });
   }
-  return lines;
+  return rows;
 }
 
 export function activityCategoryColor(category: string): string {

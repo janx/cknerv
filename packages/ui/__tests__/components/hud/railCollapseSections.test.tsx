@@ -43,9 +43,27 @@ const activity: ActivityFeedRecord = {
   source: 'ckbadger',
   as_of: { block: 100, hash: '0xblock100' },
   updated_at_ms: Date.now(),
-  activities: [
-    { tx_hash: `0x${'aa'.repeat(32)}`, block: 100, timestamp_ms: 2, category: 'dao', label: 'Deposit', participant_count: 3 },
-    { tx_hash: `0x${'bb'.repeat(32)}`, block: 99, timestamp_ms: 1, category: 'tokens', label: 'xUDT', participant_count: 2 },
+  window_ms: 3_600_000,
+  kinds: [
+    { kind: 'transfer', in_window: 42, in_window_capped: false },
+    {
+      kind: 'dao',
+      in_window: 6,
+      in_window_capped: false,
+      latest: {
+        tx_hash: `0x${'aa'.repeat(32)}`,
+        block: 100,
+        timestamp_ms: Date.now(),
+        category: 'dao',
+        label: 'Deposit',
+        participant_count: 3,
+      },
+    },
+    { kind: 'token', in_window: 0, in_window_capped: false },
+    { kind: 'object', in_window: 0, in_window_capped: false },
+    { kind: 'identity', in_window: 0, in_window_capped: false },
+    { kind: 'protocol', in_window: 0, in_window_capped: false },
+    { kind: 'script', in_window: 100, in_window_capped: true },
   ],
 };
 
@@ -80,7 +98,7 @@ describe('rail collapse · folded sections', () => {
     expect(section.textContent).toContain('PEAK/H');
   });
 
-  it('leaves ACTIVITY its header and its count', () => {
+  it('leaves ACTIVITY its header and the hour\'s whole traffic', () => {
     const { container } = render(
       <ActivityFeedReadout source={source} record={activity} folded />,
     );
@@ -88,54 +106,22 @@ describe('rail collapse · folded sections', () => {
 
     expect(section.dataset.activityFeedFolded).toBe('true');
     expect(section.textContent).toContain('ACTIVITY');
-    expect(section.textContent).toContain('LATEST 2');
-    // Neither the category fingerprint nor the rows under it.
-    expect(section.querySelector('[data-activity-category]')).toBeNull();
+    // 42 + 6 + 100, and the `+` because the busiest kind's count is a floor.
+    expect(section.textContent).toContain('148+/H');
+    // Not the table: seven rows are what a collapsed rail has no room for.
+    expect(section.querySelector('[data-activity-kind]')).toBeNull();
     expect(section.textContent).not.toContain('Deposit');
   });
 
-  it('draws the fingerprint and the rows without it', () => {
+  it('draws the seven rows without it', () => {
     const { container } = render(
       <ActivityFeedReadout source={source} record={activity} />,
     );
     const section = container.querySelector('[data-activity-feed-state]') as HTMLElement;
 
-    expect(section.querySelectorAll('[data-activity-category]').length).toBeGreaterThan(0);
+    expect(section.querySelectorAll('[data-activity-kind]')).toHaveLength(7);
+    expect(section.textContent).toContain('LAST HOUR');
     expect(section.textContent).toContain('Deposit');
-  });
-
-  it('prints a run of identical rows as one line with the count of the run', () => {
-    // The live shape: `LATEST 8` over four rows that were the same four. Four
-    // identical lines spend the whole visible feed saying one thing, and the
-    // four activities the meta counted are never seen (report A, A-13).
-    const repeated = {
-      ...activity,
-      activities: [
-        ...Array.from({ length: 4 }, (_unused, index) => ({
-          tx_hash: `0x${String(index + 1).repeat(2).repeat(32)}`,
-          block: 100,
-          timestamp_ms: 2,
-          category: 'script',
-          label: '.bit Time Index State',
-          participant_count: 1,
-        })),
-        activity.activities[1],
-      ],
-    };
-    const { container } = render(
-      <ActivityFeedReadout source={source} record={repeated} />,
-    );
-    const rows = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-activity-row]'),
-    );
-
-    // Two lines where there were five rows, and the fold names its own count.
-    expect(rows).toHaveLength(2);
-    expect(rows[0].dataset.activityRow).toBe('folded');
-    expect(rows[0].querySelector('[data-activity-repeat="4"]')?.textContent).toBe(' ×4');
-    expect(rows[0].getAttribute('title')).toContain('4 identical activities');
-    expect(rows[1].dataset.activityRow).toBe('single');
-    expect(rows[1].querySelector('[data-activity-repeat]')).toBeNull();
   });
 });
 

@@ -6495,7 +6495,6 @@ describe('a bar and the legend that names it', () => {
     }
     expect(offenders).toEqual([]);
     expect([...drawers].sort()).toEqual([
-      'ActivityFeedReadout.tsx',
       'CellByteBudget.tsx',
       'NetworkAtlasReadout.tsx',
       'NetworkPanel.tsx',
@@ -6530,7 +6529,6 @@ describe('a bar and the legend that names it', () => {
     }
     expect(offenders).toEqual([]);
     expect(declared.sort()).toEqual([
-      'ActivityFeedReadout.tsx qualitative',
       'NetworkAtlasReadout.tsx qualitative',
       // One legend for both scopes: the taxonomy bar draws the stage's
       // families and the chain's, so it declares once for the two panels

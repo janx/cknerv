@@ -451,8 +451,29 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.protocol_era?.indexed_tip_epoch).toBe(12293);
     expect(sample.snapshot.fork_watch?.recent_reorg?.kind).toBe('deep');
     expect(sample.snapshot.fork_watch?.deep_fork?.indexed_tip).toBe(99);
-    expect(sample.snapshot.activity_feed?.activities[0].category).toBe('dao');
-    expect(sample.snapshot.activity_feed?.activities[1].participant_count).toBe(2);
+    // ACTIVITY is a rate per kind, not a sample of the newest transactions, so
+    // the ORDER is the contract: seven rows a reader learns once, and a row
+    // that moved would silently repaint every kind's colour and word. The
+    // window is pinned with them because a count without the span it counts
+    // over is not a reading.
+    const activity = sample.snapshot.activity_feed;
+    expect(activity?.window_ms).toBe(3_600_000);
+    expect(activity?.kinds.map((kind) => kind.kind)).toEqual([
+      'transfer', 'dao', 'token', 'object', 'identity', 'protocol', 'script',
+    ]);
+    // A kind that happens four times a minute prints a floor, and the kind
+    // that happens four times a week still names its newest event.
+    expect(activity?.kinds[6].in_window).toBe(100);
+    expect(activity?.kinds[6].in_window_capped).toBe(true);
+    expect(activity?.kinds[6].latest?.label).toBe('.bit Time Index State');
+    expect(activity?.kinds[0].latest?.amount_shannons).toBe('52668983337');
+    expect(activity?.kinds[2].in_window).toBe(0);
+    expect(activity?.kinds[2].latest?.label).toBe('0.0005 BTC');
+    // Every `latest` names its own kind: the item's category and the summary
+    // that carries it are one word, never two.
+    for (const kind of activity?.kinds ?? []) {
+      if (kind.latest) expect(kind.latest.category).toBe(kind.kind);
+    }
     expect(sample.snapshot.transaction_horizon?.current_day).toBe(345);
     expect(sample.snapshot.transaction_horizon?.hourly_counts).toEqual([7, 9, 12]);
     // The atlas is asserted by its arithmetic rather than by its figures. The

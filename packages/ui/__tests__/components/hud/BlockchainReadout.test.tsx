@@ -53,21 +53,38 @@ const activityFeed: ActivityFeedRecord = {
   source: 'ckbadger',
   as_of: { block: 100, hash: '0xblock100' },
   updated_at_ms: Date.now(),
-  activities: [
+  window_ms: 3_600_000,
+  kinds: [
     {
-      tx_hash: `0x${'11'.repeat(32)}`,
-      block: 100,
-      timestamp_ms: Date.now(),
-      category: 'script',
-      label: '.bit Time Info',
-      participant_count: 1,
+      kind: 'transfer',
+      in_window: 42,
+      in_window_capped: false,
+      latest: {
+        tx_hash: `0x${'22'.repeat(32)}`,
+        block: 99,
+        timestamp_ms: Date.now(),
+        category: 'transfer',
+        participant_count: 2,
+        amount_shannons: '52668983337',
+      },
     },
+    { kind: 'dao', in_window: 6, in_window_capped: false },
+    { kind: 'token', in_window: 0, in_window_capped: false },
+    { kind: 'object', in_window: 0, in_window_capped: false },
+    { kind: 'identity', in_window: 0, in_window_capped: false },
+    { kind: 'protocol', in_window: 0, in_window_capped: false },
     {
-      tx_hash: `0x${'22'.repeat(32)}`,
-      block: 99,
-      timestamp_ms: Date.now(),
-      category: 'transfer',
-      participant_count: 2,
+      kind: 'script',
+      in_window: 100,
+      in_window_capped: true,
+      latest: {
+        tx_hash: `0x${'11'.repeat(32)}`,
+        block: 100,
+        timestamp_ms: Date.now(),
+        category: 'script',
+        label: '.bit Time Info',
+        participant_count: 1,
+      },
     },
   ],
 };
@@ -189,7 +206,7 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).not.toContain('PROTOCOL ERA');
   });
 
-  it('renders an optional bounded activity fingerprint', () => {
+  it('renders the optional activity table, one row per kind', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
@@ -199,16 +216,16 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('ACTIVITY');
-    expect(text).toContain('LATEST 2');
-    expect(text).toContain('SCRIPT 1 · CKB 1');
+    expect(text).toContain('LAST HOUR');
     expect(text).toContain('.bit Time Info');
-    expect(text).toContain('2P');
-    expect(container.querySelector<HTMLElement>(
-      '[data-activity-category="script"]',
-    )?.style.width).toBe('50%');
+    expect(text).toContain('526.69 CKB');
+    expect(container.querySelectorAll('[data-activity-kind]')).toHaveLength(7);
   });
 
-  it('keeps the activity fingerprint but folds rows in a short viewport', () => {
+  it('keeps the whole activity table in a short viewport', () => {
+    // The seven rows ARE the section — the fingerprint bar this used to keep
+    // instead of them is gone — so a short viewport tightens the frame and
+    // drops nothing.
     const { container } = render(
       <BlockchainReadout
         chain={chain}
@@ -219,10 +236,10 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('ACTIVITY');
-    expect(text).toContain('LATEST 2');
-    expect(text).toContain('SCRIPT 1 · CKB 1');
-    expect(text).not.toContain('.bit Time Info');
+    expect(text).toContain('LAST HOUR');
+    expect(text).toContain('.bit Time Info');
     expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-activity-kind]')).toHaveLength(7);
   });
 
   it('renders the hourly horizon without a TPS row', () => {

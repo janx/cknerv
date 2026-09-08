@@ -284,21 +284,51 @@ export interface ForkWatchRecord {
   deep_fork?: ForkWatchDeepFork;
 }
 
+/** One canonical activity, the newest of its kind the index has seen. The
+ *  category and label are display-safe adapter normalizations; raw source JSON
+ *  and participant addresses never cross the shared contract. */
 export interface ActivityFeedItem {
   tx_hash: string;
   block: number;
   timestamp_ms: number;
+  /** The feed kind: transfer | dao | token | object | identity | protocol |
+   *  script. Always the kind of the summary that carries it. */
   category: string;
   label?: string;
   participant_count: number;
+  /** Exact shannons, when the kind has one figure: a CKB transfer's largest
+   *  positive participant delta, a DAO action's `metadata.capacity`. A decimal
+   *  string, because a shannon figure does not survive a double. */
+  amount_shannons?: string;
 }
 
-/** Explicitly bounded newest-activity sample, not a historical census. */
+/** One kind of activity over the record's window: how much of it happened, and
+ *  the newest one at any age. */
+export interface ActivityKindSummary {
+  kind: string;
+  /** Canonical, anchor-bounded events of this kind inside the window. */
+  in_window: number;
+  /** The page the index served was full and its oldest row was still inside
+   *  the window: `in_window` is a floor, not a count. */
+  in_window_capped: boolean;
+  /** The newest canonical event of this kind at any age; absent when the index
+   *  has never seen one. */
+  latest?: ActivityFeedItem;
+}
+
+/** What each kind of thing on the chain has done lately. Not a sample of the
+ *  newest transactions: a rate per kind over a fixed window, beside the newest
+ *  event of that kind however old it is, so a kind that happens twice a day is
+ *  as legible as one that happens four times a minute. */
 export interface ActivityFeedRecord {
   source: string;
   as_of: ChainAnchor;
   updated_at_ms: number;
-  activities: ActivityFeedItem[];
+  /** The window every `in_window` counts over, ending at `updated_at_ms`. */
+  window_ms: number;
+  /** Exactly the seven kinds, in the order a reader learns once: transfer,
+   *  dao, token, object, identity, protocol, script. */
+  kinds: ActivityKindSummary[];
 }
 
 /** Bounded oldest-to-newest indexed counts; never a canonical total. */

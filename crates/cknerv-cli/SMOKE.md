@@ -352,10 +352,12 @@ With a local ckbadger service configured:
       `INDEXED ACTIVITY · LAST HOUR` with one row per kind —
       CKB · DAO · TOKEN · OBJECT · IDENTITY · PROTOCOL · SCRIPT — each reading
       an hour's count, the age of its newest event, and what that event was
-- [ ] At 768px viewport height, `ACTIVITY` folds to a header-only
-      `<total>/H` section, and the transaction horizon folds into a
-      header-only `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does
-      not overlap `PULSE`
+- [ ] At 768px viewport height, `ACTIVITY` keeps all seven rows — the
+      fingerprint bar it used to keep in their place is gone — and the
+      transaction horizon folds into a header-only `TX HORIZON · H…/D…`
+      section; `COMMON KNOWLEDGE BASE` does not overlap `PULSE`
+- [ ] Below the rail-collapse width, `ACTIVITY` folds to a header-only
+      `<total>/H` section, the `+` present only when a kind's count is a floor
 - [ ] `COMMON KNOWLEDGE BASE` carries a `CELL CENSUS` section: live capacity,
       knowledge, the validated live-Cell count printed bare (no `CHAIN`, no
       `AS OF` of its own — `STALE` only when stale), one `ASSETS` bar over the
