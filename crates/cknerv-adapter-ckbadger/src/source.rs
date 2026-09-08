@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
@@ -88,6 +88,29 @@ const MAX_ECOSYSTEM_ASSETS: usize = 16;
 /// It is a page size, not a row count: what reaches the wire is seven
 /// summaries, and the page is how far back into the hour one request reaches.
 const ACTIVITY_FEED_LIMIT: usize = 100;
+/// What a kind is asked for FIRST. `activities` takes no time bound: the
+/// index walks its transaction table backwards until the filter has matched
+/// the rows asked for, so the price of a page is how far back it had to walk,
+/// and the kinds whose rows are days apart are the expensive ones. Measured
+/// against the user's own index on 2026-09-08, one hundred rows cost 117 ms
+/// for `ckb` and 48 ms for `script` and 15 s, 22 s and 45 s for `token`,
+/// `protocol` and `object`. Ten rows are asked for first, and only a kind
+/// whose ten ran out INSIDE the hour is asked for a hundred — the one case a
+/// deeper page can change the answer, and the case where the walk is short,
+/// because a kind that fills ten rows inside an hour is a dense one. Every
+/// other kind has already answered exactly: a page that reached past the
+/// window, or ran out of rows entirely, saw everything the hour holds.
+const ACTIVITY_FEED_PROBE_LIMIT: usize = 10;
+/// The budget for the whole round, and the timeout of every request in it —
+/// what is left of this. The shared client's four seconds bound a cached
+/// summary and these are not that: they are the deep scans above, six to
+/// fifteen seconds each on a warm index. The budget stays inside the 60 s
+/// cadence and far inside the 180 s the browser calls stale, because a
+/// record's counts end at the clock it started on and an hour that ended two
+/// minutes ago is not the last hour: a round that cannot finish in time is
+/// worth more as a failure that keeps the last good record than as a reading
+/// that arrives already old.
+const ACTIVITY_FEED_ROUND_BUDGET: Duration = Duration::from_secs(45);
 /// The window every kind's rate is counted over — one hour, ending at the
 /// record's own fetch clock.
 const ACTIVITY_WINDOW_MS: u64 = 3_600_000;
@@ -507,6 +530,43 @@ impl CkbadgerEnrichmentSource {
             return Err(anyhow!("ckbadger {subject} anchor changed during fetch"));
         }
         Ok(())
+    }
+
+    /// One filtered page of the global activity feed, under what is left of
+    /// the round's budget rather than the client's four seconds. `Ok(None)`
+    /// is the route itself being absent, which retires the whole record.
+    async fn activity_page(
+        &self,
+        kind: &str,
+        filter: &str,
+        limit: usize,
+        deadline: Instant,
+    ) -> anyhow::Result<Option<Vec<LatestActivityResponse>>> {
+        let mut url = self.endpoint("activities")?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string())
+            .append_pair("filter", filter);
+        let response = self
+            .client
+            .get(url)
+            .timeout(deadline.saturating_duration_since(Instant::now()))
+            .send()
+            .await
+            .with_context(|| format!("fetch ckbadger {kind} activities"))?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger {kind} activities returned HTTP {}",
+                response.status()
+            ));
+        }
+        let page: ActivityPageResponse = response
+            .json()
+            .await
+            .with_context(|| format!("decode ckbadger {kind} activities"))?;
+        Ok(Some(page.data))
     }
 
     fn current_anchor(&self, context: &CanonicalContext) -> anyhow::Result<ChainAnchor> {
@@ -2117,32 +2177,31 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
     ) -> anyhow::Result<Option<ActivityFeedRecord>> {
         let anchor = self.current_anchor(context)?;
         let now = now_ms();
+        let deadline = Instant::now() + ACTIVITY_FEED_ROUND_BUDGET;
         let mut kinds = Vec::with_capacity(ACTIVITY_KINDS.len());
         for (kind, filter) in ACTIVITY_KINDS {
-            let mut url = self.endpoint("activities")?;
-            url.query_pairs_mut()
-                .append_pair("limit", &ACTIVITY_FEED_LIMIT.to_string())
-                .append_pair("filter", filter);
-            let response = self
-                .client
-                .get(url)
-                .send()
-                .await
-                .with_context(|| format!("fetch ckbadger {kind} activities"))?;
-            if response.status() == StatusCode::NOT_FOUND {
+            let Some(rows) = self
+                .activity_page(kind, filter, ACTIVITY_FEED_PROBE_LIMIT, deadline)
+                .await?
+            else {
                 return Ok(None);
+            };
+            let mut summary =
+                map_activity_kind(kind, rows, ACTIVITY_FEED_PROBE_LIMIT, &anchor, now)?;
+            // The probe ran out inside the hour, so the count it carries is a
+            // floor a deeper page can raise. This is the only case where one
+            // can: a page that reached past the window, or that ran out of
+            // rows, has already seen every event the hour holds.
+            if summary.in_window_capped {
+                let Some(rows) = self
+                    .activity_page(kind, filter, ACTIVITY_FEED_LIMIT, deadline)
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                summary = map_activity_kind(kind, rows, ACTIVITY_FEED_LIMIT, &anchor, now)?;
             }
-            if !response.status().is_success() {
-                return Err(anyhow!(
-                    "ckbadger {kind} activities returned HTTP {}",
-                    response.status()
-                ));
-            }
-            let page: ActivityPageResponse = response
-                .json()
-                .await
-                .with_context(|| format!("decode ckbadger {kind} activities"))?;
-            kinds.push(map_activity_kind(kind, page.data, &anchor, now)?);
+            kinds.push(summary);
         }
         self.revalidate_anchor(&anchor, "activity feed").await?;
         Ok(Some(ActivityFeedRecord {
@@ -4118,15 +4177,16 @@ fn valid_day_bucket_label(label: &str) -> bool {
 fn map_activity_kind(
     kind: &str,
     rows: Vec<LatestActivityResponse>,
+    limit: usize,
     anchor: &ChainAnchor,
     now_ms: u64,
 ) -> anyhow::Result<ActivityKindSummary> {
-    if rows.len() > ACTIVITY_FEED_LIMIT {
+    if rows.len() > limit {
         return Err(anyhow!(
             "ckbadger {kind} activities exceeded the requested limit"
         ));
     }
-    let page_was_full = rows.len() == ACTIVITY_FEED_LIMIT;
+    let page_was_full = rows.len() == limit;
     let window_start = now_ms.saturating_sub(ACTIVITY_WINDOW_MS);
 
     let mut tx_hashes = HashSet::new();
@@ -6122,7 +6182,10 @@ mod tests {
                         .expect("activities fetched with no bound")
                         .parse()
                         .expect("activities fetched with an unreadable bound");
-                    assert_eq!(limit, 100, "activities fetched with an unexpected bound");
+                    assert!(
+                        limit == ACTIVITY_FEED_PROBE_LIMIT || limit == ACTIVITY_FEED_LIMIT,
+                        "activities fetched with an unexpected bound"
+                    );
                     let filter = query
                         .get("filter")
                         .expect("activities fetched with no filter")
@@ -10890,7 +10953,12 @@ mod tests {
     /// One page per kind, answered by `filter`, over a mock that stamps its
     /// rows against the same wall clock the adapter reads. Everything the
     /// window arithmetic and the label rules do is asserted here.
-    async fn spawn_activity_api(pages: Vec<ActivityPage>) -> (Url, tokio::task::JoinHandle<()>) {
+    /// Every `(filter, limit)` the round asked for, in order.
+    type ActivityRequestLog = Arc<std::sync::Mutex<Vec<(String, usize)>>>;
+
+    async fn spawn_activity_api(
+        pages: Vec<ActivityPage>,
+    ) -> (Url, tokio::task::JoinHandle<()>, ActivityRequestLog) {
         let now = now_ms();
         let pages: HashMap<String, serde_json::Value> = pages
             .into_iter()
@@ -10921,6 +10989,8 @@ mod tests {
                 (filter.to_string(), serde_json::json!({ "data": rows }))
             })
             .collect();
+        let requests: ActivityRequestLog = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let route_requests = requests.clone();
         let app = Router::new()
             .route(
                 "/api/v1/statistics/network",
@@ -10948,16 +11018,30 @@ mod tests {
                         HashMap<String, String>,
                     >| {
                         let pages = pages.clone();
+                        let requests = route_requests.clone();
                         async move {
                             let filter = query
                                 .get("filter")
                                 .expect("activities fetched with no filter");
-                            Json(
-                                pages
-                                    .get(filter)
-                                    .cloned()
-                                    .unwrap_or_else(|| serde_json::json!({ "data": [] })),
-                            )
+                            let limit: usize = query
+                                .get("limit")
+                                .expect("activities fetched with no bound")
+                                .parse()
+                                .expect("activities fetched with an unreadable bound");
+                            requests.lock().unwrap().push((filter.clone(), limit));
+                            let mut page = pages
+                                .get(filter)
+                                .cloned()
+                                .unwrap_or_else(|| serde_json::json!({ "data": [] }));
+                            // The index serves at most what was asked for,
+                            // and the depth of the ask is the whole point of
+                            // the probe: a mock that ignored `limit` would
+                            // hand a hundred rows to a request for ten.
+                            page["data"]
+                                .as_array_mut()
+                                .expect("a page carries an array")
+                                .truncate(limit);
+                            Json(page)
                         }
                     },
                 ),
@@ -10970,16 +11054,24 @@ mod tests {
         (
             Url::parse(&format!("http://{address}/api/v1")).unwrap(),
             handle,
+            requests,
         )
     }
 
     async fn activity_feed_over(pages: Vec<ActivityPage>) -> anyhow::Result<ActivityFeedRecord> {
-        let (api_base, server) = spawn_activity_api(pages).await;
+        Ok(activity_feed_and_requests_over(pages).await?.0)
+    }
+
+    async fn activity_feed_and_requests_over(
+        pages: Vec<ActivityPage>,
+    ) -> anyhow::Result<(ActivityFeedRecord, Vec<(String, usize)>)> {
+        let (api_base, server, requests) = spawn_activity_api(pages).await;
         let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
         source.probe(&context()).await;
         let record = source.enrich_activity_feed(&context()).await;
         server.abort();
-        Ok(record?.expect("the activities route answered"))
+        let asked = requests.lock().unwrap().clone();
+        Ok((record?.expect("the activities route answered"), asked))
     }
 
     fn activity_summary<'a>(
@@ -11078,6 +11170,133 @@ mod tests {
             !script.in_window_capped,
             "the page reached past the window, so the count is the count"
         );
+    }
+
+    /// `activities` takes no time bound: the index walks its transaction
+    /// table backwards until the filter has matched the rows asked for, so a
+    /// hundred rows of a kind whose events are days apart is a walk over
+    /// days. Every kind is asked for ten, and asked again for a hundred ONLY
+    /// where the ten ran out inside the hour — the one case where a deeper
+    /// page changes the answer, and the case where the walk is short. The
+    /// answer is the deep page's, identical to what asking for a hundred
+    /// outright would have given: measured on the user's own index the seven
+    /// deep pages cost 98 seconds and this costs 12 to 16.
+    #[tokio::test]
+    async fn activity_asks_for_a_deep_page_only_where_ten_ran_out_inside_the_hour() {
+        let dense = (0..12)
+            .map(|index| (1, 100 - i64::from(index) / 4, serde_json::json!({})))
+            .collect::<Vec<_>>();
+        // Ten rows, and the tenth is older than the hour: the page is full
+        // and still exact, because nothing deeper is inside the window.
+        let full_but_past_the_window = (0..10)
+            .map(|index| {
+                let minutes_ago = if index == 9 { 90 } else { 1 };
+                (
+                    minutes_ago,
+                    100 - i64::from(index) / 4,
+                    serde_json::json!({}),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let (record, asked) = activity_feed_and_requests_over(vec![
+            ("ckb", dense),
+            ("dao", full_but_past_the_window),
+            ("object", vec![(5_760, 40, serde_json::json!({}))]),
+        ])
+        .await
+        .unwrap();
+
+        assert_eq!(
+            asked,
+            vec![
+                ("ckb".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("ckb".to_string(), ACTIVITY_FEED_LIMIT),
+                ("dao".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("token".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("object".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("identity".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("protocol".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+                ("script".to_string(), ACTIVITY_FEED_PROBE_LIMIT),
+            ],
+            "only the kind whose ten ran out inside the hour is asked twice"
+        );
+
+        let transfer = activity_summary(&record, "transfer");
+        assert_eq!(
+            transfer.in_window, 12,
+            "the count is the deep page's, not the probe's ten"
+        );
+        assert!(
+            !transfer.in_window_capped,
+            "twelve rows did not fill a hundred, so the count is the count"
+        );
+        let dao = activity_summary(&record, "dao");
+        assert_eq!(dao.in_window, 9, "the tenth row is outside the hour");
+        assert!(
+            !dao.in_window_capped,
+            "a full page that reached past the window is exact and asks for nothing more"
+        );
+    }
+
+    /// The shared client gives up after four seconds, which is a bound on a
+    /// cached summary. These pages are not that — they are the backward walk
+    /// above, six to fifteen seconds each on the user's warm index — and
+    /// under the client's own timeout every round failed and the section
+    /// drew nothing at all. The round carries its own budget instead.
+    #[tokio::test]
+    async fn activity_outlasts_the_client_timeout_a_cached_summary_is_bound_by() {
+        let served = Arc::new(AtomicU64::new(0));
+        let route_served = served.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    |axum::extract::Path(number): axum::extract::Path<i64>| async move {
+                        Json(serde_json::json!({
+                            "number": number,
+                            "hash": if number == 100 { "0xblock100" } else { "0xblock101" }
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/activities",
+                get(move || {
+                    let served = route_served.clone();
+                    async move {
+                        if served.fetch_add(1, Ordering::Relaxed) == 0 {
+                            tokio::time::sleep(Duration::from_millis(4_500)).await;
+                        }
+                        Json(serde_json::json!({ "data": [] }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let api_base = Url::parse(&format!("http://{address}/api/v1")).unwrap();
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let record = source.enrich_activity_feed(&context()).await;
+        server.abort();
+
+        let record = record
+            .expect("a page slower than the client's four seconds is not a failure")
+            .expect("the activities route answered");
+        assert_eq!(record.kinds.len(), 7);
+        assert_eq!(served.load(Ordering::Relaxed), 7);
     }
 
     /// Every label rule, on the shapes ckbadger actually served on

@@ -525,8 +525,8 @@ revision, or create scene objects.
 ### Recent Activity
 
 With `activity_feed`, cknerv reads ckbadger's seven filtered global feeds —
-`activities?limit=100&filter=<ckb|dao|token|object|identity|protocol|script>` —
-once every 60 seconds, under one anchor revalidated after the seventh request.
+`activities?filter=<ckb|dao|token|object|identity|protocol|script>` — once
+every 60 seconds, under one anchor revalidated after the last request.
 The adapter validates newest-first block order, anchor bounds, transaction
 hashes, timestamps, and participant and nested-item limits on every page. Each
 kind reaches the wire as a summary: how many canonical, anchor-bounded events
@@ -534,6 +534,23 @@ of that kind fall inside the last hour, whether a full page ran out inside that
 hour (making the count a floor), and the newest event of that kind at any age
 with a display-safe label. Participant addresses and arbitrary source JSON do
 not cross the wire boundary.
+
+`activities` takes no time bound: the index walks its transaction table
+backwards until the filter has matched `limit` rows, so the price of a page is
+how far back it had to walk. Measured on 2026-09-08, a hundred rows cost 117 ms
+for `ckb` and 48 ms for `script`, whose rows are seconds apart, and 15 s, 22 s
+and 45 s for `token`, `protocol` and `object`, whose rows are days apart —
+ninety-eight seconds for the seven together, against a shared HTTP client that
+gives up after four. So each kind is asked for `limit=10` first, and asked
+again for `limit=100` only when those ten ran out INSIDE the hour: the one case
+where a deeper page can raise the count, and the case where the walk is short,
+because a kind that fills ten rows in an hour is a dense one. Every other kind
+has already answered exactly — a page that reached past the window, or that ran
+out of rows, has seen everything the hour holds. The round carries a 45-second
+budget of its own, and each request is bounded by what is left of it; a round
+that cannot finish inside it fails and the last good record stands, because a
+record's counts end at the clock it started on and an hour that ended two
+minutes ago is not the last hour.
 
 The sample of eight this replaced could not report anything slower than one a
 minute: the chain's newest transactions are two keepers writing state every

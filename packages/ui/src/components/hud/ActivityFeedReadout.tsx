@@ -80,7 +80,8 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
               key={row.kind}
               data-activity-kind={row.kind}
               title={row.latest
-                ? `#${row.latest.block.toLocaleString('en-US')} · ${row.latest.tx_hash} · ${row.latest.participant_count} participants`
+                ? `#${row.latest.block.toLocaleString('en-US')} · ${row.latest.tx_hash}`
+                  + ` · ${row.latest.participant_count} participant${row.latest.participant_count === 1 ? '' : 's'}`
                 : 'never seen'}
               style={{
                 display: 'grid',

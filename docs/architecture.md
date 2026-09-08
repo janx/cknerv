@@ -782,7 +782,7 @@ per capability. Default cadences are:
 | Asset ecosystem | 30 s |
 | DAO state | 60 s |
 | Protocol era | 5 min |
-| Activity by kind (7 filtered pages) | 60 s |
+| Activity by kind (7 filtered pages, deepened where one ran out inside the hour) | 60 s |
 | Transaction horizon | 60 s |
 | Fork watch | 15 s |
 | Network atlas | 60 s |

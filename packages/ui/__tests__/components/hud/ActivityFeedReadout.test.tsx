@@ -171,8 +171,14 @@ describe('ACTIVITY · seven kinds, not eight transactions', () => {
     const { container } = render(<ActivityFeedReadout source={source} record={feed()} />);
     const dao = container.querySelector<HTMLElement>('[data-activity-kind="dao"]');
     expect(dao?.getAttribute('title'))
-      .toBe(`#99 · 0x${'55'.repeat(32)} · 1 participants`);
+      .toBe(`#99 · 0x${'55'.repeat(32)} · 1 participant`);
     expect(container.textContent).not.toContain('0x55');
+    // One participant is one participant. Every other count on the HUD that
+    // names its unit agrees with itself, and the live chain serves plenty of
+    // single-participant rows — a burn, a release, a keeper writing state.
+    const transfer = container.querySelector<HTMLElement>('[data-activity-kind="transfer"]');
+    expect(transfer?.getAttribute('title'))
+      .toBe(`#100 · 0x${'44'.repeat(32)} · 2 participants`);
   });
 
   it('holds a row whose kind the index has never seen', () => {
