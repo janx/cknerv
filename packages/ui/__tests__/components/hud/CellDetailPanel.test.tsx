@@ -14,7 +14,12 @@ import type {
   CellIdentityProofBinding,
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
-import { CELL_CONTENT_ANALYSIS_RESERVED_PX } from '../../../src/components/hud/CellContentMemory';
+import {
+  CELL_CONTENT_ANALYSIS_RESERVED_PX,
+  READING_DECODE_LINE_PX,
+  READING_SEGMENT_ROW_PX,
+  READING_SLOT_CHROME_PX,
+} from '../../../src/components/hud/CellContentMemory';
 
 const { portraitRender, portraitSemanticRecord } = vi.hoisted(() => ({
   portraitRender: vi.fn(),
@@ -1307,9 +1312,27 @@ describe('CellDetailPanel', () => {
     expect(analysis.textContent).not.toContain('KNOWLEDGE');
     expect(container.querySelectorAll('[data-byte-budget-composition="true"]')).toHaveLength(1);
 
-    // The DATA cluster is the READING now, and the whole of it: no status
-    // line, no byte grid, no ASCII, no door.
+    // The DATA cluster is a FACT and only a fact: the READING moved into
+    // CKBYTES on 2026-09-08, and it is the whole of what that window is — no
+    // status line, no byte grid, no ASCII, no door.
     const contentMemory = container.querySelector('[data-cell-content-memory="true"]');
+    expect(container.querySelector('[data-cell-cluster="data"] [data-cell-content-memory]'))
+      .toBeNull();
+    // …standing in the reader's own band, between the CKBYTES header and the
+    // wrapper that stages the dump. A table of contents belongs to the thing it
+    // indexes, and the order is the order the card is read in: what these bytes
+    // are, then the bytes.
+    const readerRoot = container.querySelector(
+      '[data-cell-data-reader="true"]',
+    ) as HTMLElement;
+    expect(readerRoot.contains(contentMemory as Node)).toBe(true);
+    const band = Array.from(readerRoot.children) as HTMLElement[];
+    expect(band).toHaveLength(3);
+    expect(band[0].textContent).toContain('CKBYTES');
+    expect(band[1].getAttribute('data-cell-data-reader-reading')).toBe('true');
+    expect(band[1].contains(contentMemory as Node)).toBe(true);
+    expect(band[2].getAttribute('data-cell-data-reader-reveal-state')).not.toBeNull();
+    expect(band[2].contains(contentMemory as Node)).toBe(false);
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
     // …and the whole of it is the BYTES. What the Cell is worth, what its
@@ -1533,7 +1556,92 @@ describe('CellDetailPanel', () => {
       .toHaveLength(3);
   });
 
-  it('holds the DATA cluster\'s analysis rows too, so the footer never moves', () => {
+  it('lights the reader\'s frame from the first frame and stages only its bytes', () => {
+    // D-4. The section used to ghost as a whole, so for the first two thirds of
+    // every walk the card drew a rose plate and a CKBYTES title at 0.18 — a
+    // plate saying nothing about the Cell yet, waiting. A frame is not
+    // evidence: it says WHOSE surface this is, and that is true from frame
+    // zero. What is evidence is the BYTES, and they are the only thing in here
+    // that waits.
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { container } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: `0x7b2261223a317d${'00'.repeat(20)}` }}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          content: {
+            data_hex: `0x7b2261223a317d${'00'.repeat(20)}`,
+            total_bytes: 27,
+            data_complete: true,
+            deterministic: {
+              kind: 'json_document',
+              summary: 'UTF-8 JSON object decoded from Cell data',
+              segments: [{
+                start_byte: 0,
+                end_byte: 7,
+                label: 'document_body',
+                value: '{"a":1}',
+                meaning: 'JSON body',
+              }],
+            },
+            heuristics: [],
+          },
+          facets: [],
+        } as unknown as CellSemanticRecord}
+        onClose={() => {}}
+      />,
+    );
+    const section = container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
+    ) as HTMLElement;
+    const slot = () => container.querySelector(
+      '[data-cell-data-reader-reading]',
+    ) as HTMLElement;
+    const bytes = () => section.querySelector(
+      '[data-cell-data-reader-reveal-state]',
+    ) as HTMLElement;
+    const copy = () => container.querySelector(
+      '[data-cell-data-reader-copy]',
+    ) as HTMLButtonElement;
+
+    // Frame zero: the plate and its header are drawn, the reading is standing
+    // in its slot on its own clock, and only the dump is dark.
+    expect(section.style.opacity).toBe('');
+    expect(section.dataset.cellDataReaderRevealState).toBeUndefined();
+    expect(slot()).not.toBeNull();
+    expect(slot().style.opacity).toBe('');
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(bytes().style.opacity).toBe('0.18');
+    // COPY is a control over ghosted content: it would put a payload on the
+    // clipboard the card has not finished saying it holds.
+    expect(copy().disabled).toBe(true);
+    // The reading is one segment, so the band the dump was charged is the slot
+    // chrome, the DECODE line and one row — and never the pending reservation.
+    expect(section.dataset.cellDataReaderReadingPx)
+      .toBe(`${READING_SLOT_CHROME_PX + READING_DECODE_LINE_PX + READING_SEGMENT_ROW_PX}`);
+
+    settleScan(performanceNow);
+
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('resolved');
+    expect(bytes().style.opacity).toBe('1');
+    expect(copy().disabled).toBe(false);
+    // …and the frame never moved through any of it.
+    expect(section.style.opacity).toBe('');
+    expect(slot().style.opacity).toBe('');
+    performanceNow.mockRestore();
+  });
+
+  it('holds the reading\'s analysis rows in CKBYTES, so the dump never moves', () => {
     const source: EnrichmentSourceStatus = {
       source: 'ckbadger',
       status: 'syncing',
@@ -1547,16 +1655,27 @@ describe('CellDetailPanel', () => {
         onClose={() => {}}
       />,
     );
+    // The reading stands in CKBYTES now, so the reservation is held there —
+    // the analysis plate has no window left to hold one for.
     const zone = () => container.querySelector(
-      '[data-cell-cluster="data"] [data-cell-content-analysis]',
+      '[data-cell-inspection-satellite="reader"] [data-cell-content-analysis]',
+    ) as HTMLElement;
+    const readerSection = () => container.querySelector(
+      '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
 
-    // The DATA cluster is the last one before the provenance footer, and its
-    // analysis rows are the only rows on the card whose COUNT waits on the
-    // index. Held, they cannot shove the footer down mid-read.
+    // The reading's rows are the only rows in this zone whose COUNT waits on
+    // the index, and the DUMP under them was divided from what they leave.
+    // Held, they cannot push the dump's last rows and its foot line out of the
+    // bottom of a zone that clips them.
     expect(zone().dataset.cellContentAnalysisReserved).toBe('true');
     expect(zone().style.minHeight)
       .toBe(`${CELL_CONTENT_ANALYSIS_RESERVED_PX}px`);
+    // …and the number the card SPENT on the band is the same reservation plus
+    // the slot's own chrome, stamped so the arithmetic is observable in a DOM
+    // that lays nothing out.
+    expect(readerSection().dataset.cellDataReaderReadingPx)
+      .toBe(`${READING_SLOT_CHROME_PX + CELL_CONTENT_ANALYSIS_RESERVED_PX}`);
 
     rerender(
       <CellDetailPanel
@@ -1624,6 +1743,10 @@ describe('CellDetailPanel', () => {
     expect(zone().querySelector('[data-cell-content-heuristic="0"]')).toBeNull();
     expect(zone().querySelector('[data-cell-content-role="0"]')).toBeNull();
     expect(zone().querySelector('[data-cell-content-asset]')).toBeNull();
+    // …and the band settles to the one row the record actually carries, which
+    // is the D-7 bargain stated in numbers: the dump gets 120 px back.
+    expect(readerSection().dataset.cellDataReaderReadingPx)
+      .toBe(`${READING_SLOT_CHROME_PX + READING_DECODE_LINE_PX + READING_SEGMENT_ROW_PX}`);
   });
 
   it('collapses the reservation once when the record resolves absent', () => {
@@ -1879,17 +2002,32 @@ describe('CellDetailPanel', () => {
     const reader = container.querySelector(
       '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
+    // The BYTES are what stages, and the wrapper around the dump and the foot
+    // line is what carries the state — the section itself is a frame and a
+    // header, and a plate that draws itself is not evidence about the Cell.
+    const bytes = () => reader.querySelector(
+      '[data-cell-data-reader-reveal-state]',
+    ) as HTMLElement;
     expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
+    // No index answered for this Cell, so there is no reading and no slot for
+    // one — and the card handed the dump a band of nothing.
+    expect(container.querySelector('[data-cell-data-reader-reading]')).toBeNull();
+    expect(reader.dataset.cellDataReaderReadingPx).toBe('0');
     // The reader is there at final size from the first frame — the walk lights
     // it, it never mounts it. Nothing on the card can be pushed by a reveal.
-    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('scanning');
     expect(reader.style.alignSelf).toBe('stretch');
     const causal = () => container.querySelector(
       '[data-consensus-memory-reveal="causal"]',
     ) as HTMLElement;
-    expect(reader.style.opacity).toBe('0.18');
-    expect(reader.style.pointerEvents).toBe('none');
-    expect(reader.getAttribute('aria-hidden')).toBe('true');
+    // The section is LIT from frame zero and only the bytes wait — its own
+    // `pointerEvents` is `satelliteBase`'s `auto`, never a ghost's `none`.
+    expect(reader.style.opacity).toBe('');
+    expect(reader.style.pointerEvents).toBe('auto');
+    expect(reader.getAttribute('aria-hidden')).toBeNull();
+    expect(bytes().style.opacity).toBe('0.18');
+    expect(bytes().style.pointerEvents).toBe('none');
+    expect(bytes().getAttribute('aria-hidden')).toBe('true');
     // …and its rows are already drawn behind the ghost: 11 bytes is one row,
     // counted from the chain's own `data_bytes`.
     expect(reader.querySelector('[data-cell-data-reader]')
@@ -1900,12 +2038,13 @@ describe('CellDetailPanel', () => {
     });
     expect(container.textContent).toContain('CELL // #4242');
     expect(Number(analysis.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
-    // Still ghosted at 2.5 steps: the reader lights with the DATA step, which
-    // is the last thing the memory walk does before the lattice locks — the
-    // rows above it name these bytes, so they may not arrive after them.
-    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
-    expect(reader.style.opacity).toBe('0.18');
-    expect(reader.style.pointerEvents).toBe('none');
+    // Still ghosted at 2.5 steps: the bytes light with the DATA step, which is
+    // the last thing the memory walk does before the lattice locks — the
+    // reading above them names these bytes, so they may not arrive after them.
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(bytes().style.opacity).toBe('0.18');
+    expect(bytes().style.pointerEvents).toBe('none');
+    expect(reader.style.opacity).toBe('');
     // Mid-scan the causal lens is still resolving — and still laid out.
     expect(causal().style.display).toBe('block');
     expect(causal().style.opacity).toBe('0.18');
@@ -1916,7 +2055,7 @@ describe('CellDetailPanel', () => {
       vi.advanceTimersByTime(80);
     });
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
-    expect(reader.dataset.cellDataReaderRevealState).toBe('resolved');
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('resolved');
     const settledSpecimenScan = container.querySelector(
       '[data-cell-specimen-scan-light]',
     ) as HTMLElement;
@@ -1933,7 +2072,12 @@ describe('CellDetailPanel', () => {
     expect(causal().style.opacity).toBe('1');
     expect(causal().style.pointerEvents).toBe('auto');
     expect(causal().getAttribute('aria-hidden')).toBeNull();
-    expect(reader.style.opacity).toBe('1');
+    // The bytes are lit and touchable; the frame around them never changed at
+    // all, which is the point of taking the stage off the section.
+    expect(bytes().style.opacity).toBe('1');
+    expect(bytes().style.pointerEvents).toBe('auto');
+    expect(bytes().getAttribute('aria-hidden')).toBeNull();
+    expect(reader.style.opacity).toBe('');
     expect(reader.style.pointerEvents).toBe('auto');
     expect(reader.getAttribute('aria-hidden')).toBeNull();
     performanceNow.mockRestore();
@@ -2018,18 +2162,28 @@ describe('CellDetailPanel', () => {
     const analysis = container.querySelector(
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
-    // No index answered for this Cell, so the DATA cluster's window renders
-    // nothing at all — its bytes are drawn by CKBYTES under the square, and a
-    // heading over nothing is not a window. What stages here is the reader.
+    // No index answered for this Cell, so there is no reading at all — its
+    // bytes are drawn by CKBYTES under the square, and a heading over nothing
+    // is not a window. What stages here is the reader's dump.
     expect(container.querySelector('[data-cell-content-memory]')).toBeNull();
     const reader = container.querySelector(
       '[data-cell-inspection-satellite="reader"]',
     ) as HTMLElement;
+    const bytes = () => reader.querySelector(
+      '[data-cell-data-reader-reveal-state]',
+    ) as HTMLElement;
+    // …so no slot mounts either, and the band the card charged the dump for is
+    // nothing: no phantom six pixels between the header and the first row.
+    expect(container.querySelector('[data-cell-data-reader-reading]')).toBeNull();
+    expect(reader.dataset.cellDataReaderReadingPx).toBe('0');
 
     // Everything the walk will light is standing there, dark and untouchable,
     // before the walk starts.
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
-    expect(reader.dataset.cellDataReaderRevealState).toBe('scanning');
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('scanning');
+    // The reader's FRAME is not one of them: it is drawn lit from frame zero,
+    // like the analysis plate's masthead beside it.
+    expect(reader.style.opacity).toBe('');
     const ghosted = stagedRows(container);
     expect(ghosted.length).toBeGreaterThan(5);
     for (const row of ghosted) {
@@ -2046,7 +2200,8 @@ describe('CellDetailPanel', () => {
 
     // The reveal genuinely happened…
     expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
-    expect(reader.dataset.cellDataReaderRevealState).toBe('resolved');
+    expect(bytes().dataset.cellDataReaderRevealState).toBe('resolved');
+    expect(reader.style.opacity).toBe('');
     for (const row of stagedRows(container)) {
       expect(row.style.opacity).toBe('1');
       expect(row.style.pointerEvents).not.toBe('none');

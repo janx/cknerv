@@ -6,15 +6,17 @@
 // driven by a test, and a reader that cannot be driven by a test is a reader
 // nobody can pin.
 //
-// It also settles a disagreement that was already shipping. The DATA cluster
-// and the portrait's byte rail both colour the SAME decoded segments, and they
-// did it two different ways: the DOM window took `index % 6` off the
-// qualitative ramp (position in the record's list), the overlay took
-// `labelHash % 4` (a hash of the label, into four of the ramp's six slots). So
-// one Cell's `content_type` was slot 4 in the window and slot 1 on the
-// portrait, and a reader moving their eye between the two surfaces was reading
-// two different claims about the same bytes. There is one rule now and it
-// lives here, where a third surface — the reader itself — can ask it too.
+// It also settles a disagreement that was already shipping. The READING and the
+// portrait's byte rail both colour the SAME decoded segments, and they did it
+// two different ways: the DOM window took `index % 6` off the qualitative ramp
+// (position in the record's list), the overlay took `labelHash % 4` (a hash of
+// the label, into four of the ramp's six slots). So one Cell's `content_type`
+// was slot 4 in the window and slot 1 on the portrait, and a reader moving
+// their eye between the two surfaces was reading two different claims about the
+// same bytes. There is one rule now and it lives here, where a third surface —
+// the dump — asks it too. The window has since moved into this reader
+// (2026-09-08), which makes two of those three surfaces one column apart and
+// the shared rule the only thing keeping them honest.
 
 import type { SemanticContentSegment } from '@cknerv/types';
 import { QUALITATIVE_BUCKET_COLORS } from '../components/hud/hudTheme';

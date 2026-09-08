@@ -62,7 +62,7 @@ import { useHudHoleWidth } from '../hudOcclusion';
 import { INSPECTOR_EDGE_PX, INSPECTOR_GAP_PX } from '../sceneInspection';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
-import CellContentMemory from './CellContentMemory';
+import CellContentMemory, { cellContentReadingLayout } from './CellContentMemory';
 import CellDataReader, {
   READER_CHROME_PX,
   READER_ROW_HEIGHT_PX,
@@ -1184,13 +1184,24 @@ type CellScanContentMemoryProps = {
   pending: boolean;
   /** Which decoded segment the reader is standing on, and how to move it.
    *  Passed straight through: the rows are the window's, the LINK between a
-   *  row and the bytes under the square is the card's. */
+   *  row and the bytes under it is the card's — even now that the two are one
+   *  column, because a pressed row is keyed to the Cell and outlives the
+   *  reader's own scroll. */
   focusedSegment: number | null;
   onSegmentFocus: (index: number) => void;
 };
 
-/** Content memory decodes THROUGH the walk rather than at a step of it, so it
- *  is one of the two leaves that ride the clock the whole way down. */
+/** THE READING, on the walk's clock.
+ *
+ *  Content memory decodes THROUGH the walk rather than at a step of it, so it
+ *  is one of the two leaves that ride the clock the whole way down. It is built
+ *  by this card's render and handed to `CellDataReader` as its `reading` slot
+ *  (2026-09-08), which is why it is still a leaf of the CARD and not something
+ *  the reader assembles: every input it takes — the source, the phase, the
+ *  record, the pressed row — is the card's, and a reader that took all of it to
+ *  hand it straight back would be a second place the wiring is written down.
+ *  Being a leaf is what keeps this body off the clock: it subscribes, the card
+ *  does not. */
 function CellScanContentMemory(props: CellScanContentMemoryProps) {
   const progress = useCellScanMemoryProgress();
   return (
@@ -1202,26 +1213,47 @@ function CellScanContentMemory(props: CellScanContentMemoryProps) {
 }
 
 /**
- * CKBYTES' plate, and the one thing about it that waits: its ink.
+ * CKBYTES' plate, and the one thing inside it that waits: the bytes.
  *
  * The section is mounted for every Cell that holds bytes, from the first frame,
  * at the height the analysis plate beside it leaves — so the reveal has nothing
- * to grow. It lights at `CONTENT_DECODED_AT`, the same instant the DATA cluster
- * finishes decoding, because the segment rows up there NAME these bytes: a dump
- * lit before the line that says what its bytes mean would be read as noise.
+ * to grow. What it no longer does is ghost ITSELF. The frame and the CKBYTES
+ * header are drawn lit from frame zero, the way the analysis plate's masthead
+ * beside them is: a plate that draws itself is not evidence about the Cell, and
+ * a module tag a reader has to wait for is a card that reads as half-arrived.
  *
- * The subscription lives in this leaf rather than in the card body for the
+ * What waits is inside. The reading took the band under that header
+ * (2026-09-08) and stages on its own clock in there — the kind, then the fields
+ * — and the DUMP and its foot line light together at `CONTENT_DECODED_AT`, the
+ * instant the reading finishes decoding, because the rows above them NAME these
+ * bytes: a dump lit before the line that says what its bytes mean would be read
+ * as noise. So the stage this section used to carry is one wrapper INSIDE the
+ * reader, around the dump and the foot line, and it is that wrapper that
+ * carries `data-cell-data-reader-reveal-state` now — the attribute names the
+ * element that actually stages.
+ *
+ * The boolean gets down there as a RENDER PROP, and the cost is worth naming.
+ * The subscription stays in this leaf rather than in the card body, for the
  * reason every other leaf's does — the body renders once per selection, and a
  * clock read from inside it would drag the whole dossier through the walk's
- * 12.5 ticks a second. The reader arrives as `children`, built by that body and
- * therefore the same element object across a tick, so a tick re-paints this
- * section's ink and React bails out of the dump beneath it on identity.
+ * 12.5 ticks a second. A `ReactNode` child was rebuilt by that body and so was
+ * the same element object across a tick, which let React bail out of the dump
+ * on identity; a function child gives that up and rebuilds the reader whenever
+ * THIS leaf renders. It renders twice a walk: `useCellScanSelector` hands
+ * `useSyncExternalStore` a BOOLEAN, and a snapshot that reads `false` for two
+ * hundred ticks and then `true` wakes its subscriber exactly once. The dump is
+ * reconciled at the instant it lights and sleeps through every other tick.
  */
-function CellScanReaderPlate({ beside, children }: {
+function CellScanReaderPlate({ beside, readingPx, children }: {
   /** The reader is a column beside the plate (wide) rather than a row under
    *  the card (narrow) — see CARD_BESIDE_HOLE_PX. */
   beside: boolean;
-  children: ReactNode;
+  /** The height the card handed the dump for the reading standing over it, so
+   *  a test can read the number the row arithmetic actually spent. jsdom lays
+   *  nothing out, so the band itself can never be measured there — the stamp
+   *  is the only place the sum is observable. */
+  readingPx: number;
+  children: (revealed: boolean) => ReactNode;
 }) {
   const revealed = useCellScanSelector(
     (frame) => frame.memoryProgress >= CONTENT_DECODED_AT,
@@ -1233,8 +1265,7 @@ function CellScanReaderPlate({ beside, children }: {
       data-cell-inspection-satellite="reader"
       data-cell-detail-size="content"
       data-cell-data-reader-placement={beside ? 'beside' : 'under'}
-      data-cell-data-reader-reveal-state={revealed ? 'resolved' : 'scanning'}
-      {...revealStageAttributes(revealed)}
+      data-cell-data-reader-reading-px={readingPx}
       style={{
         ...satelliteBase,
         gridArea: 'reader',
@@ -1264,10 +1295,9 @@ function CellScanReaderPlate({ beside, children }: {
         // border goes rose and the cyan stays where it means something — the
         // title, its 字节元 companion, and the bytes themselves.
         ...spatialPlate(CELL_CARD_ACCENT),
-        ...revealStageStyle(revealed),
       }}
     >
-      {children}
+      {children(revealed)}
     </section>
   );
 }
@@ -1444,6 +1474,18 @@ function CellDetailPanel({
     ? null
     : semanticRecord;
   const presentedSemanticMessage = semanticValidation.message ?? semanticMessage;
+  // A record is on its way: hold the rows it will fill at their final height
+  // so the arrival replaces ghosts instead of pushing the card down. When it
+  // resolves — record, absence or failure — the reservation drops ONCE.
+  //
+  // It is settled HERE, beside the record it is about, rather than down among
+  // the clusters that ghost on it, because the READING's height is one of the
+  // things it decides and that number is spent before the reader renders: the
+  // dump's row count is arithmetic in this body (`readingLayout` below), not a
+  // measurement taken from the band.
+  const enrichmentPending = Boolean(semanticSource)
+    && !presentedSemanticRecord
+    && (semanticPhase === 'loading' || semanticPhase === 'waiting');
   // The origin-transaction record is looked up by tx hash and may still be the
   // answer to the PREVIOUS selection. A fee printed under the wrong Cell is
   // not a slower fact, it is a false one — so it counts only when the record
@@ -1509,9 +1551,11 @@ function CellDetailPanel({
   // The reader is a ZONE of this card now, not a satellite that opens: the
   // user's direction of 2026-09-05 was 「hex reader 应该总是展示」, so there is
   // no open/closed state left to keep. What IS kept is where the reader is
-  // POINTING — the decoded segment a row of the DATA cluster sent it to — and
-  // that is a click, exactly like the selected inspection facet one state
-  // above, and never the walk.
+  // POINTING — the decoded segment a row of the reading over the dump sent it
+  // to — and that is a click, exactly like the selected inspection facet one
+  // state above, and never the walk. (The reading moved INTO the zone on
+  // 2026-09-08; the state is still the card's, because a reader keyed to the
+  // Cell must not carry a pressed row across a change of subject.)
   //
   // Three fields, and each earns its place:
   //
@@ -1521,8 +1565,8 @@ function CellDetailPanel({
   //   over the new Cell's bytes.
   //
   //   `index`, into the presented record's own segment list — the same list
-  //   the DATA cluster draws its rows from and the reader colours its bytes
-  //   by, so the two cannot mean different segments by the same number.
+  //   the reading draws its rows from and the dump colours its bytes by, so
+  //   the two cannot mean different segments by the same number.
   //
   //   `nonce`, because this is a GESTURE and not a value. Clicking the same
   //   row twice has to scroll back to it twice; an effect keyed on the range
@@ -1543,7 +1587,7 @@ function CellDetailPanel({
     }));
   }, [cell.id]);
   // The reader's own gesture outranks the row's: a byte click or a key move
-  // down there means the reader is no longer standing where the DATA cluster
+  // in the dump means the reader is no longer standing where the reading's row
   // put it, and the row unpresses.
   const releaseSegmentFocus = useCallback((segment: number | null) => {
     if (segment === null) setSegmentFocus(null);
@@ -1634,11 +1678,50 @@ function CellDetailPanel({
   const holeWidth = useHudHoleWidth();
   const readerBeside = hasBytes && holeWidth >= CARD_BESIDE_HOLE_PX;
   const cardWidth = cellCardWidth(holeWidth, readerBeside);
+  // THE READING's height, and this is the frame it has to be known in.
+  //
+  // The window stands in CKBYTES now (2026-09-08), in the band between the
+  // header and the dump, so the room the plate leaves the reader is shared: the
+  // reading takes its band and the DUMP divides the remainder into 13.5 px
+  // rows. That division happens HERE, one render before the band exists to be
+  // measured, so the height is a pure function of the record — the reader's
+  // standing law, that the numbers a virtualiser needs are handed in and never
+  // read back from layout. `cellContentReadingLayout` is the SAME gate the
+  // window itself applies (there is no second statement of "is there a
+  // reading"), and it answers 0 for the ~98 % of Cells no index answered for,
+  // which is why the chrome term below can add it unconditionally.
+  //
+  // MEMOISED for the reason `readerHeldPrefix` above is: the layout decodes the
+  // held prefix a second time, and this body re-renders on a segment click and
+  // on every genuine change of the plate's height.
+  //
+  // ⚠️ D-7, and it is a bargain rather than a bug: a record that lands AFTER
+  // the dump has lit settles the reading from its reservation to its real rows,
+  // and the dump's top moves once. That is the same trade the provenance footer
+  // has always made with a late arrival, and the alternative — holding 152 px
+  // of nothing for the whole life of a card the index will never answer for —
+  // costs every card to spare one.
+  const readingLayout = useMemo(
+    () => cellContentReadingLayout({
+      dataHex: cell.data_hex,
+      source: semanticSource,
+      phase: presentedSemanticPhase,
+      record: presentedSemanticRecord,
+      pending: enrichmentPending,
+    }),
+    [
+      cell.data_hex,
+      enrichmentPending,
+      presentedSemanticPhase,
+      presentedSemanticRecord,
+      semanticSource,
+    ],
+  );
   const readerRows = readerBeside
     ? readerRowsUnderScan(
       plateHeightPx,
       PORTRAIT_COLUMN_PX + CARD_SEAM_PX,
-      READER_CHROME_PX,
+      READER_CHROME_PX + readingLayout.heightPx,
       READER_ROW_HEIGHT_PX,
     )
     : READER_MIN_VISIBLE_ROWS;
@@ -2009,12 +2092,6 @@ function CellDetailPanel({
   const typeScript = presentedSemanticRecord?.type_script ?? null;
   const lockAccent = factAccent('lock');
   const assetAccent = factAccent('asset');
-  // A record is on its way: hold the rows it will fill at their final height
-  // so the arrival replaces ghosts instead of pushing the card down. When it
-  // resolves — record, absence or failure — the reservation drops ONCE.
-  const enrichmentPending = Boolean(semanticSource)
-    && !presentedSemanticRecord
-    && (semanticPhase === 'loading' || semanticPhase === 'waiting');
   // A cluster prints its evidence rail only when it has something to hang on
   // it: an empty rail under a bare fact is the sparseness this layout exists
   // to kill.
@@ -2621,23 +2698,22 @@ function CellDetailPanel({
             </div>
           </div>
 
+          {/* DATA is a FACT here and nothing else (the user's direction of
+            * 2026-09-08: 「scan01中的data decode section, 能不能移动到 scan02
+            * 里面?」). The size of the payload and the proof of what it is
+            * belong in the register with the other five facts; the READING of
+            * the payload travels with the payload, and the payload is drawn
+            * under the square by CKBYTES.
+            *
+            * So this cluster has no evidence rail and cannot grow. The last
+            * thing on this plate that still moves when the index answers is
+            * the CAPACITY cluster's byte budget above, and it holds its own
+            * reservation — nothing left down here can shove the provenance
+            * footer or the MEMORY TRACE affordance. What the plate gives up is
+            * a block of height, which is content and not a reveal, and the
+            * reader beside it is measured from what is left. */}
           <div data-cell-cluster="data" style={{ minWidth: 0 }}>
             {scanFact('data')}
-            {/* The window mounts whole, but its analysis rows are the one
-              * part of it that waits on the index — so they take the same
-              * pending reservation every other cluster's evidence takes.
-              * This is the LAST cluster before the provenance footer: rows
-              * that arrive tall here move the footer and the MEMORY TRACE. */}
-            <CellScanContentMemory
-              dataHex={cell.data_hex}
-              source={semanticSource}
-              phase={presentedSemanticPhase}
-              record={presentedSemanticRecord}
-              message={presentedSemanticMessage}
-              pending={enrichmentPending}
-              focusedSegment={focusedSegment}
-              onSegmentFocus={focusSegment}
-            />
           </div>
         </div>
 
@@ -2815,19 +2891,45 @@ function CellDetailPanel({
         * (the user's directions of 2026-09-05: 「hex reader 应该总是展示，可以把
         * 窗口放在 cell scan 下方合适位置」).
         *
-        * It was a satellite that opened from a door in the DATA cluster and
-        * stood in a 660 px column beside the plate. Two things were wrong with
-        * that and the user named both: the surface was too large for what it
-        * did, and a reader that has to be opened is a reader nobody opens. So
-        * the door is gone, the column is gone, and the zone stands where the
-        * bytes it draws belong — directly under the square that portrays the
-        * Cell they came from, wider than the square by the 120 px notch it
-        * reaches toward the Cell itself.
+        * It was a satellite that opened from a door in the analysis plate's
+        * DATA cluster and stood in a 660 px column beside it. Two things were
+        * wrong with that and the user named both: the surface was too large
+        * for what it did, and a reader that has to be opened is a reader
+        * nobody opens. So the door is gone, the column is gone, and the zone
+        * stands where the bytes it draws belong — directly under the square
+        * that portrays the Cell they came from, wider than the square by the
+        * 120 px notch it reaches toward the Cell itself.
+        *
+        * ⭐ AND THE READING STANDS IN IT (the user's direction of 2026-09-08:
+        * 「scan01中的data decode section, 能不能移动到 scan02 里面?」). The
+        * segment rows are a TABLE OF CONTENTS for this dump — they name what
+        * each run of these bytes is, and pressing one scrolls the dump to it —
+        * and a table of contents drawn six hundred pixels up a different plate
+        * was a claim about bytes nobody could see from it. `reading` is
+        * therefore a slot filled from HERE, with the card's own leaf, so the
+        * window keeps the card's wiring and the card's clock; it is handed in
+        * only when `readingLayout.rendered`, because a slot mounted empty for
+        * the ~98 % of Cells no index answered for would be six pixels of
+        * nothing between the header and the dump. A Cell whose `data_bytes` is
+        * zero has no zone at all and therefore no reading either, which is the
+        * same answer the card already gives: the DATA fact reads `Empty`, and
+        * a decode of bytes the chain says are not there is a claim with nothing
+        * under it to check.
+        *
+        * ⚠️ D-7: the dump's rows were divided from the room LEFT by that band
+        * (`READER_CHROME_PX + readingLayout.heightPx`), which means a record
+        * that lands after the dump has lit settles the reading from its
+        * reservation to its real rows and moves the dump's top ONCE. Same
+        * bargain the provenance footer makes with a late fee, and taken for
+        * the same reason: the alternative is every card holding the tallest
+        * possible reading for a record that never comes.
         *
         * The plate is `CellScanReaderPlate` because its ink waits on the walk
         * and its geometry does not: the section is mounted at final size from
         * the first frame, and the leaf up there subscribes to the clock so
-        * this body does not.
+        * this body does not. It hands the boolean back as a render prop — the
+        * frame and the header are lit from frame zero and only the DUMP is
+        * staged, so the section can no longer be the thing that ghosts.
         *
         * `key={cell.id}` is NOT decoration. ⚠️ The reader carries a selection,
         * a scroll position and a copy acknowledgement, all of them about the
@@ -2836,16 +2938,34 @@ function CellDetailPanel({
         * zone has no such unmount. Without the key, a selection made on one
         * Cell would point at a byte of the next. */}
       {hasBytes ? (
-        <CellScanReaderPlate beside={readerBeside}>
-          <CellDataReader
-            key={cell.id}
-            segments={readerSegments}
-            {...outputData}
-            totalBytes={cell.data_bytes}
-            visibleRows={readerRows}
-            focus={readerFocus}
-            onFocusChange={releaseSegmentFocus}
-          />
+        <CellScanReaderPlate
+          beside={readerBeside}
+          readingPx={readingLayout.heightPx}
+        >
+          {(revealed) => (
+            <CellDataReader
+              key={cell.id}
+              segments={readerSegments}
+              {...outputData}
+              totalBytes={cell.data_bytes}
+              visibleRows={readerRows}
+              focus={readerFocus}
+              onFocusChange={releaseSegmentFocus}
+              revealed={revealed}
+              reading={readingLayout.rendered ? (
+                <CellScanContentMemory
+                  dataHex={cell.data_hex}
+                  source={semanticSource}
+                  phase={presentedSemanticPhase}
+                  record={presentedSemanticRecord}
+                  message={presentedSemanticMessage}
+                  pending={enrichmentPending}
+                  focusedSegment={focusedSegment}
+                  onSegmentFocus={focusSegment}
+                />
+              ) : undefined}
+            />
+          )}
         </CellScanReaderPlate>
       ) : null}
 
