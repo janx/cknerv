@@ -32,6 +32,14 @@ import StatusStrip, {
   type BuildInfo,
   type HudPanelControl,
 } from './StatusStrip';
+// ⚠️ From the hook's own file, and never re-exported through `StatusStrip`.
+// `HudOverlay.clock.test.tsx` replaces that module with a default-only
+// counting factory, so a named import taken from it would arrive `undefined`
+// in exactly the suite that renders this component the most.
+import {
+  STATUS_STRIP_FOLD_ESTIMATE_QUERY,
+  useStatusStripFold,
+} from './useStatusStripFold';
 import BlockchainReadout, {
   CHAIN_PANEL_DENSE_WIDTH_PX,
   CHAIN_PANEL_WIDTH_PX,
@@ -411,11 +419,14 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   ]);
 
   // Below ~1100px the rail's summaries would crowd the left-hand panels, so it
-  // narrows and scrolls instead of fanning. Tunable breakpoint.
+  // narrows and scrolls instead of fanning. Tunable breakpoint, and the RAIL'S
+  // alone: it used to fold the top bar as well, next to a flat `1280px` query
+  // that existed so "the control-dense top bar reflows before the panel rail
+  // does". That was an ordering wish rather than a measurement, and it is what
+  // folded every iPad but the 13" in landscape — the strip's one row wants
+  // ~1,079 px and an 11" iPad hands it 1,194. The strip has its own reason to
+  // fold now, and it reads it off the row (below).
   const narrowRail = useMediaQuery('(max-width: 1100px)');
-  // The control-dense top bar needs to reflow before the panel rail itself does;
-  // this also leaves headroom for transient stream/source chips.
-  const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
   // …and at a width of its own the rails themselves collapse: the mesh panels
   // drop to a header, a hero and one row, and CKB·01's three lower sections
   // fold to their headers and their counts. Its own query rather than a share
@@ -444,7 +455,26 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
   // Phones get a third priority row so display/quality controls never depend
   // on an initially hidden horizontal-scroll position.
   const mobileTopBar = useMediaQuery('(max-width: 560px)');
-  const compactTopBar = mobileTopBar || narrowRail || compactTopBarWidth;
+  // ——— And the top bar folds for want of room, which is a measurement ———
+  //
+  // `useStatusStripFold` owns the rule and argues it in full; what happens
+  // here is that the overlay renders the strip a second time as a hidden
+  // PROBE (below), hands the hook the probe's box and its own — the strip
+  // spans this root, so the root's `clientWidth` is the room the row has —
+  // and folds when what the row wants no longer fits. Until a box has been
+  // laid out the hook answers with the estimate, which is the same query the
+  // boot band in `index.html` runs, so the band and the strip stand at the
+  // same height across the handover.
+  //
+  // ⚠️ `mobileTopBar` still ORs in, and it is not the same kind of statement.
+  // The phone layout is three priority rows in a different order — a design
+  // for a touch screen, not an answer to a fit question — so it stays a media
+  // query and wins over the measurement.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stripProbeRef = useRef<HTMLDivElement>(null);
+  const stripEstimate = useMediaQuery(STATUS_STRIP_FOLD_ESTIMATE_QUERY);
+  const stripFolded = useStatusStripFold(stripProbeRef, rootRef, stripEstimate);
+  const compactTopBar = mobileTopBar || stripFolded;
   const shortViewport = useMediaQuery('(max-height: 860px)');
   const [panelVisibility, setPanelVisibility] = useState<HudPanelVisibility>(
     DEFAULT_PANEL_VISIBILITY,
@@ -798,8 +828,25 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
     bootLit,
   ]);
 
+  /** Everything the strip is told that is not which layout to wear — built
+   *  once and spread into both copies, so the probe measures the row the
+   *  reader is actually looking at and the two `memo`s see one set of
+   *  identities. */
+  const stripProps = {
+    level: alert.level,
+    uptimeSinceMs: mountAt.current,
+    build,
+    cellCount: cellCount ?? cellsStats.inView,
+    cellCapacity,
+    enrichmentSource,
+    actions: topBarActions,
+    panelControls,
+    onPanelVisibilityChange: setPanelVisible,
+  };
+
   return (
     <div
+      ref={rootRef}
       style={ROOT_STYLE}
       data-stream-phase={streamPhase ?? undefined}
       data-hud-boot={bootWaiting ? 'waiting' : bootCounting ? 'counting' : 'done'}
@@ -809,19 +856,27 @@ function HudOverlay({ chain, peers, localNode, cellsStats, stageScripts, cellPop
           strip, an alert, a frozen-stream banner and a backfill readout are
           how you find out something is wrong, and nothing that reports a
           fault may be dimmed for style. */}
+      {/* One props object, two strips: the one a reader sees and the one the
+          fold is measured on. A fresh object per render costs nothing — what
+          `memo` compares is the VALUES, and every one of them is a value, a
+          record or a callback this body already held by identity, which is
+          why a clock tick still reaches neither strip.
+          The probe comes AFTER the real strip on purpose: it wears its own
+          class and no landmark role, but a document order that put it first
+          would still hand the first `[data-status-layout]` or the first
+          `.cknerv-status-strip-probe`-adjacent selector to a box nobody can
+          see. First in the tree is the strip, always.
+          ⚠️ And `topBarActions` is therefore MOUNTED TWICE — once visible,
+          once hidden and inert. That is the point (a chip in that slot is one
+          of the things that can push the row past its room), and it is a
+          contract on the prop: whatever the app puts there must be safe to
+          mount twice. */}
       <StatusStrip
-        level={alert.level}
-        uptimeSinceMs={mountAt.current}
-        build={build}
-        cellCount={cellCount ?? cellsStats.inView}
-        cellCapacity={cellCapacity}
-        enrichmentSource={enrichmentSource}
-        actions={topBarActions}
-        panelControls={panelControls}
-        onPanelVisibilityChange={setPanelVisible}
+        {...stripProps}
         compact={compactTopBar}
         mobile={mobileTopBar}
       />
+      <StatusStrip {...stripProps} probe probeRef={stripProbeRef} />
       {/* One voice in the top slot. While the page is coming up the boot
           sequence owns it outright: `CONNECTING DATA PLANE` and the replay
           plate's block count are already lines INSIDE the sequence

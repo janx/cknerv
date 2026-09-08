@@ -55,14 +55,68 @@ import HudOverlay, {
   RAILS_COLLAPSE_MAX_WIDTH_PX,
   RAILS_FULL_WIDTH_PX,
 } from '../../../src/components/hud/HudOverlay';
+import {
+  STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX,
+} from '../../../src/components/hud/useStatusStripFold';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  HTMLElement.prototype.getBoundingClientRect = RECT_ORIGINAL;
+  // jsdom keeps `clientWidth` on `Element.prototype`; `stubStripBoxes` adds an
+  // own property to `HTMLElement.prototype`, and deleting it uncovers the real
+  // one again. A no-op for every test that never stubbed.
+  delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth;
   vi.useRealTimers();
   resetBootSequenceForTest();
 });
+
+/** The page, at a width. Every `max-width: N` rule the HUD runs — the rails'
+ *  two, the phone's, and the strip's fold ESTIMATE — is answered from this one
+ *  number, so a test says how wide the page is rather than listing the queries
+ *  it happens to expect. It replaced a set of `query.includes('max-width:
+ *  1280px')` stubs that named a breakpoint which no longer exists.
+ *
+ *  ⚠️ It drives the strip through the ESTIMATE, because jsdom lays nothing out
+ *  and a fold with no boxes to read is no evidence (D-6). The one test that is
+ *  about the measurement stubs the boxes too. */
+const viewport = (width: number) => {
+  vi.stubGlobal('matchMedia', (query: string) => {
+    const max = /max-width:\s*(\d+)px/.exec(query);
+    return {
+      matches: max ? width <= Number(max[1]) : false,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+  });
+};
+
+/** The fold's two boxes, answered by the attribute each wears: the probe's
+ *  border box is what the row WANTS, and the overlay root's `clientWidth` (it
+ *  carries `data-hud-boot`) is the room it HAS. `render` makes both elements,
+ *  so there is no instance to stub before the layout effect reads them — it
+ *  has to be the prototype, and `afterEach` above puts it back. */
+const RECT_ORIGINAL = HTMLElement.prototype.getBoundingClientRect;
+let stripWant = 0;
+let stripAvailable = 0;
+const stubStripBoxes = (want: number, available: number) => {
+  stripWant = want;
+  stripAvailable = available;
+  HTMLElement.prototype.getBoundingClientRect = function measured(this: HTMLElement) {
+    const width = this.hasAttribute('data-status-probe') ? stripWant : 0;
+    return {
+      width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  };
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('data-hud-boot') ? stripAvailable : 0;
+    },
+  });
+};
 
 // ——— The page's boot record ————————————————————————————————
 // It is a module store, and importing it starts it RUNNING — which is correct
@@ -734,11 +788,10 @@ describe('HudOverlay', () => {
   });
 
   it('uses a two-row top bar and offsets both panel rails on narrow screens', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 1100px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    // A 10.2" iPad in landscape: under 1,100 the rails narrow, and under the
+    // strip's estimate the row folds — and it should, because the row wants
+    // 1,079 + 24 and this page has 1,024.
+    viewport(1024);
     const { container } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
@@ -755,13 +808,7 @@ describe('HudOverlay', () => {
   });
 
   it('keeps a CKB-only phone bar to two priority rows', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 560px')
-        || query.includes('max-width: 1100px')
-        || query.includes('max-width: 1280px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    viewport(560);
     const { container } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
@@ -779,13 +826,7 @@ describe('HudOverlay', () => {
   });
 
   it('adds the mobile context row only when enhanced status is present', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 560px')
-        || query.includes('max-width: 1100px')
-        || query.includes('max-width: 1280px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    viewport(560);
     const { container } = render(
       <HudOverlay
         chain={chain}
@@ -803,6 +844,79 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-status-context]')?.textContent)
       .toContain('CKBADGERREADY');
     expect(leftRail.style.top).toBe('100px');
+  });
+
+  it('keeps one row on an 11-inch iPad', () => {
+    // 1,180 CSS px in landscape (the Air; the Pro 11" is 1,194 and the mini
+    // 1,133). All three were folded by the flat `1280px` query with a hundred
+    // pixels of spacer to spare, which is the bug this rule exists to end.
+    viewport(1180);
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+
+    expect(status.dataset.statusLayout).toBe('wide');
+    expect(status.style.height).toBe('36px');
+    // `contentTop`, and the arithmetic rather than a number: the bar, plus the
+    // 12 px every rail clears when nothing has the top slot.
+    expect(leftRail.style.top).toBe(`${36 + 12}px`);
+    expect(meshRail.style.top).toBe(`${36 + 12}px`);
+  });
+
+  it('renders the probe right after the strip, hidden and always one row', () => {
+    // The page folds, and the probe does not: it is measuring the row the
+    // strip would go back to, which is the whole reason a folded bar can
+    // unfold when a chip leaves.
+    viewport(1024);
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const probe = container.querySelector('[data-status-probe]') as HTMLElement;
+
+    expect(probe).not.toBeNull();
+    expect(status.dataset.statusLayout).toBe('compact');
+    expect(probe.dataset.statusLayout).toBe('wide');
+    expect(status.nextElementSibling).toBe(probe);
+    expect(probe.style.visibility).toBe('hidden');
+    expect(probe.style.width).toBe('max-content');
+    expect(probe.style.pointerEvents).toBe('none');
+    expect(probe.getAttribute('role')).toBeNull();
+    // One landmark and one strip: every selector on the page still lands on
+    // the box a reader can see.
+    expect(container.querySelectorAll('[role="navigation"]')).toHaveLength(1);
+    expect(container.querySelectorAll('.cknerv-status-strip')).toHaveLength(1);
+  });
+
+  it('folds on the measurement, and the estimate only until there is one', () => {
+    // D-6, both ways round. The page is 1,024 px so the estimate says fold —
+    // and on this content the row wants 900, which fits with room to spare.
+    // The measurement outranks the guess, on the first commit.
+    viewport(1024);
+    // ⚠️ `test-setup.ts` polyfills a no-op `ResizeObserver` for r3f, so the
+    // hook would take its observer branch and never hear the change below.
+    // Taking it away puts the hook on the window's own `resize` — the
+    // fallback path, and the only one a test can fire.
+    vi.stubGlobal('ResizeObserver', undefined);
+    stubStripBoxes(900, 1024);
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const status = () => container.querySelector('.cknerv-status-strip') as HTMLElement;
+
+    expect(status().dataset.statusLayout).toBe('wide');
+    expect(status().style.height).toBe('36px');
+
+    // …and then the row grows into the content it was measured without —
+    // 1,079 + 24 of slack is more than 1,024 — and the same page folds.
+    stripWant = 1079;
+    act(() => { window.dispatchEvent(new Event('resize')); });
+
+    expect(status().dataset.statusLayout).toBe('compact');
+    expect(status().style.height).toBe('64px');
   });
 
   it('marks frozen browser data without changing nominal chain telemetry', () => {
@@ -843,12 +957,14 @@ describe('HudOverlay', () => {
   });
 
   it('places stream interruption UI below the two-row narrow top bar', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 1100px')
-        || query.includes('max-width: 1280px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    // A page that is BOTH, which is the arrangement this test is about: the
+    // banner under a folded bar, with narrowed rails under that. 1,100 is the
+    // last width the rails narrow at, and it is inside the strip's fold
+    // estimate — asserted rather than assumed, because the day those two
+    // thresholds cross is the day this test stops testing what it says.
+    const width = 1100;
+    expect(width).toBeLessThanOrEqual(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX);
+    viewport(width);
     const now = Date.now();
     const { container } = render(
       <HudOverlay
@@ -1121,11 +1237,7 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
   });
 
   it('gives a narrow top bar the one line it has room for', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 1280px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    viewport(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX);
     const { container } = booting();
     const banner = container.querySelector('[data-boot-banner]') as HTMLElement;
 
@@ -1136,19 +1248,34 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
     expect(banner.textContent).not.toContain('FIRST LIGHT');
   });
 
+  it('gives the phone bar its one line whatever the row measures', () => {
+    // The phone layout is not a fit question (D-4): three priority rows in a
+    // different order are a design for a touch screen, and the band under
+    // them is dense because the bar is three rows — not because something was
+    // measured. So boxes that say the row FITS this 560 px page must not undo
+    // it, which is the whole job of the `mobileTopBar ||` in front of the
+    // measurement.
+    viewport(560);
+    vi.stubGlobal('ResizeObserver', undefined);
+    stubStripBoxes(400, 560);
+    const { container } = booting();
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const banner = container.querySelector('[data-boot-banner]') as HTMLElement;
+
+    expect(status.dataset.statusLayout).toBe('mobile');
+    expect(banner.dataset.bootDense).toBe('true');
+    expect(banner.querySelectorAll('[data-boot-phase]')).toHaveLength(1);
+  });
+
   it('keeps a line in the narrow band for the whole held frame', () => {
     // Dense × linger, the crossing neither suite made — which is exactly why
     // this shipped. The linger exists because the whole trail lit is the only
     // frame in which a visitor can read what happened while they waited; the
     // dense selector asked for the leftmost UNFINISHED line, and during the
-    // linger there is no such thing. So on every viewport at or under 1280px
-    // the held frame was `◇ STAGE POWER-ON` and an empty trail, for all 700ms
-    // of it, and then the band left. The linger bought a blank.
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width: 1280px'),
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    // linger there is no such thing. So on every viewport narrow enough to
+    // fold the bar the held frame was `◇ STAGE POWER-ON` and an empty trail,
+    // for all 700ms of it, and then the band left. The linger bought a blank.
+    viewport(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX);
     vi.useFakeTimers();
     const { container } = booting();
 
@@ -1523,14 +1650,7 @@ describe('HudOverlay rail collapse', () => {
   };
 
   const stage = (width: number) => {
-    vi.stubGlobal('matchMedia', (query: string) => {
-      const max = /max-width:\s*(\d+)px/.exec(query);
-      return {
-        matches: max ? width <= Number(max[1]) : false,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      };
-    });
+    viewport(width);
     return render(
       <HudOverlay
         chain={chain}
