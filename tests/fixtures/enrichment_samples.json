@@ -365,21 +365,99 @@
         "hash": "0xblock100"
       },
       "updated_at_ms": 1700000000005,
-      "activities": [
+      "window_ms": 3600000,
+      "kinds": [
         {
-          "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
-          "block": 100,
-          "timestamp_ms": 1700000000000,
-          "category": "dao",
-          "label": "dao · deposit",
-          "participant_count": 1
+          "kind": "transfer",
+          "in_window": 42,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+            "block": 100,
+            "timestamp_ms": 1700000000000,
+            "category": "transfer",
+            "participant_count": 2,
+            "amount_shannons": "52668983337"
+          }
         },
         {
-          "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
-          "block": 99,
-          "timestamp_ms": 1699999999000,
-          "category": "token",
-          "participant_count": 2
+          "kind": "dao",
+          "in_window": 6,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "block": 99,
+            "timestamp_ms": 1699999940000,
+            "category": "dao",
+            "label": "withdraw complete",
+            "participant_count": 1,
+            "amount_shannons": "1000000000000"
+          }
+        },
+        {
+          "kind": "token",
+          "in_window": 0,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x6666666666666666666666666666666666666666666666666666666666666666",
+            "block": 91,
+            "timestamp_ms": 1699568000000,
+            "category": "token",
+            "label": "0.0005 BTC",
+            "participant_count": 2
+          }
+        },
+        {
+          "kind": "object",
+          "in_window": 0,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x7777777777777777777777777777777777777777777777777777777777777777",
+            "block": 93,
+            "timestamp_ms": 1699654000000,
+            "category": "object",
+            "label": "burn",
+            "participant_count": 1
+          }
+        },
+        {
+          "kind": "identity",
+          "in_window": 0,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x8888888888888888888888888888888888888888888888888888888888888888",
+            "block": 94,
+            "timestamp_ms": 1699830000000,
+            "category": "identity",
+            "label": "release",
+            "participant_count": 1
+          }
+        },
+        {
+          "kind": "protocol",
+          "in_window": 0,
+          "in_window_capped": false,
+          "latest": {
+            "tx_hash": "0x9999999999999999999999999999999999999999999999999999999999999999",
+            "block": 96,
+            "timestamp_ms": 1699917000000,
+            "category": "protocol",
+            "label": "fiber · channel close",
+            "participant_count": 2
+          }
+        },
+        {
+          "kind": "script",
+          "in_window": 100,
+          "in_window_capped": true,
+          "latest": {
+            "tx_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "block": 100,
+            "timestamp_ms": 1700000000000,
+            "category": "script",
+            "label": ".bit Time Index State",
+            "participant_count": 1
+          }
         }
       ]
     },
@@ -825,21 +903,99 @@
           "hash": "0xblock100"
         },
         "updated_at_ms": 1700000000005,
-        "activities": [
+        "window_ms": 3600000,
+        "kinds": [
           {
-            "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
-            "block": 100,
-            "timestamp_ms": 1700000000000,
-            "category": "dao",
-            "label": "dao · deposit",
-            "participant_count": 1
+            "kind": "transfer",
+            "in_window": 42,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+              "block": 100,
+              "timestamp_ms": 1700000000000,
+              "category": "transfer",
+              "participant_count": 2,
+              "amount_shannons": "52668983337"
+            }
           },
           {
-            "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
-            "block": 99,
-            "timestamp_ms": 1699999999000,
-            "category": "token",
-            "participant_count": 2
+            "kind": "dao",
+            "in_window": 6,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+              "block": 99,
+              "timestamp_ms": 1699999940000,
+              "category": "dao",
+              "label": "withdraw complete",
+              "participant_count": 1,
+              "amount_shannons": "1000000000000"
+            }
+          },
+          {
+            "kind": "token",
+            "in_window": 0,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x6666666666666666666666666666666666666666666666666666666666666666",
+              "block": 91,
+              "timestamp_ms": 1699568000000,
+              "category": "token",
+              "label": "0.0005 BTC",
+              "participant_count": 2
+            }
+          },
+          {
+            "kind": "object",
+            "in_window": 0,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x7777777777777777777777777777777777777777777777777777777777777777",
+              "block": 93,
+              "timestamp_ms": 1699654000000,
+              "category": "object",
+              "label": "burn",
+              "participant_count": 1
+            }
+          },
+          {
+            "kind": "identity",
+            "in_window": 0,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x8888888888888888888888888888888888888888888888888888888888888888",
+              "block": 94,
+              "timestamp_ms": 1699830000000,
+              "category": "identity",
+              "label": "release",
+              "participant_count": 1
+            }
+          },
+          {
+            "kind": "protocol",
+            "in_window": 0,
+            "in_window_capped": false,
+            "latest": {
+              "tx_hash": "0x9999999999999999999999999999999999999999999999999999999999999999",
+              "block": 96,
+              "timestamp_ms": 1699917000000,
+              "category": "protocol",
+              "label": "fiber · channel close",
+              "participant_count": 2
+            }
+          },
+          {
+            "kind": "script",
+            "in_window": 100,
+            "in_window_capped": true,
+            "latest": {
+              "tx_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "block": 100,
+              "timestamp_ms": 1700000000000,
+              "category": "script",
+              "label": ".bit Time Index State",
+              "participant_count": 1
+            }
           }
         ]
       }

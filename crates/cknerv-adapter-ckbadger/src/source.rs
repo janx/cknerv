@@ -10,34 +10,35 @@ use url::Url;
 
 use cknerv_core::projection::display_plane::DISPLAY_CURATED_FIELD;
 use cknerv_core::{
-    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
-    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, ChainCensusClasses,
-    CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
-    EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
-    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
-    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProducerLedger, ProducerLedgerRow,
-    ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState, ScriptFamilyCensusRecord,
-    ScriptFamilyCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
-    SemanticAttribute, SemanticCellConsumption, SemanticCellContent, SemanticContentDecode,
-    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript,
-    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
-    DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_FAMILIES, MAX_SCRIPT_REGISTRY_ENTRIES,
-    PRODUCER_LEDGER_ROW_CAP,
+    ActivityFeedItem, ActivityFeedRecord, ActivityKindSummary, AssetEcosystemCategory,
+    AssetEcosystemLeader, AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus,
+    ChainCensusClasses, CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord,
+    EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind,
+    ForkWatchRecord, ForkWatchReorg, GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType,
+    NetworkAtlasBucket, NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence,
+    PeerProbeResult, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProducerLedger,
+    ProducerLedgerRow, ProtocolEra, ProtocolEraRecord, RosterNode, RosterNodeState,
+    ScriptFamilyCensusRecord, ScriptFamilyCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord,
+    SemanticAsset, SemanticAttribute, SemanticCellConsumption, SemanticCellContent,
+    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
+    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_FAMILIES,
+    MAX_SCRIPT_REGISTRY_ENTRIES, PRODUCER_LEDGER_ROW_CAP,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
-    AddressRecordResponse, AdvertiserEvidenceResponse, AssetEcosystemResponse, BlockMinerResponse,
-    BlockResponse, CandidateEvidenceResponse, CellDataAnalysis, CellDetailResponse,
-    ClusterDetailResponse, CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo,
-    DaoStatisticsResponse, HardforkEventResponse, HardforkTimelineResponse, LabelCountResponse,
-    LatestActivityResponse, LiveCellSummaryResponse, LookupScriptsRequest,
-    MinerDistributionResponse, NetworkCrawlerSummaryResponse, NetworkDistributionsResponse,
-    NetworkPeersPageResponse, NetworkStats, NftCollectionDetailResponse, PeerDetailResponse,
-    PeerDisplayState, PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse,
-    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, SporeItemResponse, TokenCatalogueResponse, TokenResponse,
+    ActivityItemDelta, ActivityPageResponse, ActivityProtocolAction, AddressRecordResponse,
+    AdvertiserEvidenceResponse, AssetEcosystemResponse, BlockMinerResponse, BlockResponse,
+    CandidateEvidenceResponse, CellDataAnalysis, CellDetailResponse, ClusterDetailResponse,
+    CollectionCompositionDto, CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse,
+    HardforkEventResponse, HardforkTimelineResponse, LabelCountResponse, LatestActivityResponse,
+    LiveCellSummaryResponse, LookupScriptsRequest, MinerDistributionResponse,
+    NetworkCrawlerSummaryResponse, NetworkDistributionsResponse, NetworkPeersPageResponse,
+    NetworkStats, NftCollectionDetailResponse, PeerDetailResponse, PeerDisplayState,
+    PeerProbeResultResponse, PeerSummaryResponse, RecentReorgResponse, ReorgEventResponse,
+    ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse,
+    ScriptResponse, SporeItemResponse, TokenCatalogueResponse, TokenResponse,
     TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
     TransactionStatsResponse, VerifiedPeerResponse,
 };
@@ -83,7 +84,25 @@ const GALAXY_COMPOSITION_CAPABILITY: &str = "galaxy_composition";
 const DEFAULT_MAX_LAG_BLOCKS: u64 = 12;
 const MAX_ECOSYSTEM_CATEGORIES: usize = 16;
 const MAX_ECOSYSTEM_ASSETS: usize = 16;
-const ACTIVITY_FEED_LIMIT: usize = 8;
+/// One page per kind, the largest ckbadger's `activities` route will serve.
+/// It is a page size, not a row count: what reaches the wire is seven
+/// summaries, and the page is how far back into the hour one request reaches.
+const ACTIVITY_FEED_LIMIT: usize = 100;
+/// The window every kind's rate is counted over — one hour, ending at the
+/// record's own fetch clock.
+const ACTIVITY_WINDOW_MS: u64 = 3_600_000;
+/// cknerv's kind word, and the word ckbadger's `filter` takes for it. The
+/// order is the one the readout prints and a reader learns once; `ckb` is the
+/// only place the two vocabularies disagree.
+const ACTIVITY_KINDS: [(&str, &str); 7] = [
+    ("transfer", "ckb"),
+    ("dao", "dao"),
+    ("token", "token"),
+    ("object", "object"),
+    ("identity", "identity"),
+    ("protocol", "protocol"),
+    ("script", "script"),
+];
 const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
 const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
 const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
@@ -2087,36 +2106,52 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         Ok(record)
     }
 
+    /// Seven requests, one per kind, under one revalidated anchor. The chain's
+    /// newest transactions are two keepers writing state every block, so a
+    /// sample of the global feed reads `script` and nothing else; a page per
+    /// FILTER is what lets a kind that happens four times a day be as legible
+    /// as one that happens four times a minute.
     async fn enrich_activity_feed(
         &self,
         context: &CanonicalContext,
     ) -> anyhow::Result<Option<ActivityFeedRecord>> {
         let anchor = self.current_anchor(context)?;
-        let mut url = self.endpoint("activities/latest")?;
-        url.query_pairs_mut()
-            .append_pair("limit", &ACTIVITY_FEED_LIMIT.to_string());
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .context("fetch ckbadger latest activities")?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
+        let now = now_ms();
+        let mut kinds = Vec::with_capacity(ACTIVITY_KINDS.len());
+        for (kind, filter) in ACTIVITY_KINDS {
+            let mut url = self.endpoint("activities")?;
+            url.query_pairs_mut()
+                .append_pair("limit", &ACTIVITY_FEED_LIMIT.to_string())
+                .append_pair("filter", filter);
+            let response = self
+                .client
+                .get(url)
+                .send()
+                .await
+                .with_context(|| format!("fetch ckbadger {kind} activities"))?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "ckbadger {kind} activities returned HTTP {}",
+                    response.status()
+                ));
+            }
+            let page: ActivityPageResponse = response
+                .json()
+                .await
+                .with_context(|| format!("decode ckbadger {kind} activities"))?;
+            kinds.push(map_activity_kind(kind, page.data, &anchor, now)?);
         }
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "ckbadger latest activities returned HTTP {}",
-                response.status()
-            ));
-        }
-        let activities: Vec<LatestActivityResponse> = response
-            .json()
-            .await
-            .context("decode ckbadger latest activities")?;
-        let record = map_activity_feed(activities, anchor.clone())?;
         self.revalidate_anchor(&anchor, "activity feed").await?;
-        Ok(Some(record))
+        Ok(Some(ActivityFeedRecord {
+            source: "ckbadger".to_string(),
+            as_of: anchor,
+            updated_at_ms: now,
+            window_ms: ACTIVITY_WINDOW_MS,
+            kinds,
+        }))
     }
 
     async fn enrich_transaction_horizon(
@@ -4072,47 +4107,57 @@ fn valid_day_bucket_label(label: &str) -> bool {
     (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
-fn map_activity_feed(
-    activities: Vec<LatestActivityResponse>,
-    anchor: ChainAnchor,
-) -> anyhow::Result<ActivityFeedRecord> {
-    if activities.len() > ACTIVITY_FEED_LIMIT {
+/// One kind's page, folded into the summary the wire carries: how many of
+/// this kind happened inside the window, whether the page could see far
+/// enough back to be sure of that, and the newest one at any age.
+///
+/// Order and identity are still validated over the WHOLE page, and the
+/// leading rows past the validated anchor are still withheld — the chain may
+/// advance between the source probe and these seven requests, and a later
+/// probe admits them once their block hash is proven.
+fn map_activity_kind(
+    kind: &str,
+    rows: Vec<LatestActivityResponse>,
+    anchor: &ChainAnchor,
+    now_ms: u64,
+) -> anyhow::Result<ActivityKindSummary> {
+    if rows.len() > ACTIVITY_FEED_LIMIT {
         return Err(anyhow!(
-            "ckbadger latest activities exceeded the requested limit"
+            "ckbadger {kind} activities exceeded the requested limit"
         ));
     }
+    let page_was_full = rows.len() == ACTIVITY_FEED_LIMIT;
+    let window_start = now_ms.saturating_sub(ACTIVITY_WINDOW_MS);
 
     let mut tx_hashes = HashSet::new();
     let mut previous_block = None;
-    let mut mapped = Vec::with_capacity(activities.len());
-    for activity in activities {
+    let mut in_window: u32 = 0;
+    let mut oldest_kept_ms = None;
+    let mut latest = None;
+    for activity in rows {
         if activity.is_cellbase {
             return Err(anyhow!(
-                "ckbadger latest activities unexpectedly included cellbase"
+                "ckbadger {kind} activities unexpectedly included cellbase"
             ));
         }
         if !is_hash32(&activity.tx_hash) {
             return Err(anyhow!(
-                "ckbadger latest activities returned an invalid transaction hash"
+                "ckbadger {kind} activities returned an invalid transaction hash"
             ));
         }
         if !tx_hashes.insert(activity.tx_hash.clone()) {
             return Err(anyhow!(
-                "ckbadger latest activities returned a duplicate transaction"
+                "ckbadger {kind} activities returned a duplicate transaction"
             ));
         }
         let block = nonnegative(activity.block_number, "activity blockNumber")?;
         wire_safe_u64(block, "activity blockNumber")?;
         if previous_block.is_some_and(|previous| block > previous) {
             return Err(anyhow!(
-                "ckbadger latest activities were not ordered newest first"
+                "ckbadger {kind} activities were not ordered newest first"
             ));
         }
         previous_block = Some(block);
-        // The chain may advance between the source probe and this bounded
-        // request. Keep validating response order, but publish only the safe
-        // suffix already covered by the validated anchor. A later probe will
-        // admit the leading entries once their block hash is proven.
         if block > anchor.block {
             continue;
         }
@@ -4125,28 +4170,43 @@ fn map_activity_feed(
         }
         let participant_count = u32::try_from(activity.participants.len())
             .context("ckbadger activity participant count is outside u32")?;
-        let (category, label) = classify_activity(&activity)?;
-        mapped.push(ActivityFeedItem {
-            tx_hash: activity.tx_hash,
-            block,
-            timestamp_ms,
-            category,
-            label,
-            participant_count,
-        });
+        check_activity_bounds(&activity)?;
+        if timestamp_ms >= window_start {
+            in_window = in_window
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("ckbadger {kind} activities overflowed the window count"))?;
+        }
+        oldest_kept_ms = Some(timestamp_ms);
+        if latest.is_none() {
+            let (label, amount_shannons) = activity_label(kind, &activity)?;
+            latest = Some(ActivityFeedItem {
+                tx_hash: activity.tx_hash,
+                block,
+                timestamp_ms,
+                category: kind.to_string(),
+                label,
+                participant_count,
+                amount_shannons,
+            });
+        }
     }
 
-    Ok(ActivityFeedRecord {
-        source: "ckbadger".to_string(),
-        as_of: anchor,
-        updated_at_ms: now_ms(),
-        activities: mapped,
+    Ok(ActivityKindSummary {
+        kind: kind.to_string(),
+        in_window,
+        // A full page whose OLDEST row is still inside the hour cannot say
+        // how much it did not reach, so the count it carries is a floor.
+        in_window_capped: page_was_full
+            && oldest_kept_ms.is_some_and(|oldest| oldest >= window_start),
+        latest,
     })
 }
 
-fn classify_activity(
-    activity: &LatestActivityResponse,
-) -> anyhow::Result<(String, Option<String>)> {
+/// The bounds and the vocabulary every accepted row must satisfy, whether or
+/// not it is the one this kind's label is read from. An item kind outside the
+/// three the wire knows is a fault rather than a row to skip: it means the
+/// index grew a category cknerv would silently miscount.
+fn check_activity_bounds(activity: &LatestActivityResponse) -> anyhow::Result<()> {
     let nested_items = activity
         .protocol_actions
         .len()
@@ -4164,28 +4224,6 @@ fn classify_activity(
     if nested_items > MAX_ACTIVITY_NESTED_ITEMS {
         return Err(anyhow!("ckbadger activity returned too many nested items"));
     }
-
-    let mut protocol_label = None;
-    let mut protocol_category = None;
-    for action in &activity.protocol_actions {
-        let protocol = bounded_activity_label(&action.protocol, "activity protocol")?
-            .ok_or_else(|| anyhow!("ckbadger activity returned an empty protocol"))?;
-        let action = bounded_activity_label(&action.action, "activity action")?
-            .ok_or_else(|| anyhow!("ckbadger activity returned an empty action"))?;
-        if protocol_label.is_none() || protocol.eq_ignore_ascii_case("dao") {
-            protocol_category = Some(if protocol.eq_ignore_ascii_case("dao") {
-                "dao"
-            } else {
-                "protocol"
-            });
-            protocol_label = Some(format!("{protocol} · {action}"));
-        }
-    }
-    if let Some(category) = protocol_category {
-        return Ok((category.to_string(), protocol_label));
-    }
-
-    let mut item_category = None;
     for participant in &activity.participants {
         for item in &participant.item_deltas {
             let kind = item.kind.trim();
@@ -4194,27 +4232,201 @@ fn classify_activity(
                     "ckbadger activity returned unsupported item kind {kind:?}"
                 ));
             }
-            item_category.get_or_insert_with(|| kind.to_string());
         }
     }
-    if let Some(category) = item_category {
-        return Ok((category, None));
-    }
+    Ok(())
+}
 
-    let mut script_label = None;
-    for call in activity.type_calls.iter().chain(&activity.lock_calls) {
-        if let Some(name) = call.script_name.as_deref() {
-            let name = bounded_activity_label(name, "activity script name")?;
-            if script_label.is_none() {
-                script_label = name;
+/// What one row of a given kind says, in the reader's words: a label, and the
+/// one shannon figure the kind has when it has one. Nothing here invents a
+/// reading — a row that carries no figure of its kind returns `None` and the
+/// readout prints the kind and the age alone.
+fn activity_label(
+    kind: &str,
+    activity: &LatestActivityResponse,
+) -> anyhow::Result<(Option<String>, Option<String>)> {
+    match kind {
+        // The amount is the largest positive participant delta: what the
+        // transfer MOVED, rather than what the payer spent on top of it.
+        "transfer" => Ok((None, largest_positive_ckb_delta(activity))),
+        "dao" => {
+            let Some(action) = activity
+                .protocol_actions
+                .iter()
+                .find(|action| action.protocol.trim().eq_ignore_ascii_case("dao"))
+            else {
+                return Ok((None, None));
+            };
+            let label =
+                bounded_activity_label(&action.action.replace('_', " "), "activity action")?;
+            Ok((label, dao_action_capacity(action)))
+        }
+        "token" => Ok((token_label(activity)?, None)),
+        "object" => Ok((item_delta_verb(activity, "object", "mint", "burn"), None)),
+        "identity" => Ok((
+            item_delta_verb(activity, "identity", "register", "release"),
+            None,
+        )),
+        "protocol" => {
+            let Some(action) = activity.protocol_actions.first() else {
+                return Ok((None, None));
+            };
+            let protocol = bounded_activity_label(&action.protocol, "activity protocol")?
+                .ok_or_else(|| anyhow!("ckbadger activity returned an empty protocol"))?;
+            let verb = bounded_activity_label(&action.action.replace('_', " "), "activity action")?
+                .ok_or_else(|| anyhow!("ckbadger activity returned an empty action"))?;
+            let label =
+                bounded_activity_label(&format!("{protocol} · {verb}"), "activity protocol label")?;
+            Ok((label, None))
+        }
+        "script" => {
+            for call in activity.type_calls.iter().chain(&activity.lock_calls) {
+                let Some(name) = call.script_name.as_deref() else {
+                    continue;
+                };
+                if let Some(name) = bounded_activity_label(name, "activity script name")? {
+                    return Ok((Some(name), None));
+                }
+            }
+            Ok((None, None))
+        }
+        _ => Err(anyhow!("ckbadger activity asked for unknown kind {kind:?}")),
+    }
+}
+
+fn largest_positive_ckb_delta(activity: &LatestActivityResponse) -> Option<String> {
+    activity
+        .participants
+        .iter()
+        .filter_map(|participant| participant.ckb_delta.as_deref())
+        .filter_map(|delta| delta.trim().parse::<i128>().ok())
+        .filter(|delta| *delta > 0)
+        .max()
+        .map(|delta| delta.to_string())
+}
+
+/// The DAO row's own capacity, when the untyped metadata carries it as an
+/// unsigned decimal. Upstream sends it as a string on some actions and as a
+/// JSON number on others; anything else is not a shannon figure and is left
+/// unread rather than guessed at.
+fn dao_action_capacity(action: &ActivityProtocolAction) -> Option<String> {
+    let capacity = action.metadata.as_ref()?.get("capacity")?;
+    if let Some(text) = capacity.as_str() {
+        return text
+            .trim()
+            .parse::<u128>()
+            .ok()
+            .map(|value| value.to_string());
+    }
+    capacity.as_u64().map(|value| value.to_string())
+}
+
+/// `"<magnitude> <symbol>"` for the token this row moved. The receiving side
+/// is the one worth naming; a row with no positive delta (a burn, or a
+/// participant list the index cut) falls back to the largest magnitude it
+/// has. A delta that will not parse leaves the row unlabelled rather than
+/// failing the record: a token amount is a reading, not an invariant.
+fn token_label(activity: &LatestActivityResponse) -> anyhow::Result<Option<String>> {
+    let mut best: Option<(i128, &ActivityItemDelta)> = None;
+    for participant in &activity.participants {
+        for item in &participant.item_deltas {
+            if item.kind.trim() != "token" {
+                continue;
+            }
+            let Some(delta) = item_delta_amount(item) else {
+                continue;
+            };
+            let better = match best {
+                None => true,
+                Some((current, _)) if current > 0 => delta > current,
+                Some((current, _)) => delta > 0 || delta.abs() > current.abs(),
+            };
+            if better {
+                best = Some((delta, item));
             }
         }
     }
-    if !activity.type_calls.is_empty() || !activity.lock_calls.is_empty() {
-        return Ok(("script".to_string(), script_label));
-    }
+    let Some((delta, item)) = best else {
+        return Ok(None);
+    };
+    let magnitude = scaled_token_magnitude(delta.unsigned_abs(), item.decimals.unwrap_or(0));
+    let symbol = match item.symbol.as_deref().map(str::trim) {
+        Some(symbol) if !symbol.is_empty() => symbol.to_string(),
+        _ => {
+            let Some(hash) = item.type_script_hash.as_deref().map(str::trim) else {
+                return Ok(None);
+            };
+            if hash.is_empty() {
+                return Ok(None);
+            }
+            format!("{}…", hash.chars().take(10).collect::<String>())
+        }
+    };
+    bounded_activity_label(&format!("{magnitude} {symbol}"), "activity token label")
+}
 
-    Ok(("transfer".to_string(), None))
+/// Base units to the token's own decimal places, without an exponent and
+/// without a float: `50000` at 8 places is `0.0005`, `123450000000` is
+/// `1234.5`. Done on the digits so a token with 30 decimals cannot overflow
+/// the divisor it would need.
+fn scaled_token_magnitude(magnitude: u128, decimals: u8) -> String {
+    let digits = magnitude.to_string();
+    let decimals = usize::from(decimals);
+    if decimals == 0 {
+        return digits;
+    }
+    let padded = if digits.len() <= decimals {
+        format!("{}{digits}", "0".repeat(decimals + 1 - digits.len()))
+    } else {
+        digits
+    };
+    let (whole, fraction) = padded.split_at(padded.len() - decimals);
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction}")
+    }
+}
+
+/// What happened to the objects or identities this row touched, read off the
+/// SET of `±1` deltas rather than off any one of them: only creations is a
+/// mint, only destructions is a burn, and both at once is the thing changing
+/// hands.
+fn item_delta_verb(
+    activity: &LatestActivityResponse,
+    kind: &str,
+    created: &str,
+    destroyed: &str,
+) -> Option<String> {
+    let mut saw_created = false;
+    let mut saw_destroyed = false;
+    for participant in &activity.participants {
+        for item in &participant.item_deltas {
+            if item.kind.trim() != kind {
+                continue;
+            }
+            match item_delta_amount(item) {
+                Some(delta) if delta > 0 => saw_created = true,
+                Some(delta) if delta < 0 => saw_destroyed = true,
+                _ => {}
+            }
+        }
+    }
+    match (saw_created, saw_destroyed) {
+        (true, true) => Some("transfer".to_string()),
+        (true, false) => Some(created.to_string()),
+        (false, true) => Some(destroyed.to_string()),
+        (false, false) => None,
+    }
+}
+
+fn item_delta_amount(item: &ActivityItemDelta) -> Option<i128> {
+    match item.delta.as_ref()? {
+        serde_json::Value::String(text) => text.trim().parse::<i128>().ok(),
+        serde_json::Value::Number(number) => number.as_i64().map(i128::from),
+        _ => None,
+    }
 }
 
 fn bounded_activity_label(value: &str, field: &str) -> anyhow::Result<Option<String>> {
@@ -5903,10 +6115,46 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/activities/latest",
-                get(|| async {
-                    Json(serde_json::json!([
-                        {
+                "/api/v1/activities",
+                get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
+                    let limit: usize = query
+                        .get("limit")
+                        .expect("activities fetched with no bound")
+                        .parse()
+                        .expect("activities fetched with an unreadable bound");
+                    assert_eq!(limit, 100, "activities fetched with an unexpected bound");
+                    let filter = query
+                        .get("filter")
+                        .expect("activities fetched with no filter")
+                        .clone();
+                    let rows = match filter.as_str() {
+                        "ckb" => serde_json::json!([{
+                            "txHash": format!("0x{}", "33".repeat(32)),
+                            "blockNumber": 100,
+                            "txIndex": 3,
+                            "timestamp": "1700000000000",
+                            "isCellbase": false,
+                            "protocolActions": [],
+                            "typeCalls": [],
+                            "lockCalls": [],
+                            "participants": [
+                                {
+                                    "address": "ckt1payer",
+                                    "ckbDelta": "-52671983337",
+                                    "usedDelta": "0",
+                                    "itemDeltas": [],
+                                    "tags": 0
+                                },
+                                {
+                                    "address": "ckt1payee",
+                                    "ckbDelta": "52668983337",
+                                    "usedDelta": "0",
+                                    "itemDeltas": [],
+                                    "tags": 0
+                                }
+                            ]
+                        }]),
+                        "dao" => serde_json::json!([{
                             "txHash": format!("0x{}", "44".repeat(32)),
                             "blockNumber": 100,
                             "txIndex": 2,
@@ -5914,8 +6162,8 @@ mod tests {
                             "isCellbase": false,
                             "protocolActions": [{
                                 "protocol": "dao",
-                                "action": "deposit",
-                                "metadata": {}
+                                "action": "withdraw_complete",
+                                "metadata": { "capacity": "1000000000000" }
                             }],
                             "typeCalls": [],
                             "lockCalls": [],
@@ -5926,8 +6174,8 @@ mod tests {
                                 "itemDeltas": [],
                                 "tags": 1
                             }]
-                        },
-                        {
+                        }]),
+                        "token" => serde_json::json!([{
                             "txHash": format!("0x{}", "55".repeat(32)),
                             "blockNumber": 99,
                             "txIndex": 1,
@@ -5943,12 +6191,30 @@ mod tests {
                                 "itemDeltas": [{
                                     "kind": "token",
                                     "typeScriptHash": ASSET_TYPE_HASH,
-                                    "delta": "42"
+                                    "delta": "50000",
+                                    "symbol": "BTC",
+                                    "decimals": 8
                                 }],
                                 "tags": 2
                             }]
-                        },
-                        {
+                        }]),
+                        "object" | "identity" => serde_json::json!([]),
+                        "protocol" => serde_json::json!([{
+                            "txHash": format!("0x{}", "77".repeat(32)),
+                            "blockNumber": 98,
+                            "txIndex": 4,
+                            "timestamp": "1699999998000",
+                            "isCellbase": false,
+                            "protocolActions": [{
+                                "protocol": "fiber",
+                                "action": "channel_close",
+                                "metadata": { "event": "close" }
+                            }],
+                            "typeCalls": [],
+                            "lockCalls": [],
+                            "participants": []
+                        }]),
+                        "script" => serde_json::json!([{
                             "txHash": format!("0x{}", "66".repeat(32)),
                             "blockNumber": 98,
                             "txIndex": 1,
@@ -5964,8 +6230,15 @@ mod tests {
                             }],
                             "lockCalls": [],
                             "participants": []
-                        }
-                    ]))
+                        }]),
+                        other => panic!("activities fetched with an unknown filter {other:?}"),
+                    };
+                    Json(serde_json::json!({
+                        "data": rows,
+                        "limit": limit,
+                        "hasMore": false,
+                        "nextCursor": null
+                    }))
                 }),
             )
             .route(
@@ -6282,8 +6555,8 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/activities/latest",
-                get(|| async { Json(serde_json::json!([])) }),
+                "/api/v1/activities",
+                get(|| async { Json(serde_json::json!({ "data": [] })) }),
             )
             .route(
                 "/api/v1/blocks/:number",
@@ -6729,16 +7002,48 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(activity_feed.as_of.block, 100);
-        assert_eq!(activity_feed.activities.len(), 3);
-        assert_eq!(activity_feed.activities[0].category, "dao");
+        assert_eq!(activity_feed.window_ms, 3_600_000);
         assert_eq!(
-            activity_feed.activities[0].label.as_deref(),
-            Some("dao · deposit")
+            activity_feed
+                .kinds
+                .iter()
+                .map(|summary| summary.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transfer", "dao", "token", "object", "identity", "protocol", "script"],
+            "the seven kinds cross the wire in the order the readout prints"
         );
-        assert_eq!(activity_feed.activities[1].category, "token");
-        assert_eq!(activity_feed.activities[2].category, "script");
+        let latest = |kind: &str| {
+            activity_feed
+                .kinds
+                .iter()
+                .find(|summary| summary.kind == kind)
+                .unwrap_or_else(|| panic!("{kind} summary"))
+                .latest
+                .clone()
+        };
+        let transfer = latest("transfer").expect("a CKB transfer");
+        assert_eq!(transfer.category, "transfer");
+        assert_eq!(transfer.label, None);
+        assert_eq!(transfer.amount_shannons.as_deref(), Some("52668983337"));
+        assert_eq!(transfer.participant_count, 2);
+        let dao = latest("dao").expect("a DAO action");
+        assert_eq!(dao.label.as_deref(), Some("withdraw complete"));
+        assert_eq!(dao.amount_shannons.as_deref(), Some("1000000000000"));
         assert_eq!(
-            activity_feed.activities[2].label.as_deref(),
+            latest("token").expect("a token move").label.as_deref(),
+            Some("0.0005 BTC")
+        );
+        assert!(latest("object").is_none(), "no object row was ever indexed");
+        assert!(latest("identity").is_none());
+        assert_eq!(
+            latest("protocol")
+                .expect("a protocol action")
+                .label
+                .as_deref(),
+            Some("fiber · channel close")
+        );
+        assert_eq!(
+            latest("script").expect("a script call").label.as_deref(),
             Some(".bit Time Info")
         );
 
@@ -10575,33 +10880,440 @@ mod tests {
         assert!(record.is_none());
     }
 
-    #[test]
-    fn activity_feed_filters_only_the_unanchored_leading_prefix() {
-        fn transfer(block: i64, byte: &str) -> LatestActivityResponse {
-            LatestActivityResponse {
-                tx_hash: format!("0x{}", byte.repeat(32)),
-                block_number: block,
-                timestamp: "1700000000000".to_string(),
-                is_cellbase: false,
-                protocol_actions: Vec::new(),
-                type_calls: Vec::new(),
-                lock_calls: Vec::new(),
-                participants: Vec::new(),
-            }
-        }
+    /// One row of an activity page, said the short way: how many minutes ago
+    /// it happened, what block it landed in, and the fields that make it the
+    /// case it is about. Everything else is filled in around it.
+    type ActivityRow = (u64, i64, serde_json::Value);
+    /// What one filter answers.
+    type ActivityPage = (&'static str, Vec<ActivityRow>);
 
-        let feed = map_activity_feed(
-            vec![transfer(101, "11"), transfer(100, "22")],
-            ChainAnchor {
-                block: 100,
-                hash: "0xblock100".to_string(),
-            },
+    /// One page per kind, answered by `filter`, over a mock that stamps its
+    /// rows against the same wall clock the adapter reads. Everything the
+    /// window arithmetic and the label rules do is asserted here.
+    async fn spawn_activity_api(pages: Vec<ActivityPage>) -> (Url, tokio::task::JoinHandle<()>) {
+        let now = now_ms();
+        let pages: HashMap<String, serde_json::Value> = pages
+            .into_iter()
+            .map(|(filter, rows)| {
+                let rows: Vec<serde_json::Value> = rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (minutes_ago, block, body))| {
+                        let byte = format!("{:02x}", index + 1);
+                        let mut row = serde_json::json!({
+                            "txHash": format!("0x{}", byte.repeat(32)),
+                            "blockNumber": block,
+                            "txIndex": index,
+                            "timestamp": (now - minutes_ago * 60_000).to_string(),
+                            "isCellbase": false,
+                            "protocolActions": [],
+                            "typeCalls": [],
+                            "lockCalls": [],
+                            "participants": []
+                        });
+                        let object = row.as_object_mut().expect("a row is an object");
+                        for (key, value) in body.as_object().expect("a body is an object") {
+                            object.insert(key.clone(), value.clone());
+                        }
+                        row
+                    })
+                    .collect();
+                (filter.to_string(), serde_json::json!({ "data": rows }))
+            })
+            .collect();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    |axum::extract::Path(number): axum::extract::Path<i64>| async move {
+                        Json(serde_json::json!({
+                            "number": number,
+                            "hash": if number == 100 { "0xblock100" } else { "0xblock101" }
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/activities",
+                get(
+                    move |axum::extract::Query(query): axum::extract::Query<
+                        HashMap<String, String>,
+                    >| {
+                        let pages = pages.clone();
+                        async move {
+                            let filter = query
+                                .get("filter")
+                                .expect("activities fetched with no filter");
+                            Json(
+                                pages
+                                    .get(filter)
+                                    .cloned()
+                                    .unwrap_or_else(|| serde_json::json!({ "data": [] })),
+                            )
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
         )
+    }
+
+    async fn activity_feed_over(pages: Vec<ActivityPage>) -> anyhow::Result<ActivityFeedRecord> {
+        let (api_base, server) = spawn_activity_api(pages).await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        source.probe(&context()).await;
+        let record = source.enrich_activity_feed(&context()).await;
+        server.abort();
+        Ok(record?.expect("the activities route answered"))
+    }
+
+    fn activity_summary<'a>(
+        record: &'a ActivityFeedRecord,
+        kind: &str,
+    ) -> &'a cknerv_core::ActivityKindSummary {
+        record
+            .kinds
+            .iter()
+            .find(|summary| summary.kind == kind)
+            .unwrap_or_else(|| panic!("{kind} summary"))
+    }
+
+    /// The whole point of the record, stated once: a rate per kind, over one
+    /// hour, and the newest event of each kind at ANY age. Six rows inside the
+    /// hour and one four days old are the same reading here — the old feed's
+    /// newest eight would have printed `script` eight times and nothing else.
+    #[tokio::test]
+    async fn activity_counts_each_kind_over_the_hour_and_keeps_its_newest_at_any_age() {
+        let record = activity_feed_over(vec![
+            (
+                "ckb",
+                vec![
+                    (1, 100, serde_json::json!({})),
+                    (30, 99, serde_json::json!({})),
+                    // Older than the window: it is still the page's oldest
+                    // row, which is what proves the count above is exact.
+                    (90, 98, serde_json::json!({})),
+                ],
+            ),
+            ("object", vec![(5_760, 40, serde_json::json!({}))]),
+        ])
+        .await
         .unwrap();
 
-        assert_eq!(feed.activities.len(), 1);
-        assert_eq!(feed.activities[0].block, 100);
-        assert_eq!(feed.activities[0].tx_hash, format!("0x{}", "22".repeat(32)));
+        assert_eq!(record.window_ms, 3_600_000);
+        assert_eq!(
+            record
+                .kinds
+                .iter()
+                .map(|summary| summary.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transfer", "dao", "token", "object", "identity", "protocol", "script"]
+        );
+        let transfer = activity_summary(&record, "transfer");
+        assert_eq!(transfer.in_window, 2, "the 90-minute row is outside");
+        assert!(!transfer.in_window_capped);
+        assert_eq!(transfer.latest.as_ref().unwrap().block, 100);
+
+        let object = activity_summary(&record, "object");
+        assert_eq!(object.in_window, 0, "four days ago is not this hour");
+        assert!(
+            object.latest.is_some(),
+            "a kind that has ever happened still has something to say"
+        );
+
+        let token = activity_summary(&record, "token");
+        assert_eq!(token.in_window, 0);
+        assert!(
+            token.latest.is_none(),
+            "a kind the index has never seen carries no event"
+        );
+    }
+
+    /// A full page whose oldest row is still inside the hour cannot say how
+    /// much it did not reach: the count is a floor, and the record says so.
+    /// A full page that reached back PAST the hour saw all of it.
+    #[tokio::test]
+    async fn activity_marks_a_count_as_a_floor_only_when_the_page_ran_out_inside_the_hour() {
+        let full_page = |oldest_minutes_ago: u64| {
+            (0..100)
+                .map(|index| {
+                    let minutes_ago = if index == 99 { oldest_minutes_ago } else { 1 };
+                    (
+                        minutes_ago,
+                        100 - i64::from(index) / 2,
+                        serde_json::json!({}),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let capped = activity_feed_over(vec![("script", full_page(59))])
+            .await
+            .unwrap();
+        let script = activity_summary(&capped, "script");
+        assert_eq!(script.in_window, 100);
+        assert!(script.in_window_capped, "the page ran out inside the hour");
+
+        let exact = activity_feed_over(vec![("script", full_page(120))])
+            .await
+            .unwrap();
+        let script = activity_summary(&exact, "script");
+        assert_eq!(script.in_window, 99);
+        assert!(
+            !script.in_window_capped,
+            "the page reached past the window, so the count is the count"
+        );
+    }
+
+    /// Every label rule, on the shapes ckbadger actually served on
+    /// 2026-09-08. A DAO row whose capacity is not an unsigned decimal and a
+    /// token with no symbol are here because both occur and neither may fail
+    /// the record.
+    #[tokio::test]
+    async fn activity_reads_each_kind_in_its_own_words() {
+        let record = activity_feed_over(vec![
+            (
+                "ckb",
+                vec![(1, 100, serde_json::json!({
+                    "participants": [
+                        { "ckbDelta": "-52671983337", "itemDeltas": [] },
+                        { "ckbDelta": "52668983337", "itemDeltas": [] }
+                    ]
+                }))],
+            ),
+            (
+                "dao",
+                vec![(2, 100, serde_json::json!({
+                    "protocolActions": [{
+                        "protocol": "dao",
+                        "action": "withdraw_complete",
+                        "metadata": { "capacity": 1000000000000_i64, "compensation": "119" }
+                    }]
+                }))],
+            ),
+            (
+                "token",
+                vec![(3, 100, serde_json::json!({
+                    "participants": [{
+                        "ckbDelta": "0",
+                        "itemDeltas": [{
+                            "kind": "token",
+                            "typeScriptHash": format!("0x{}", "ab".repeat(32)),
+                            "delta": "50000",
+                            "symbol": "BTC",
+                            "decimals": 8
+                        }]
+                    }]
+                }))],
+            ),
+            (
+                "object",
+                vec![(4, 100, serde_json::json!({
+                    "participants": [{
+                        "ckbDelta": "0",
+                        "itemDeltas": [{ "kind": "object", "objectId": "0xspore", "delta": -1 }]
+                    }]
+                }))],
+            ),
+            (
+                "identity",
+                vec![(5, 100, serde_json::json!({
+                    "participants": [{
+                        "ckbDelta": "0",
+                        "itemDeltas": [{ "kind": "identity", "identityId": "0xbit", "delta": -1 }]
+                    }]
+                }))],
+            ),
+            (
+                "protocol",
+                vec![(6, 100, serde_json::json!({
+                    "protocolActions": [{
+                        "protocol": "fiber",
+                        "action": "channel_close",
+                        "metadata": { "event": "close" }
+                    }]
+                }))],
+            ),
+            (
+                "script",
+                vec![(7, 100, serde_json::json!({
+                    "typeCalls": [
+                        { "scriptName": ".bit Time Index State" },
+                        { "scriptName": ".bit Time Info" }
+                    ]
+                }))],
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let latest = |kind: &str| {
+            activity_summary(&record, kind)
+                .latest
+                .clone()
+                .unwrap_or_else(|| panic!("{kind} event"))
+        };
+
+        // A CKB transfer has no words, only the figure it moved: the largest
+        // POSITIVE delta, which is the amount received rather than the amount
+        // the payer also spent on fees.
+        let transfer = latest("transfer");
+        assert_eq!(transfer.label, None);
+        assert_eq!(transfer.amount_shannons.as_deref(), Some("52668983337"));
+
+        let dao = latest("dao");
+        assert_eq!(dao.label.as_deref(), Some("withdraw complete"));
+        assert_eq!(dao.amount_shannons.as_deref(), Some("1000000000000"));
+
+        // Base units to the token's own decimal places, no exponent.
+        assert_eq!(latest("token").label.as_deref(), Some("0.0005 BTC"));
+        assert_eq!(latest("object").label.as_deref(), Some("burn"));
+        assert_eq!(latest("identity").label.as_deref(), Some("release"));
+        assert_eq!(
+            latest("protocol").label.as_deref(),
+            Some("fiber · channel close")
+        );
+        // The first script the transaction called, type calls before lock.
+        assert_eq!(
+            latest("script").label.as_deref(),
+            Some(".bit Time Index State")
+        );
+    }
+
+    /// Neither of these may fail the record: a token's amount is a reading,
+    /// and a DAO action's metadata is untyped upstream.
+    #[tokio::test]
+    async fn activity_leaves_an_unreadable_figure_unsaid_rather_than_failing() {
+        let record = activity_feed_over(vec![
+            (
+                "dao",
+                vec![(
+                    1,
+                    100,
+                    serde_json::json!({
+                        "protocolActions": [{
+                            "protocol": "dao",
+                            "action": "deposit",
+                            "metadata": { "capacity": "not a number" }
+                        }]
+                    }),
+                )],
+            ),
+            (
+                "token",
+                vec![(
+                    2,
+                    100,
+                    serde_json::json!({
+                        "participants": [{
+                            "ckbDelta": "0",
+                            "itemDeltas": [{
+                                "kind": "token",
+                                "typeScriptHash": "0x1234567890abcdef",
+                                "delta": "123450000000",
+                                "decimals": 8
+                            }]
+                        }]
+                    }),
+                )],
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let dao = activity_summary(&record, "dao").latest.clone().unwrap();
+        assert_eq!(dao.label.as_deref(), Some("deposit"));
+        assert_eq!(dao.amount_shannons, None);
+
+        // No symbol: the type script's own first ten characters, elided, so
+        // the row still says WHICH token without pretending to name it.
+        let token = activity_summary(&record, "token").latest.clone().unwrap();
+        assert_eq!(token.label.as_deref(), Some("1234.5 0x12345678…"));
+    }
+
+    /// The chain may advance between the source probe and these seven
+    /// requests. The leading rows past the validated anchor are withheld, and
+    /// they are withheld from the COUNT as well — a rate that included events
+    /// this record cannot anchor would be a rate cknerv cannot prove.
+    #[tokio::test]
+    async fn activity_withholds_the_unanchored_leading_prefix_from_the_count_too() {
+        let record = activity_feed_over(vec![(
+            "ckb",
+            vec![
+                (1, 102, serde_json::json!({})),
+                (1, 101, serde_json::json!({})),
+                (1, 100, serde_json::json!({})),
+            ],
+        )])
+        .await
+        .unwrap();
+
+        let transfer = activity_summary(&record, "transfer");
+        assert_eq!(transfer.in_window, 1);
+        assert_eq!(transfer.latest.as_ref().unwrap().block, 100);
+        assert_eq!(
+            transfer.latest.as_ref().unwrap().tx_hash,
+            format!("0x{}", "03".repeat(32)),
+            "the third row is the newest one the anchor covers"
+        );
+    }
+
+    #[tokio::test]
+    async fn activity_refuses_a_page_that_is_not_newest_first() {
+        let refused = activity_feed_over(vec![(
+            "ckb",
+            vec![
+                (1, 98, serde_json::json!({})),
+                (2, 99, serde_json::json!({})),
+            ],
+        )])
+        .await;
+
+        assert!(refused
+            .unwrap_err()
+            .to_string()
+            .contains("not ordered newest first"));
+    }
+
+    /// An item kind outside the three the wire knows is a fault rather than a
+    /// row to skip: it means the index grew a category cknerv would silently
+    /// miscount.
+    #[tokio::test]
+    async fn activity_refuses_an_item_kind_the_wire_does_not_know() {
+        let refused = activity_feed_over(vec![(
+            "object",
+            vec![(
+                1,
+                100,
+                serde_json::json!({
+                    "participants": [{
+                        "ckbDelta": "0",
+                        "itemDeltas": [{ "kind": "artifact", "delta": 1 }]
+                    }]
+                }),
+            )],
+        )])
+        .await;
+
+        assert!(refused
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported item kind"));
     }
 
     /// A CKB peer id is a multihash the RPC prints in base58; the crawler

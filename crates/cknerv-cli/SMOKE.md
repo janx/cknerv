@@ -115,9 +115,12 @@ active deep fork must match its persisted deep event, while its live-chain tip
 and hash must equal `as_of`. This indexed history refreshes independently and
 must not change the canonical chain revision or `reorgs` count.
 The semantics snapshot should also gain an
-`activity_feed` containing at most eight newest-first, anchor-bounded compact
-signatures. It is refreshed independently and must not contain participant
-addresses or arbitrary protocol metadata.
+`activity_feed` carrying exactly seven kind summaries — transfer, dao, token,
+object, identity, protocol, script, in that order — each with an hour's count
+of canonical, anchor-bounded events, a flag saying whether that count is a
+floor, and the newest event of that kind at any age. It is refreshed
+independently and must not contain participant addresses or arbitrary protocol
+metadata.
 It should also gain `transaction_horizon`, whose hourly/daily arrays contain at
 most 24/14 non-negative counts and which contains no source bucket labels. Its
 `as_of` is a compatibility anchor rather than a claim that the independently
@@ -300,8 +303,9 @@ With a local ckbadger service configured:
       newer than its validated anchor, exact shannon values, and basis-point APC
 - [ ] The semantics snapshot gains `fork_watch`; any recent/deep event is
       canonical-tip anchored, and a clear recent window replaces an older event
-- [ ] The semantics snapshot gains an `activity_feed` of at most eight
-      newest-first entries whose blocks do not exceed its validated anchor
+- [ ] The semantics snapshot gains an `activity_feed` of exactly seven kind
+      summaries in the fixed order, none of whose events exceed its validated
+      anchor, and whose `in_window` counts only what falls inside `window_ms`
 - [ ] The semantics snapshot gains anchored `transaction_horizon` with at most
       24 hourly / 14 daily count buckets and no localized source labels
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
@@ -345,11 +349,13 @@ With a local ckbadger service configured:
 - [ ] `COMMON KNOWLEDGE BASE` keeps only the canonical `Reorgs` count;
       `fork_watch` remains available through semantics without changing it
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
-      `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
-- [ ] At 768px viewport height, the activity fingerprint remains but its rows
-      fold away, and the transaction horizon folds into a header-only
-      `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does not overlap
-      `PULSE`
+      `INDEXED ACTIVITY · LAST HOUR` with one row per kind —
+      CKB · DAO · TOKEN · OBJECT · IDENTITY · PROTOCOL · SCRIPT — each reading
+      an hour's count, the age of its newest event, and what that event was
+- [ ] At 768px viewport height, `ACTIVITY` folds to a header-only
+      `<total>/H` section, and the transaction horizon folds into a
+      header-only `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does
+      not overlap `PULSE`
 - [ ] `COMMON KNOWLEDGE BASE` carries a `CELL CENSUS` section: live capacity,
       knowledge, the validated live-Cell count printed bare (no `CHAIN`, no
       `AS OF` of its own — `STALE` only when stale), one `ASSETS` bar over the

@@ -701,6 +701,17 @@ pub(crate) struct DeepForkStatusResponse {
     pub fork_point: Option<i64>,
 }
 
+/// One page of ckbadger's filtered global activity feed. The cursor fields
+/// beside `data` are read by nobody: cknerv asks for one page per kind and
+/// never follows a cursor, because a rate over one hour that needs a second
+/// request is a rate this record prints as a floor instead.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityPageResponse {
+    #[serde(default)]
+    pub data: Vec<LatestActivityResponse>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LatestActivityResponse {
@@ -723,6 +734,11 @@ pub(crate) struct LatestActivityResponse {
 pub(crate) struct ActivityProtocolAction {
     pub protocol: String,
     pub action: String,
+    /// Per-protocol, per-action and entirely untyped upstream. Only the DAO
+    /// row's `capacity` is ever read out of it, and only when it is an
+    /// unsigned decimal; nothing else here crosses the wire.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -734,13 +750,30 @@ pub(crate) struct ActivityScriptCall {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActivityParticipant {
+    /// Signed shannons, as a decimal string. The address it belongs to is
+    /// deliberately not decoded: the largest positive delta is the figure a
+    /// CKB transfer is worth printing, and the party is not.
+    #[serde(default)]
+    pub ckb_delta: Option<String>,
     #[serde(default)]
     pub item_deltas: Vec<ActivityItemDelta>,
 }
 
+/// Tagged on `kind`. Upstream sends `delta` as a decimal STRING for tokens,
+/// whose base units do not fit a double, and as a `±1` NUMBER for objects and
+/// identities, so it is decoded untyped and read per kind.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ActivityItemDelta {
     pub kind: String,
+    #[serde(default)]
+    pub delta: Option<serde_json::Value>,
+    #[serde(default)]
+    pub symbol: Option<String>,
+    #[serde(default)]
+    pub decimals: Option<u8>,
+    #[serde(default)]
+    pub type_script_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

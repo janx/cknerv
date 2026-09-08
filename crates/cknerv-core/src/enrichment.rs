@@ -694,29 +694,60 @@ pub struct ForkWatchRecord {
     pub deep_fork: Option<ForkWatchDeepFork>,
 }
 
-/// One compact transaction signature from a bounded recent-activity feed.
-/// The category and label are display-safe adapter normalizations; raw source
+/// One canonical activity, the newest of its kind the index has seen. The
+/// category and label are display-safe adapter normalizations; raw source
 /// JSON and participant addresses never cross the shared contract.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityFeedItem {
     pub tx_hash: String,
     pub block: u64,
     pub timestamp_ms: u64,
+    /// The feed kind: transfer | dao | token | object | identity | protocol |
+    /// script. Always the kind of the summary that carries it.
     pub category: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub participant_count: u32,
+    /// Exact shannons, when the kind has one figure: a CKB transfer's largest
+    /// positive participant delta, a DAO action's `metadata.capacity`. A
+    /// decimal string, because a shannon figure does not survive a double.
+    /// The browser formats it in the K/M/G·CKB family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_shannons: Option<String>,
 }
 
-/// A small, index-ranked view of the newest canonical transaction activity.
-/// This is a sample, not a transaction count or historical activity census.
+/// One kind of activity over the record's window: how much of it happened,
+/// and the newest one at any age.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityKindSummary {
+    pub kind: String,
+    /// Canonical, anchor-bounded events of this kind whose timestamp is inside
+    /// the window.
+    pub in_window: u32,
+    /// The page the index served was full and its oldest row was still inside
+    /// the window: `in_window` is a floor, not a count.
+    pub in_window_capped: bool,
+    /// The newest canonical event of this kind at any age; absent when the
+    /// index has never seen one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest: Option<ActivityFeedItem>,
+}
+
+/// What each kind of thing on the chain has done lately. Not a sample of the
+/// newest transactions: a rate per kind over a fixed window, beside the newest
+/// event of that kind however old it is, so a kind that happens twice a day is
+/// as legible as one that happens four times a minute.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityFeedRecord {
     pub source: String,
     pub as_of: ChainAnchor,
     pub updated_at_ms: u64,
+    /// The window every `in_window` counts over, ending at `updated_at_ms`.
+    pub window_ms: u64,
+    /// Exactly the seven kinds, in the order a reader learns once: transfer,
+    /// dao, token, object, identity, protocol, script.
     #[serde(default)]
-    pub activities: Vec<ActivityFeedItem>,
+    pub kinds: Vec<ActivityKindSummary>,
 }
 
 /// Bounded indexed transaction-count context. Hourly and daily buckets are
@@ -1475,7 +1506,7 @@ const fn floor_under_client_patience(stale_after_ms: u64) -> u64 {
 // `PROTOCOL_ERA_…` (protocolEra). Lowering one of those without lowering
 // its twin here is what turns a floor into a false STALE, which is why the
 // test below names both numbers.
-const ACTIVITY_FEED_CLIENT_PATIENCE_MS: u64 = 45_000;
+const ACTIVITY_FEED_CLIENT_PATIENCE_MS: u64 = 180_000;
 const ASSET_ECOSYSTEM_CLIENT_PATIENCE_MS: u64 = 90_000;
 const DAO_STATE_CLIENT_PATIENCE_MS: u64 = 180_000;
 const NETWORK_ATLAS_CLIENT_PATIENCE_MS: u64 = 180_000;
@@ -2396,6 +2427,13 @@ mod tests {
     }
 
     fn activity_feed(block: u64) -> ActivityFeedRecord {
+        let kind =
+            |kind: &str, in_window: u32, latest: Option<ActivityFeedItem>| ActivityKindSummary {
+                kind: kind.into(),
+                in_window,
+                in_window_capped: false,
+                latest,
+            };
         ActivityFeedRecord {
             source: "ckbadger".into(),
             as_of: ChainAnchor {
@@ -2403,14 +2441,28 @@ mod tests {
                 hash: format!("0xblock{block}"),
             },
             updated_at_ms: block,
-            activities: vec![ActivityFeedItem {
-                tx_hash: "0xactivity".into(),
-                block,
-                timestamp_ms: block,
-                category: "script".into(),
-                label: Some("Example Script".into()),
-                participant_count: 1,
-            }],
+            window_ms: 3_600_000,
+            kinds: vec![
+                kind("transfer", 0, None),
+                kind("dao", 0, None),
+                kind("token", 0, None),
+                kind("object", 0, None),
+                kind("identity", 0, None),
+                kind("protocol", 0, None),
+                kind(
+                    "script",
+                    1,
+                    Some(ActivityFeedItem {
+                        tx_hash: "0xactivity".into(),
+                        block,
+                        timestamp_ms: block,
+                        category: "script".into(),
+                        label: Some("Example Script".into()),
+                        participant_count: 1,
+                        amount_shannons: None,
+                    }),
+                ),
+            ],
         }
     }
 
@@ -3218,10 +3270,19 @@ mod tests {
         assert_eq!(refresh_round(&mut projection, 10, 1_005_000), 0);
         assert_eq!(refresh_round(&mut projection, 10, 1_010_000), 0);
 
-        // Past the tightest floor in the table — the activity feed's, 22.5s
-        // under a panel that dims at 45s — exactly that one record
-        // re-stamps, and everything else stays quiet.
-        assert_eq!(refresh_round(&mut projection, 10, 1_030_000), 1);
+        // Past the tightest floor in the table — the asset ecosystem's, 45s
+        // under a panel that dims at 90s — exactly that one record re-stamps,
+        // and everything else stays quiet. The activity feed used to be the
+        // tightest at 22.5s; reading seven filtered pages once a minute
+        // bought it a 180s patience and a 90s floor, and this probe moved
+        // past the ecosystem's instead.
+        assert_eq!(refresh_round(&mut projection, 10, 1_050_000), 1);
+
+        // One 90s floor after the round that was published, the whole
+        // 180s-patience cohort re-stamps together — the activity feed joins
+        // DAO state, the network atlas and the transaction horizon — with the
+        // ecosystem taking its second turn beside them.
+        assert_eq!(refresh_round(&mut projection, 10, 1_100_000), 5);
     }
 
     /// An unchanged answer is not silent forever: it re-stamps on its floor,
@@ -3321,7 +3382,7 @@ mod tests {
                 "{capability}: two floors must fit inside the panel's patience"
             );
         }
-        assert_eq!(ActivityFeedRecord::REFRESH_FLOOR_MS, Some(22_500));
+        assert_eq!(ActivityFeedRecord::REFRESH_FLOOR_MS, Some(90_000));
 
         // No wall clock anywhere in the browser reaches these three, so an
         // unchanged answer stays off the wire for as long as it stays

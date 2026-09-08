@@ -524,19 +524,29 @@ revision, or create scene objects.
 
 ### Recent Activity
 
-With `activity_feed`, cknerv requests exactly eight entries from the bounded
-latest-activity endpoint at most once every 15 seconds. The adapter validates
-newest-first block order, anchor bounds, transaction hashes, timestamps, and
-participant and nested-item limits. It normalizes each entry to a compact
-transfer, DAO, token, object, identity, script, or protocol signature.
-Participant addresses and arbitrary source JSON do not cross the wire boundary.
+With `activity_feed`, cknerv reads ckbadger's seven filtered global feeds —
+`activities?limit=100&filter=<ckb|dao|token|object|identity|protocol|script>` —
+once every 60 seconds, under one anchor revalidated after the seventh request.
+The adapter validates newest-first block order, anchor bounds, transaction
+hashes, timestamps, and participant and nested-item limits on every page. Each
+kind reaches the wire as a summary: how many canonical, anchor-bounded events
+of that kind fall inside the last hour, whether a full page ran out inside that
+hour (making the count a floor), and the newest event of that kind at any age
+with a display-safe label. Participant addresses and arbitrary source JSON do
+not cross the wire boundary.
+
+The sample of eight this replaced could not report anything slower than one a
+minute: the chain's newest transactions are two keepers writing state every
+block, so eight rows read `SCRIPT 8` essentially always.
 
 If the chain advances between probe and fetch, an unanchored leading prefix is
-withheld until a later probe proves its block hash. `COMMON KNOWLEDGE BASE`
-renders **ACTIVITY · LATEST N** with a fingerprint and four recent rows. At
-viewport heights of 860 pixels or less, the rows fold away while the fingerprint
-remains. This is a latest sample, not a global distribution. It disappears with
-an unusable anchor and dims when stale or more than 45 seconds old.
+withheld — from the counts as well as from the newest event — until a later
+probe proves its block hash. `COMMON KNOWLEDGE BASE` renders
+**ACTIVITY · LAST HOUR** as one row per kind in a fixed order:
+CKB · DAO · TOKEN · OBJECT · IDENTITY · PROTOCOL · SCRIPT. This is a rate per
+kind over one hour, not a distribution of the whole chain's history. It
+disappears with an unusable anchor and dims when stale or more than 180 seconds
+old.
 
 ### Transaction Horizon
 
@@ -1089,8 +1099,8 @@ had: canonical staffing, upgraded once the first live refresh lands.
 - The script-utilization chart is not polled because its response is cumulative
   and unbounded rather than a fixed-size current view.
 - The 24-hour activity summary is not polled because its `scriptCounts` map has
-  no explicit entry bound, even though its hourly window is fixed. cknerv uses
-  the separately bounded latest-activity endpoint instead.
+  no explicit entry bound, even though its hourly window is fixed. cknerv counts
+  the hour itself from the seven explicitly bounded `activities` pages instead.
 - Fiber aggregate statistics are not polled because the current endpoint scans
   every indexed channel per request. cknerv can add them when ckbadger exposes
   a pre-aggregated bounded singleton.

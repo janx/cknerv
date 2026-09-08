@@ -27,7 +27,7 @@ const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_PROTOCOL_ERA_REFRESH: Duration = Duration::from_secs(5 * 60);
-const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
+const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
@@ -957,9 +957,9 @@ mod tests {
 
     use async_trait::async_trait;
     use cknerv_core::{
-        ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, ChainCensus,
-        ChainCensusClasses, DaoStateRecord, Mutation, ProducerLedger, ProducerLedgerRow,
-        ReplayPhase,
+        ActivityFeedItem, ActivityFeedRecord, ActivityKindSummary, AssetEcosystemRecord,
+        ChainAnchor, ChainCensus, ChainCensusClasses, DaoStateRecord, Mutation, ProducerLedger,
+        ProducerLedgerRow, ReplayPhase,
     };
 
     use super::*;
@@ -1099,13 +1099,20 @@ mod tests {
                     hash: block.hash.clone(),
                 },
                 updated_at_ms: 1,
-                activities: vec![ActivityFeedItem {
-                    tx_hash: format!("0x{}", "11".repeat(32)),
-                    block: block.number,
-                    timestamp_ms: 1,
-                    category: "transfer".to_string(),
-                    label: None,
-                    participant_count: 2,
+                window_ms: 3_600_000,
+                kinds: vec![ActivityKindSummary {
+                    kind: "transfer".to_string(),
+                    in_window: 1,
+                    in_window_capped: false,
+                    latest: Some(ActivityFeedItem {
+                        tx_hash: format!("0x{}", "11".repeat(32)),
+                        block: block.number,
+                        timestamp_ms: 1,
+                        category: "transfer".to_string(),
+                        label: None,
+                        participant_count: 2,
+                        amount_shannons: None,
+                    }),
                 }],
             }))
         }
@@ -2334,13 +2341,20 @@ mod tests {
                     hash: block.hash.clone(),
                 },
                 updated_at_ms: 1,
-                activities: vec![ActivityFeedItem {
-                    tx_hash: format!("0x{}", "22".repeat(32)),
-                    block: block.number,
-                    timestamp_ms: 1,
-                    category: "transfer".to_string(),
-                    label: None,
-                    participant_count: 2,
+                window_ms: 3_600_000,
+                kinds: vec![ActivityKindSummary {
+                    kind: "transfer".to_string(),
+                    in_window: 1,
+                    in_window_capped: false,
+                    latest: Some(ActivityFeedItem {
+                        tx_hash: format!("0x{}", "22".repeat(32)),
+                        block: block.number,
+                        timestamp_ms: 1,
+                        category: "transfer".to_string(),
+                        label: None,
+                        participant_count: 2,
+                        amount_shannons: None,
+                    }),
                 }],
             }))
         }

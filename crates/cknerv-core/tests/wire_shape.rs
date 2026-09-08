@@ -13,12 +13,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use cknerv_core::{
-    AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
-    DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
-    PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
-    PeerSightingRecord, ProducerLedger, ProducerLedgerRow, ReplayPhase, RosterNode,
-    RosterNodeState, ScriptCensus, ScriptCount, ScriptFamilyCensusRecord, ScriptFamilyCount,
-    ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
+    ActivityFeedItem, ActivityFeedRecord, ActivityKindSummary, AssetKind, Cell, CellDelta,
+    CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor, DisplayMode, DisplayProvenance,
+    LockKind, Mutation, NetworkRosterRecord, OutPoint, PeerAdvertisedEvidence, PeerProbeResult,
+    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ProducerLedger, ProducerLedgerRow,
+    ReplayPhase, RosterNode, RosterNodeState, ScriptCensus, ScriptCount, ScriptFamilyCensusRecord,
+    ScriptFamilyCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta,
+    SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -645,6 +646,140 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
     }
 }
 
+/// What each kind of thing on the chain did over one hour, as ckbadger's
+/// seven filtered feeds answered on 2026-09-08. The point of the fixture is
+/// the RANGE the browser has to draw with one table: two kinds that happen
+/// several times a minute, one that happens a few times an hour, and four
+/// that have not happened today but have happened — script is capped, so its
+/// count is a floor and prints `100+`, while token's newest event is five
+/// days old and still the only thing that row can say.
+fn enrichment_activity_feed() -> ActivityFeedRecord {
+    let item = |tx: &str,
+                block: u64,
+                timestamp_ms: u64,
+                category: &str,
+                label: Option<&str>,
+                participant_count: u32,
+                amount_shannons: Option<&str>| ActivityFeedItem {
+        tx_hash: format!("0x{}", tx.repeat(32)),
+        block,
+        timestamp_ms,
+        category: category.to_string(),
+        label: label.map(str::to_string),
+        participant_count,
+        amount_shannons: amount_shannons.map(str::to_string),
+    };
+    let kind = |kind: &str, in_window: u32, in_window_capped: bool, latest: ActivityFeedItem| {
+        ActivityKindSummary {
+            kind: kind.to_string(),
+            in_window,
+            in_window_capped,
+            latest: Some(latest),
+        }
+    };
+    ActivityFeedRecord {
+        source: "ckbadger".to_string(),
+        as_of: ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        },
+        updated_at_ms: 1_700_000_000_005,
+        window_ms: 3_600_000,
+        kinds: vec![
+            kind(
+                "transfer",
+                42,
+                false,
+                item(
+                    "44",
+                    100,
+                    1_700_000_000_000,
+                    "transfer",
+                    None,
+                    2,
+                    Some("52668983337"),
+                ),
+            ),
+            kind(
+                "dao",
+                6,
+                false,
+                item(
+                    "55",
+                    99,
+                    1_699_999_940_000,
+                    "dao",
+                    Some("withdraw complete"),
+                    1,
+                    Some("1000000000000"),
+                ),
+            ),
+            kind(
+                "token",
+                0,
+                false,
+                item(
+                    "66",
+                    91,
+                    1_699_568_000_000,
+                    "token",
+                    Some("0.0005 BTC"),
+                    2,
+                    None,
+                ),
+            ),
+            kind(
+                "object",
+                0,
+                false,
+                item("77", 93, 1_699_654_000_000, "object", Some("burn"), 1, None),
+            ),
+            kind(
+                "identity",
+                0,
+                false,
+                item(
+                    "88",
+                    94,
+                    1_699_830_000_000,
+                    "identity",
+                    Some("release"),
+                    1,
+                    None,
+                ),
+            ),
+            kind(
+                "protocol",
+                0,
+                false,
+                item(
+                    "99",
+                    96,
+                    1_699_917_000_000,
+                    "protocol",
+                    Some("fiber · channel close"),
+                    2,
+                    None,
+                ),
+            ),
+            kind(
+                "script",
+                100,
+                true,
+                item(
+                    "aa",
+                    100,
+                    1_700_000_000_000,
+                    "script",
+                    Some(".bit Time Index State"),
+                    1,
+                    None,
+                ),
+            ),
+        ],
+    }
+}
+
 /// The whole chain's live Cells by script family, cut the way the browser
 /// draws it: the listed families, bare CKB beside the type families, and the
 /// two remainders the index has no family for. The figures are a
@@ -980,6 +1115,7 @@ fn enrichment_samples() -> EnrichmentSamples {
     let mut snapshot: SemanticsSnapshot = serde_json::from_value(committed["snapshot"].clone())
         .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
     snapshot.script_registry = Some(enrichment_script_registry());
+    snapshot.activity_feed = Some(enrichment_activity_feed());
     snapshot.script_family_census = Some(enrichment_script_family_census());
     snapshot.network_roster = Some(enrichment_network_roster(enrichment_roster_nodes(), true));
     snapshot.producer_ledger = Some(enrichment_producer_ledger());
@@ -1051,10 +1187,7 @@ fn enrichment_samples() -> EnrichmentSamples {
     deltas.insert(
         "activity_feed_replace",
         SemanticsDelta::ActivityFeedReplace {
-            activity_feed: snapshot
-                .activity_feed
-                .clone()
-                .expect("fixture activity feed"),
+            activity_feed: enrichment_activity_feed(),
         },
     );
     deltas.insert(

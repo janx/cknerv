@@ -126,9 +126,11 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Refresh one explicitly bounded sample of recent indexed activity.
-    /// Sources without a fixed-size endpoint leave this unsupported; this must
-    /// not be implemented as transaction-by-transaction background lookups.
+    /// Refresh what each kind of indexed activity has done lately: a count
+    /// over a fixed window and the newest event of that kind, per kind, from
+    /// explicitly bounded pages. Sources without fixed-size endpoints leave
+    /// this unsupported; it must not be implemented as
+    /// transaction-by-transaction background lookups.
     async fn enrich_activity_feed(
         &self,
         _context: &CanonicalContext,

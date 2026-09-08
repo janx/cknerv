@@ -9,12 +9,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cknerv_core::{
-    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, AssetKind,
-    Cell, CellDelta, CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState,
-    EnrichmentSourceStatus, GalaxyCellCandidate, GalaxyCompositionCandidates,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, Mutation, OutPoint, PeerAdvertisedEvidence,
-    PeerProbeResult, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, Projection,
-    ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
+    ActivityFeedItem, ActivityFeedRecord, ActivityKindSummary, AssetEcosystemCategory,
+    AssetEcosystemRecord, AssetKind, Cell, CellDelta, CellGalaxy, CellSemanticRecord, ChainAnchor,
+    EnrichmentSourceState, EnrichmentSourceStatus, GalaxyCellCandidate,
+    GalaxyCompositionCandidates, GalaxyCompositionRecord, GalaxyCompositionTopUp, Mutation,
+    OutPoint, PeerAdvertisedEvidence, PeerProbeResult, PeerSightingAbsence, PeerSightingLookup,
+    PeerSightingRecord, Projection, ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{
     Adapter, CanonicalContext, CellDataReader, CellOutputData, EnrichmentSource,
@@ -196,13 +196,20 @@ impl EnrichmentSource for TransactionFixtureSource {
                 hash: block.hash.clone(),
             },
             updated_at_ms: 1,
-            activities: vec![ActivityFeedItem {
-                tx_hash: format!("0x{}", "22".repeat(32)),
-                block: block.number,
-                timestamp_ms: 1,
-                category: "transfer".to_string(),
-                label: None,
-                participant_count: 2,
+            window_ms: 3_600_000,
+            kinds: vec![ActivityKindSummary {
+                kind: "transfer".to_string(),
+                in_window: 1,
+                in_window_capped: false,
+                latest: Some(ActivityFeedItem {
+                    tx_hash: format!("0x{}", "22".repeat(32)),
+                    block: block.number,
+                    timestamp_ms: 1,
+                    category: "transfer".to_string(),
+                    label: None,
+                    participant_count: 2,
+                    amount_shannons: None,
+                }),
             }],
         }))
     }
