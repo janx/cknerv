@@ -3,6 +3,14 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { CellSemanticRecord, EnrichmentSourceStatus } from '@cknerv/types';
 import CellContentMemory, {
   CELL_CONTENT_ANALYSIS_RESERVED_PX,
+  READING_DECODE_LINE_PX,
+  READING_GUESS_ROW_PX,
+  READING_SEGMENT_ROW_PX,
+  READING_SLOT_CHROME_PX,
+  READING_STATUS_LINE_PX,
+  READING_TALLEST_DECODE_ROWS,
+  cellContentReadingLayout,
+  type CellContentReadingInput,
 } from '../../../src/components/hud/CellContentMemory';
 
 afterEach(() => { cleanup(); });
@@ -479,5 +487,216 @@ describe('CellContentMemory segment rows', () => {
     ) as HTMLButtonElement;
     expect(row).not.toBeNull();
     expect(() => fireEvent.click(row)).not.toThrow();
+  });
+});
+
+
+// ——— The height the reader is handed ——————————————————————————————————————
+//
+// The window stands in CKBYTES now (2026-09-08), over the dump, and the dump's
+// row count is `floor((plate − 288 − (62 + THIS)) / 13.5)` — computed by the
+// PANEL, a frame before this window exists to be measured. So the height is a
+// pure function of the record, the same function answers whether there is a
+// window at all, and both of those are pinned here: a number that drifted from
+// what the window actually draws is a dump one row too tall and a foot line
+// clipped by the bottom of a zone that hides its overflow.
+
+describe('cellContentReadingLayout', () => {
+  /** A decode with `count` fields, which is `count` segment rows. */
+  function decoded(count: number): CellSemanticRecord {
+    const base = record();
+    return {
+      ...base,
+      content: {
+        ...base.content!,
+        deterministic: {
+          kind: 'spore_cell',
+          summary: 'molecule-encoded payload',
+          segments: Array.from({ length: count }, (_, index) => ({
+            start_byte: index * 4,
+            end_byte: index * 4 + 4,
+            label: `field_${index}`,
+            value: String(index),
+            meaning: `field ${index}`,
+          })),
+        },
+      },
+    } as CellSemanticRecord;
+  }
+
+  /** No decode, one guess — the stack a card offers when it has nothing
+   *  better. */
+  function guessed(): CellSemanticRecord {
+    const base = record();
+    return {
+      ...base,
+      content: {
+        ...base.content!,
+        deterministic: undefined,
+        heuristics: [{
+          kind: 'text_encoding',
+          confidence: 'high',
+          reason: 'valid UTF-8',
+          mime_type: 'application/json',
+        }],
+      },
+    } as CellSemanticRecord;
+  }
+
+  /** A record whose content the index could neither decode nor guess at: one
+   *  line saying so, and nothing under it. */
+  function undecoded(): CellSemanticRecord {
+    const base = record();
+    return {
+      ...base,
+      content: { ...base.content!, deterministic: undefined, heuristics: [] },
+    } as CellSemanticRecord;
+  }
+
+  const cases: {
+    name: string;
+    input: CellContentReadingInput;
+    rendered: boolean;
+    heightPx: number;
+  }[] = [
+    {
+      name: 'a Cell nobody indexed: no source and no phase, so no window',
+      input: { dataHex: DATA_HEX },
+      rendered: false,
+      heightPx: 0,
+    },
+    {
+      name: 'a validly empty output: the DATA fact already reads `Empty`',
+      input: { dataHex: '0x', source, phase: 'ready' },
+      rendered: false,
+      heightPx: 0,
+    },
+    {
+      name: 'pending, no record yet: the tallest decode, held',
+      input: { dataHex: DATA_HEX, source, phase: 'loading', pending: true },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX + CELL_CONTENT_ANALYSIS_RESERVED_PX,
+    },
+    {
+      name: 'one segment: the xUDT layout',
+      input: { dataHex: DATA_HEX, source, phase: 'ready', record: decoded(1) },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX
+        + READING_DECODE_LINE_PX + READING_SEGMENT_ROW_PX,
+    },
+    {
+      name: 'seven segments: the spore layout, the tallest decode there is',
+      input: { dataHex: DATA_HEX, source, phase: 'ready', record: decoded(7) },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX
+        + READING_DECODE_LINE_PX + 7 * READING_SEGMENT_ROW_PX,
+    },
+    {
+      name: 'no decode, one guess',
+      input: { dataHex: DATA_HEX, source, phase: 'ready', record: guessed() },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX
+        + READING_STATUS_LINE_PX + READING_GUESS_ROW_PX,
+    },
+    {
+      name: 'no decode and no guess: one status line',
+      input: { dataHex: DATA_HEX, source, phase: 'ready', record: undecoded() },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX + READING_STATUS_LINE_PX,
+    },
+    {
+      name: 'the index answered nothing: one status line, nothing held',
+      input: {
+        dataHex: DATA_HEX,
+        source,
+        phase: 'unavailable',
+        pending: false,
+      },
+      rendered: true,
+      heightPx: READING_SLOT_CHROME_PX + READING_STATUS_LINE_PX,
+    },
+  ];
+
+  it('sums the terms of every shape the reading has', () => {
+    // The plan's §2 table, as arithmetic: 161 for a spore, 41 for an xUDT,
+    // 47 for a guess, 24 for a bare status line, and 0 where there is no
+    // window to stand.
+    expect(cases.map((entry) => cellContentReadingLayout(entry.input)))
+      .toEqual(cases.map((entry) => ({
+        rendered: entry.rendered,
+        heightPx: entry.heightPx,
+      })));
+    expect(cases.map((entry) => entry.heightPx))
+      .toEqual([0, 0, 161, 41, 161, 47, 24, 24]);
+  });
+
+  it('reserves exactly the tallest decode and settles down, never up', () => {
+    // The reservation is summed from the same terms the rows are, so the
+    // spore — the tallest decode the index emits — settles into the room it
+    // was held EXACTLY. Every shorter reading gives the dump rows back.
+    expect(CELL_CONTENT_ANALYSIS_RESERVED_PX).toBe(152);
+    expect(CELL_CONTENT_ANALYSIS_RESERVED_PX).toBe(
+      READING_DECODE_LINE_PX
+        + READING_TALLEST_DECODE_ROWS * READING_SEGMENT_ROW_PX,
+    );
+    const held = cellContentReadingLayout({
+      dataHex: DATA_HEX,
+      source,
+      phase: 'loading',
+      pending: true,
+    });
+    for (const entry of cases) {
+      expect(entry.heightPx, entry.name).toBeLessThanOrEqual(held.heightPx);
+    }
+    expect(cellContentReadingLayout({
+      dataHex: DATA_HEX,
+      source,
+      phase: 'ready',
+      record: decoded(READING_TALLEST_DECODE_ROWS),
+    }).heightPx).toBe(held.heightPx);
+  });
+
+  it('answers `rendered` with exactly what the component draws', () => {
+    // ⭐ ONE GATE. The panel reserves the band from this function and the
+    // component returns `null` from the same one; a disagreement is either a
+    // reserved band with no window in it or a window standing in a band
+    // nobody left room for.
+    for (const entry of cases) {
+      cleanup();
+      const { container } = render(
+        <CellContentMemory
+          dataHex={entry.input.dataHex}
+          source={entry.input.source}
+          phase={entry.input.phase}
+          record={entry.input.record}
+          pending={entry.input.pending}
+          reveal={1}
+        />,
+      );
+      const drawn = container.querySelector('[data-cell-content-memory]');
+      expect(Boolean(drawn), entry.name).toBe(entry.rendered);
+      expect(cellContentReadingLayout(entry.input).rendered, entry.name)
+        .toBe(entry.rendered);
+    }
+  });
+
+  it('holds no margin of its own over the reading', () => {
+    // The 6 px over this window used to be its own, held off the DATA fact
+    // above it in the analysis plate. The reader's slot owns both gaps now,
+    // and a margin here would be a second one nobody counted — including the
+    // arithmetic above, which counts the slot's and not this.
+    const { container } = render(
+      <CellContentMemory
+        dataHex={DATA_HEX}
+        source={source}
+        phase="ready"
+        record={record()}
+        reveal={1}
+      />,
+    );
+    const section = container.querySelector(
+      '[data-cell-content-memory]',
+    ) as HTMLElement;
+    expect(section.style.marginTop).toBe('');
   });
 });

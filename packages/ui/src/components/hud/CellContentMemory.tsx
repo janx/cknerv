@@ -11,7 +11,7 @@ import { HUD_COLORS, HUD_FONTS, QUALITATIVE_BUCKET_COLORS, rgba, HUD_TYPE } from
 import { revealStageAttributes, revealStageStyle } from './primitives';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
-// The DATA cluster's window, which no longer prints a byte.
+// THE READING — what a Cell's bytes SAY, standing over the bytes in CKBYTES.
 //
 // It used to open with a status line, a 16×2 hex grid, an ASCII line and a
 // READ ALL door, and the analysis under all of that was the part a reader came
@@ -24,35 +24,90 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
 //
 // So this window is the READING and nothing else: what the decode found, every
 // segment it found, and — where there is no decode — what the guesses say. It
-// states the size of nothing (the DATA fact directly above it already does),
-// it states what the Cell is WORTH nowhere (the register's AMOUNT and IDENTITY
-// rows do, two columns left and one rank up), it names no ROLE (the register
-// spells every facet out one fact to a line), and a Cell nobody indexed gets no
-// window at all, because with the bytes gone there would be nothing in it but
-// the absence of a record.
+// states the size of nothing (the analysis plate's DATA fact states it), it
+// states what the Cell is WORTH nowhere (the register's AMOUNT and IDENTITY
+// rows do, on the plate to its left), it names no ROLE (the register spells
+// every facet out one fact to a line), and a Cell nobody indexed gets no window
+// at all, because with the bytes gone there would be nothing in it but the
+// absence of a record.
 //
-// A segment row is the one control left, and it points DOWN: pressing it sends
-// the reader under the square to that segment's first byte and glows its bytes.
-// That is the whole link between the two surfaces, and it is why the reader
-// could give up its own segment rail.
+// ⭐ AND IT STANDS IN THE READER. The user's direction of 2026-09-08 —
+// 「scan01中的data decode section, 能不能移动到 scan02 里面?」 — took the window
+// out of the analysis plate's DATA cluster and gave it the top band of CKBYTES:
+// under the reader's header, over the dump, in the 408 px column that draws the
+// very bytes these rows are about. These rows are a TABLE OF CONTENTS for that
+// dump, and a table of contents belongs to the thing it indexes — drawn six
+// hundred pixels up a different plate, it was a claim about bytes nobody could
+// see from it. The plate keeps the DATA FACT (the size, and the proof of what
+// the payload is); the reading of the payload travels with the payload.
+//
+// A segment row is the one control left, and it points at the dump under it:
+// pressing it sends the reader to that segment's first byte and glows its
+// bytes. That is the whole link between the two surfaces — which is now one
+// surface, so the link is a hand's width rather than a card's, and it is still
+// why the reader needs no segment rail of its own.
+
+// ——— The reading's height, term by term ———————————————————————————————————
+//
+// These are the boxes `cellContentReadingLayout` sums, and every one of them is
+// the GENEROUS reading of its line ON PURPOSE. The sum is subtracted from the
+// room the analysis plate leaves the reader before the dump is divided into
+// rows, so a term one pixel short is a dump one row too tall — and the row it
+// overruns by pushes the foot line into the bottom of a zone that clips it.
+// Reservation math only; the browser lays the real lines out.
+
+/** The slot the reader mounts the reading in, and the reading's own lid: the
+ *  slot's `marginBottom` 6, the rule over the analysis rows 1, the
+ *  `paddingTop` 2 under that rule. Counted here rather than in the reader,
+ *  because the reader is handed ONE number for the whole band and this is part
+ *  of what the band costs it. */
+export const READING_SLOT_CHROME_PX = 9;
+
+/** `DECODE · KIND`: one `micro` span, no explicit line-height. */
+export const READING_DECODE_LINE_PX = 12;
+
+/** A status line, or `NO DETERMINISTIC DECODE`: `marginTop` 2 over a `label`
+ *  line. Taller than the decode line because it prints at the register's rung
+ *  rather than at the caption's — a card with no decode says so in the ink a
+ *  fact is written in. */
+export const READING_STATUS_LINE_PX = 15;
+
+/** A segment row: `marginTop` 3 + `paddingTop` 3 + its rule 1 + `label` × 1.35
+ *  (12.15), plus the pixel the `micro` range span drops the row by, sitting on
+ *  a `label` baseline. */
+export const READING_SEGMENT_ROW_PX = 20;
+
+/** A guess row: the same 3 + 3 + 1 over the taller of its line and the 15 px
+ *  stepper buttons beside it. */
+export const READING_GUESS_ROW_PX = 23;
+
+/** Rows in the tallest deterministic decode the index emits today — the spore
+ *  layout, `total_size` through `cluster_id`. */
+export const READING_TALLEST_DECODE_ROWS = 7;
 
 /**
- * Height the analysis zone holds while the index still owes this window an
- * answer.
+ * Height the reading holds while the index still owes this window an answer.
  *
  * Everything in the window is the reading now, and every line of the reading
- * waits on a record that has not landed — so the reservation is the whole zone
- * rather than the tail of it. Rows that arrive into no reservation shove the
- * provenance footer and the MEMORY TRACE affordance down mid-read, and this is
- * the LAST cluster before that footer.
+ * waits on a record that has not landed — so the reservation is the whole band
+ * rather than the tail of it.
  *
- * Reservation math only — the browser lays the real rows out. The zone's
- * tallest shape, line by line, at the type it prints:
+ * ⭐ AND WHAT IT PROTECTS IS THE DUMP. It used to hold the provenance footer
+ * and the MEMORY TRACE affordance off the rows that were about to arrive under
+ * them, back when this window was the last cluster of the analysis plate. The
+ * window stands in CKBYTES now (2026-09-08), and the reader takes this height
+ * out of the room the plate leaves it and divides the REMAINDER into rows of
+ * bytes — once, before the record lands (`cellContentReadingLayout` →
+ * `readerRowsUnderScan`). Rows arriving into no reservation here would not
+ * shove a footer down; they would push the dump's last rows and its foot line
+ * out of the bottom of a zone that clips them.
+ *
+ * The tallest shape, line by line, at the type it prints:
  *
  *     DECODE · kind                                12
- *     · seven segment rows       7 × (3 + 3 + 1 + 12) = 133
+ *     · seven segment rows                7 × 20 = 140
  *                                                 ————
- *                                                  145
+ *                                                  152
  *
  * SEVEN segment rows is the spore layout, which is the tallest deterministic
  * decode the index emits today — and the rows are where this number grew. The
@@ -61,19 +116,81 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
  * ruling) because a list a reader has to walk one item at a time is not a list,
  * and the reservation now holds what the list actually needs.
  *
- * It was 199, and the three lines that went are the round-3 declutter: VALUE
- * (12) restated the register's AMOUNT and IDENTITY rows, ROLE (18) restated
- * facts the register spells out one to a line, and the heuristic (22) can no
- * longer land beside segments at all — a guess is staged only where there is
- * no decode, so a card has the segments OR the guess and never both. The
- * guess-only stack is 12 + 22 = 34 and stands well inside this.
+ * It was 199 before the round-3 declutter — VALUE (12) restated the register's
+ * AMOUNT and IDENTITY rows, ROLE (18) restated facts the register spells out
+ * one to a line — and 145 until the row term was read again for this move: a
+ * segment row is 20 and not 19, because the range it prints at `micro` sits on
+ * the row's `label` baseline and drops the box a pixel past what its margins,
+ * padding and rule alone come to. A guess cannot land beside segments at all —
+ * it is staged only where there is no decode — so the guess-only stack is
+ * 15 + 23 = 38 and stands well inside this.
  *
- * The terms are the generous reading of each line box on purpose: a floor that
- * is a pixel short is a floor that still shoves the footer. A record that brings
- * fewer rows than this settles the cluster down ONCE — the same bargain every
- * other pending slot on this card makes.
+ * A record that brings fewer rows than this settles the reading down ONCE and
+ * the dump grows into what it gave back — the same bargain every other pending
+ * slot on this card makes, and in the same direction: never up.
  */
-export const CELL_CONTENT_ANALYSIS_RESERVED_PX = 145;
+export const CELL_CONTENT_ANALYSIS_RESERVED_PX = READING_DECODE_LINE_PX
+  + READING_TALLEST_DECODE_ROWS * READING_SEGMENT_ROW_PX;
+
+/** What the panel has to know about the reading BEFORE it renders one: whether
+ *  there IS one, and how much of the reader's zone it will stand in. */
+export interface CellContentReadingLayout {
+  rendered: boolean;
+  /** The band's whole height, slot chrome included — 0 when it does not
+   *  render, so a caller can add it unconditionally. */
+  heightPx: number;
+}
+
+export interface CellContentReadingInput {
+  dataHex: string;
+  source?: EnrichmentSourceStatus;
+  phase?: CellSemanticsPhase;
+  record?: CellSemanticRecord | null;
+  pending?: boolean;
+}
+
+const NO_READING: CellContentReadingLayout = { rendered: false, heightPx: 0 };
+
+/**
+ * Whether this Cell has a reading, and how tall it stands.
+ *
+ * ⭐ ONE GATE. The component calls this for its own early returns, so "is there
+ * a window" is answered in exactly one place. It has to be: the reader's row
+ * count is computed from `heightPx` by the PANEL, a frame before the window
+ * exists to be measured, and a panel that reserved a band the window then
+ * declined to fill would leave 9 px of nothing between the CKBYTES header and
+ * the dump on the ~98 % of cards nobody has indexed.
+ *
+ * A pure function of the record, never a measurement (the reader's standing
+ * law: the numbers a virtualiser needs are handed in). The two gates are the
+ * window's own, in the order it applies them — no index, no window; a validly
+ * empty output earns no line — and the sum below is the table of terms above.
+ */
+export function cellContentReadingLayout({
+  dataHex,
+  source,
+  phase,
+  record,
+  pending = false,
+}: CellContentReadingInput): CellContentReadingLayout {
+  if (!source || !phase) return NO_READING;
+  const model = deriveCellContentMemory(dataHex, record?.content);
+  if (model.valid && model.complete && model.observedBytes === 0) {
+    return NO_READING;
+  }
+  const content = record?.content;
+  const body = pending && !record
+    ? CELL_CONTENT_ANALYSIS_RESERVED_PX
+    : content?.deterministic
+      // The decode names the kind and every field it found gets a row.
+      ? READING_DECODE_LINE_PX
+        + READING_SEGMENT_ROW_PX * content.deterministic.segments.length
+      // No decode: one line saying so or saying why, and the guess under it
+      // where there is one. A guess is never staged beside a decode.
+      : READING_STATUS_LINE_PX
+        + (content?.heuristics.length ? READING_GUESS_ROW_PX : 0);
+  return { rendered: true, heightPx: READING_SLOT_CHROME_PX + body };
+}
 
 function readableKind(value: string): string {
   return value.replaceAll('_', ' ').toUpperCase();
@@ -168,8 +285,8 @@ function clampUnit(value: number): number {
  * It was a stepper — `‹ S 01/07 ›`, one segment on screen — and a reader who
  * wanted the fifth pressed `›` four times to reach it, having had no way to
  * learn there were seven. The user's R2-1 ruling replaced it with the list it
- * was hiding, which is what makes this cluster a table of contents for the
- * bytes under the square, and what let CKBYTES drop its own segment rail.
+ * was hiding, which is what makes this window a table of contents for the dump
+ * under it, and what let CKBYTES drop its own segment rail.
  */
 function SegmentRows({
   segments,
@@ -326,7 +443,15 @@ export default function CellContentMemory({
    *  reader nobody mounted has nowhere to send one. */
   onSegmentFocus?: (index: number) => void;
 }) {
-  const enhanced = Boolean(source && phase);
+  // ⭐ ONE GATE, and the PANEL asked it first. `cellContentReadingLayout` says
+  // whether this window renders and how tall it stands; the panel called it a
+  // frame ago to size the dump under this band, and the component asks the same
+  // function rather than restating its conditions — two statements of "is there
+  // a reading" is a reserved band over a window that declined to render.
+  const layout = useMemo(
+    () => cellContentReadingLayout({ dataHex, source, phase, record, pending }),
+    [dataHex, pending, phase, record, source],
+  );
   const content = record?.content;
   const model = useMemo(
     () => deriveCellContentMemory(dataHex, content),
@@ -334,8 +459,8 @@ export default function CellContentMemory({
   );
   const segments = content?.deterministic?.segments ?? [];
   // The one rule every surface that colours these bytes asks — this window,
-  // the portrait's byte rail, and the reader under the square. Read once per
-  // record rather than per row.
+  // the portrait's byte rail, and the dump under it. Read once per record
+  // rather than per row.
   const segmentSlots = useMemo(() => segmentColorSlots(segments), [segments]);
   // Heuristics are GUESSES about the same bytes a decode reads, so they are
   // staged only where there is no decode. Beside a deterministic reading they
@@ -400,20 +525,21 @@ export default function CellContentMemory({
   // replaces a reservation instead of pushing the footer beneath it down.
   const analysisPending = pending && !record;
 
-  // ⭐ NO INDEX, NO WINDOW. The window used to open a `DIRECT NODE · RAW` hex
-  // view for the ~98% of Cells nobody has indexed; that view was CKBYTES'
-  // ancestor, and CKBYTES draws all of those bytes under the square now, with
-  // offsets, ASCII and a scrollbar that is the payload's own map. What is left
-  // here for an unindexed Cell is a heading over nothing.
-  if (!enhanced) return null;
-
-  // A validly-empty output earns NO line either. It used to earn one — down
-  // from the stack of negatives (the empty box, byte count, decode fallbacks)
-  // that all restate the same absence — but the DATA fact directly above this
-  // window already reads `Empty`. Absence is stated once, by the fact whose
-  // subject it is. Most Cells in view are plain transfers, so this is the
-  // common case.
-  if (model.valid && model.complete && model.observedBytes === 0) return null;
+  // Both of the window's reasons for drawing nothing, asked once, by the
+  // function the panel asked:
+  //
+  //   ⭐ NO INDEX, NO WINDOW. The window used to open a `DIRECT NODE · RAW` hex
+  //   view for the ~98% of Cells nobody has indexed; that view was CKBYTES'
+  //   ancestor, and CKBYTES draws all of those bytes around this band now, with
+  //   offsets, ASCII and a scrollbar that is the payload's own map. What would
+  //   be left here for an unindexed Cell is a heading over nothing.
+  //
+  //   A VALIDLY-EMPTY OUTPUT earns no line either. It used to earn one — down
+  //   from the stack of negatives (the empty box, byte count, decode fallbacks)
+  //   that all restate the same absence — but the analysis plate's DATA fact
+  //   already reads `Empty`. Absence is stated once, by the fact whose subject
+  //   it is. Most Cells in view are plain transfers, so this is the common case.
+  if (!layout.rendered) return null;
 
   return (
     <section
@@ -428,13 +554,17 @@ export default function CellContentMemory({
       data-cell-content-reveal-total={revealStages.length}
       style={{
         // Mounted whole, at final size, from the first frame: the walk below
-        // only changes ink, and the one zone whose row count waits on the
+        // only changes ink, and the one band whose row count waits on the
         // index holds that height in advance. A window that grows a row while
         // it decodes is a window that moved under whoever was reading the row
-        // above it.
+        // above it — and, standing where it stands now, a dump that lost a row
+        // after the dump was already drawn.
+        //
+        // No `marginTop`: the gap over this window used to be its own, held off
+        // the DATA fact above it. The slot the reader mounts it in owns both
+        // gaps now, and a margin here would be a second one nobody counted.
         display: 'block',
         minWidth: 0,
-        marginTop: 6,
         fontFamily: HUD_FONTS.mono,
       }}
     >
@@ -443,8 +573,9 @@ export default function CellContentMemory({
       <div data-cell-content-analysis="true" data-cell-content-analysis-state={analysisRevealed ? 'resolved' : 'scanning'} data-cell-content-analysis-reserved={analysisPending ? 'true' : undefined} style={{ display: 'block', minWidth: 0, paddingTop: 2, borderTop: `1px solid ${rgba(tone, 0.16)}`, minHeight: analysisPending ? CELL_CONTENT_ANALYSIS_RESERVED_PX : undefined }}>
         {/* ⭐ NO VALUE LINE. It read `VALUE · RGB++ · RGB++ Protocol · xudt ·
           * 1000 RGB++` — the register's AMOUNT and IDENTITY rows, verbatim,
-          * two columns to the left and one rank up. The register owns what a
-          * Cell is worth; this window owns what its BYTES say. */}
+          * off the analysis plate to the left. The register owns what a Cell is
+          * worth; this window owns what its BYTES say, which is why it stands
+          * on the bytes. */}
         {content?.deterministic ? (
           // The decode names the KIND and stops. Its `summary` is the
           // indexer's own sentence about the pipeline — `XUDT cell data starts
