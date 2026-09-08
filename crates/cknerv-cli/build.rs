@@ -62,6 +62,7 @@ fn emit_ui_rerun_hints(workspace_root: &Path) {
 
     let watched = [
         ui_app.join("src"),
+        ui_app.join("public"),
         ui_app.join("package.json"),
         ui_app.join("vite.config.ts"),
         ui_app.join("index.html"),

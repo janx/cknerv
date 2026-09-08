@@ -42,6 +42,31 @@ documented in [Canvas Design and Rendering Architecture](canvas-rendering.md).
 The dashboard's optional SoundCloud Jukebox — the floating `SND·06` chip in
 the bottom-right corner — is documented in [Jukebox](jukebox.md).
 
+### Link previews
+
+`ui-app/index.html` carries the description, Open Graph, and Twitter Card
+metadata in its static head, so sharing does not require JavaScript or a
+running chain connection. The absolute share URLs identify the public demo at
+`https://cknerv.web5.info/`; when publishing at another public address, update
+`og:url`, `og:image`, and `twitter:image` together. These tags do not configure
+the dashboard's data sources.
+
+`ui-app/public/social-preview.png` is the 1200 × 630 share card, copied by Vite
+and embedded into the CLI. Its editable source uses the existing favicon mark
+and bundled fonts. Regenerate it from the repository root with:
+
+```bash
+chromium --headless=new --no-sandbox --hide-scrollbars \
+  --force-device-scale-factor=1 --window-size=1200,630 \
+  --default-background-color=02030aff --virtual-time-budget=3000 \
+  --screenshot="$PWD/ui-app/public/social-preview.png" \
+  "file://$PWD/ui-app/social-preview.svg"
+```
+
+Rebuild and deploy the CLI to publish metadata or image changes; no state purge
+is required. Check the deployed HTML and image responses directly, then request
+a fresh scrape from any sharing platform that still shows its cached preview.
+
 ## Build and Test
 
 ```bash
