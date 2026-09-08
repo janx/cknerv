@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode, Ref } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
 import { useHudClockSelector } from './hudClock';
@@ -37,6 +37,15 @@ export type HudPanelControl = {
   defaultVisible: boolean;
 };
 
+/** What the strip is tall in each of its layouts, and the one table the boot
+ *  band in `ui-app/index.html` restates so the band stands where the strip
+ *  will (`boot-shell.test.ts` holds that pact).
+ *
+ *  Which layout the strip is IN is not decided here and is no longer decided
+ *  by a screen size: the overlay measures the wide row against the room it has
+ *  and folds to `compact` when one row would not fit
+ *  (`useStatusStripFold.ts`). The phone's three-row layout stays a media
+ *  query — a touch screen is a design, not a fit. */
 export const STATUS_STRIP_HEIGHTS = {
   wide: 36,
   compact: 64,
@@ -866,6 +875,8 @@ function StatusStrip({
   onPanelVisibilityChange,
   compact = false,
   mobile = false,
+  probe = false,
+  probeRef,
 }: {
   level: AlertLevel;
   /** A fixed uptime, for labs and tests. Ignored when `uptimeSinceMs` is set. */
@@ -880,17 +891,55 @@ function StatusStrip({
   cellCapacity?: number;
   /** Optional indexed-context health. Omitted when no source is configured. */
   enrichmentSource?: EnrichmentSourceStatus;
-  /** Product-specific controls rendered without coupling the shared HUD to them. */
+  /** Product-specific controls rendered without coupling the shared HUD to them.
+   *
+   *  ⚠️ Whatever is put here is MOUNTED TWICE by a host that probes (the HUD
+   *  overlay does): once in the strip a reader sees and once inside the hidden
+   *  probe, whose width it is part of — that is the point, a chip in this slot
+   *  is one of the things that can push the row past its room. It must be safe
+   *  to mount twice: no singleton registration, no side effect on mount that
+   *  assumes it is alone. */
   actions?: ReactNode;
   /** Individually configurable dashboard panels; status/navigation stays visible. */
   panelControls?: readonly HudPanelControl[];
   onPanelVisibilityChange?: (id: string, visible: boolean) => void;
-  /** Two-row navigation layout used when horizontal space is constrained. */
+  /** Two-row navigation layout: identity and status on the first row, the
+   *  controls scrolling on the second.
+   *
+   *  The strip does not choose it and never asks how wide the screen is. The
+   *  overlay decides, by MEASURING — it renders a second copy of this strip as
+   *  a probe (below), reads how wide one row wants to be, and folds when that
+   *  will not fit the room the page has (`useStatusStripFold.ts`, which owns
+   *  the slack and the hysteresis). The strip stays what it was: told which
+   *  layout to wear. */
   compact?: boolean;
   /** Three-row priority layout that keeps primary controls visible on phones. */
   mobile?: boolean;
+  /** Render as the PROBE: the wide row, laid out at its natural width, hidden,
+   *  and there for no reason but to be measured.
+   *
+   *  The only thing that knows how wide one row wants to be is the row —
+   *  its width IS content (the ckbadger status word and its lag digits, the
+   *  level word, the uptime, `PANELS n/m`, whatever the host puts in
+   *  `actions`), so any number typed for it is right for one content state and
+   *  wrong the moment the content moves. A probe makes the fold a function of
+   *  what is actually there, at every moment.
+   *
+   *  It therefore ignores `compact` and `mobile`: a probe measures the ONE ROW
+   *  by definition, and a probe that folded with the strip could never tell the
+   *  overlay it had room to unfold. `visibility: hidden` is what keeps it out
+   *  of everything — not hit-tested, not focusable, not in the accessibility
+   *  tree — and it is inherited, so the controls' own `pointerEvents: 'auto'`
+   *  cannot reach back through it. It wears its own class, no `role` and no
+   *  accent rail, so every selector that takes `.cknerv-status-strip` or
+   *  `[role="navigation"]` still finds exactly the strip a reader can see. */
+  probe?: boolean;
+  /** The probe's root, so the overlay can measure it (`useStatusStripFold`).
+   *  A plain prop rather than `forwardRef`: this component is `memo(fn)` and
+   *  the real strip has no reason to hand a ref anywhere. */
+  probeRef?: Ref<HTMLDivElement>;
 }) {
-  const layout = mobile ? 'mobile' : compact ? 'compact' : 'wide';
+  const layout = probe ? 'wide' : mobile ? 'mobile' : compact ? 'compact' : 'wide';
   const dense = layout !== 'wide';
   const color = LEVEL_COLOR[level];
   const mobileHasContext = layout === 'mobile'
@@ -1128,13 +1177,23 @@ function StatusStrip({
     );
   }
 
+  // The wide row, and — when `probe` is set — the hidden copy of it the
+  // overlay measures. Same children, same paddings, same gaps: a measurement
+  // of anything else would be a measurement of something the reader is not
+  // looking at. What the probe drops is everything that would make it a
+  // SECOND strip rather than a reading of the first: the class the selectors
+  // take, the landmark role, the accent rail, and the `right: 0` that would
+  // stretch it to the page instead of letting it stand at its natural width.
   return (
     <div
-      className="cknerv-status-strip"
-      role="navigation"
-      aria-label="Dashboard controls"
+      ref={probeRef}
+      className={probe ? 'cknerv-status-strip-probe' : 'cknerv-status-strip'}
+      role={probe ? undefined : 'navigation'}
+      aria-label={probe ? undefined : 'Dashboard controls'}
+      aria-hidden={probe ? true : undefined}
       data-status-layout="wide"
-      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: barHeight, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', overflow: 'visible', background: `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.955)})`, boxShadow: `0 7px 22px ${rgba(HUD_COLORS.ground, 0.28)}` }}
+      data-status-probe={probe ? 'true' : undefined}
+      style={{ position: 'absolute', left: 0, right: probe ? 'auto' : 0, top: 0, width: probe ? 'max-content' : undefined, height: barHeight, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', overflow: 'visible', background: `linear-gradient(180deg,${rgba(HUD_COLORS.stageGround, 0.985)},${rgba(HUD_COLORS.stageGround, 0.955)})`, boxShadow: `0 7px 22px ${rgba(HUD_COLORS.ground, 0.28)}`, visibility: probe ? 'hidden' : undefined, pointerEvents: probe ? 'none' : undefined }}
     >
       {primary}
       <span style={{ flex: 1 }} />
@@ -1149,7 +1208,7 @@ function StatusStrip({
           <UptimeReadout uptimeMs={uptimeMs} sinceMs={uptimeSinceMs} />
         </span>
       </span>
-      {accentRail}
+      {probe ? null : accentRail}
     </div>
   );
 }

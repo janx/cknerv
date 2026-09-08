@@ -1,3 +1,4 @@
+import { createRef } from 'react';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
@@ -551,5 +552,102 @@ describe('StatusStrip', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(toggle.querySelector('[data-direction-mark]')?.getAttribute('data-direction-mark'))
       .toBe('up');
+  });
+});
+
+// ——— As a probe ————————————————————————————————————————————————————————
+//
+// The overlay no longer folds the bar at a screen width; it measures. What it
+// measures is this same component rendered a second time, wide and hidden, at
+// its natural width — the only thing that knows how much room one row wants is
+// the row (`useStatusStripFold.ts`). These pins are the difference between a
+// measurement and a second status bar: the probe must carry the row's content
+// and none of its presence.
+describe('StatusStrip as a probe', () => {
+  const probeProps = {
+    level: 'nominal',
+    uptimeMs: 0,
+    build: { version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' },
+    panelControls,
+    onPanelVisibilityChange: () => {},
+    cellCount: 5_000,
+    enrichmentSource: {
+      source: 'ckbadger',
+      status: 'ready',
+      capabilities: [] as string[],
+      lag_blocks: 2,
+    },
+  } as const;
+
+  it('measures the one row and is otherwise not there', () => {
+    const ref = createRef<HTMLDivElement>();
+    const { container } = render(
+      <StatusStrip {...probeProps} compact mobile probe probeRef={ref} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+
+    // Handed to the overlay, which has nothing else to measure.
+    expect(ref.current).toBe(root);
+    // A probe measures the ONE ROW by definition: `compact` and `mobile` are
+    // what the fold would DO, and a probe that folded with the strip could
+    // never say there was room to unfold again.
+    expect(root.dataset.statusLayout).toBe('wide');
+    expect(root.style.height).toBe('36px');
+    expect(root.dataset.statusProbe).toBe('true');
+    // Its own class: every selector in this HUD, in its tests and in the live
+    // drivers takes `.cknerv-status-strip` and must keep finding the strip a
+    // reader can see.
+    expect(root.className).toBe('cknerv-status-strip-probe');
+    expect(root.getAttribute('role')).toBeNull();
+    expect(root.getAttribute('aria-label')).toBeNull();
+    expect(root.getAttribute('aria-hidden')).toBe('true');
+    // `visibility: hidden` is the guard that does the work — not hit-tested,
+    // not focusable, out of the accessibility tree — and it INHERITS, so the
+    // controls' own `pointerEvents: 'auto'` cannot reach back through it.
+    expect(root.style.visibility).toBe('hidden');
+    expect(root.style.pointerEvents).toBe('none');
+    // Natural width, not the page's: `right: 0` would stretch it to the
+    // viewport and every measurement would come back as the viewport.
+    expect(root.style.width).toBe('max-content');
+    expect(root.style.right).toBe('auto');
+    // The rail is the strip's edge against the stage. A hidden copy has no
+    // edge to draw.
+    expect(container.querySelector('[data-status-accent-rail]')).toBeNull();
+  });
+
+  it('carries the row\'s content without lending it to the reader', () => {
+    const { container } = render(<StatusStrip {...probeProps} probe />);
+
+    // Everything that makes the row as wide as it is, present and measurable…
+    expect(container.querySelector('[data-cell-display-control]')).not.toBeNull();
+    expect(container.querySelector('[data-render-quality-control]')).not.toBeNull();
+    expect(container.querySelector('[data-panel-visibility-control]')).not.toBeNull();
+    expect(container.querySelector('[data-enrichment-chip]')?.textContent)
+      .toContain('CKBADGERREADY · LAG 2');
+    expect(container.querySelector('[data-status-health]')).not.toBeNull();
+
+    // …and none of it reachable: `aria-hidden` takes the whole subtree out of
+    // the accessible tree, so a screen reader is told about ONE bar and a
+    // keyboard has one set of controls to walk.
+    expect(screen.queryByRole('group', { name: 'Cell display count' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Render quality' })).toBeNull();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('leaves the strip a reader sees exactly as it was', () => {
+    const { container } = render(<StatusStrip {...probeProps} />);
+    const root = container.querySelector('.cknerv-status-strip') as HTMLElement;
+
+    expect(root.getAttribute('role')).toBe('navigation');
+    expect(root.getAttribute('aria-label')).toBe('Dashboard controls');
+    expect(root.dataset.statusProbe).toBeUndefined();
+    expect(root.getAttribute('aria-hidden')).toBeNull();
+    expect(root.style.visibility).toBe('');
+    expect(root.style.width).toBe('');
+    expect(root.style.right).toBe('0px');
+    expect(container.querySelector('[data-status-accent-rail]')).not.toBeNull();
+    expect(screen.getByRole('navigation', { name: 'Dashboard controls' })).toBe(root);
   });
 });
