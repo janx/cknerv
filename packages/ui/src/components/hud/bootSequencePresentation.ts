@@ -172,10 +172,10 @@ export function bootSequenceAccent(sequence: BootSequenceSnapshot): string {
  *
  * That last clause is the linger. `HudOverlay` holds the CLOSED sequence in the
  * slot for 700ms so the wait is legible for at least one frame, and asking only
- * for an unfinished line at that moment answers with nothing: every viewport at
- * or under 1280px — laptops, tablets, phones — spent the whole held frame
- * showing a band with no lines in it, which is the opposite of what the linger
- * was added to buy. A dense band that has run out of work names the line it
+ * for an unfinished line at that moment answers with nothing: every viewport
+ * narrow enough to fold the bar — laptops, tablets, phones — spent the whole
+ * held frame showing a band with no lines in it, which is the opposite of what
+ * the linger was added to buy. A dense band that has run out of work names the line it
  * finished on, which is the same thing the wide trail says with all of it lit.
  */
 export function denseBootPhase(

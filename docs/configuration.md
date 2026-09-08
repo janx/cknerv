@@ -72,9 +72,13 @@ same way. No manual purge is needed.
 The top bar keeps a `PANELS` menu immediately after the build version. It
 independently controls `CKB·01`, `ECG·04`, `CELL MESH`, and `PEER MESH`, plus
 the optional `DAO·05` panel when validated DAO data is available, while
-transport, source-health, warning, and replay status remain visible. At widths
-of 1,280 pixels or less the bar becomes two rows: identity and status stay in
-the first row, while runtime controls occupy a horizontally scrollable second
+transport, source-health, warning, and replay status remain visible. The bar
+folds to two rows when its one-row layout would not fit the viewport. That is
+a measurement, not a screen size: the HUD renders a hidden copy of the row at
+its natural width and folds when the room runs out, so an 11-inch iPad in
+landscape keeps one row and a 10.2-inch one folds, and on today's content the
+fold lands at about 1,100 pixels. Folded, identity and status stay in the
+first row, while runtime controls occupy a horizontally scrollable second
 row. The left HUD uses one bounded layout: CKB and DAO form a top row, with DAO
 immediately to the right of CKB, while `ECG·04` is always anchored at the
 bottom-left. The upper panels scroll within the remaining height, so they

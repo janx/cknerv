@@ -71,16 +71,33 @@
         <span id="cknerv-boot-shell-detail" style="font-size:9px;letter-spacing:1.2px;color:#7C8794"></span>
       </div>
     </div>
-    <!-- The shell stands where the strip will, and the strip has two heights.
+    <!-- The shell stands where the strip will, and the strip has three heights.
          `STATUS_STRIP_HEIGHTS` in packages/ui/src/components/hud/StatusStrip.tsx
-         is the authority: 36 wide, 64 compact, 59 on a phone — and `HudOverlay`
-         goes compact at 1280 and mobile at 560. The shell hard-coded 36, so
-         every viewport at or under 1280 watched the band DROP 28px at the
-         handover, in the same frames the band exists to hold still (report E,
-         E-2). Classic and inline, right under the element: it has to run
-         before the first paint and there is no module to wait for.
-         `ui-app/__tests__/boot-shell.test.ts` holds these three literals
-         against the token. -->
+         is the authority: 36 one row, 64 folded to two, 59 on a phone. The
+         shell hard-coded 36, so every viewport that folds watched the band
+         DROP 28px at the handover, in the same frames the band exists to hold
+         still (report E, E-2). Classic and inline, right under the element: it
+         has to run before the first paint and there is no module to wait for.
+
+         ⚠️ AND 1102 IS A GUESS, WHICH IS THE HONEST WORD FOR IT. The HUD does
+         not fold at a width any more: it renders the strip a second time,
+         hidden, measures how wide one row wants to be and folds when that will
+         not fit — `packages/ui/src/components/hud/useStatusStripFold.ts` is
+         the authority and argues the whole rule. The shell cannot do that,
+         because there is no strip yet and nothing has been laid out, so it
+         runs the same ESTIMATE the HUD's own first render runs: the row as
+         measured on a shipped build (1079) plus the slack it must keep (24),
+         minus one because `max-width` is inclusive. An inline classic
+         script cannot import, so the number is restated here and
+         `ui-app/__tests__/boot-shell.test.ts` derives it from those two
+         constants rather than from the answer — the pact is the arithmetic.
+
+         The edge that buys, stated rather than hidden: a page whose row is
+         wider or narrower than 1079 — a longer ckbadger status word, a chip in
+         the actions slot, a font that lands late — can hand over from a 64px
+         band to a 36px strip, or the reverse, once, inside a band of about
+         ±20px around 1103. Everywhere else the two agree, which is more than
+         the fixed 1280 they replaced ever managed. -->
     <!-- …and it is the shell that shows a bootstrap fault, because a fault is
          the one moment the page has nothing else to show. This used to replace
          #root with a `<pre>` in `#f88` and the browser's own monospace — the
@@ -100,7 +117,7 @@
         if (!shell) return;
         if (typeof window.matchMedia === 'function') {
           shell.style.top = window.matchMedia('(max-width: 560px)').matches ? '59px'
-            : window.matchMedia('(max-width: 1280px)').matches ? '64px'
+            : window.matchMedia('(max-width: 1102px)').matches ? '64px'
             : '36px';
         }
         // Installed whatever the sizing above could work out: a page that

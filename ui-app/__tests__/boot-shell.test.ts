@@ -35,6 +35,11 @@ const STATUS_STRIP = readFileSync(
 const HUD_OVERLAY = readFileSync(
   resolve(process.cwd(), '../packages/ui/src/components/hud/HudOverlay.tsx'), 'utf8',
 );
+/** The fold's own file: the shell restates ONE number from it, and it is the
+ *  only number in the HUD the shell has to guess at rather than read. */
+const STATUS_STRIP_FOLD = readFileSync(
+  resolve(process.cwd(), '../packages/ui/src/components/hud/useStatusStripFold.ts'), 'utf8',
+);
 /** A font stack normalised for comparison: `index.html` writes them without
  *  spaces after the commas, `hudTheme.ts` writes them with, and the DOM hands
  *  back whichever quote it prefers. */
@@ -100,9 +105,9 @@ describe('the shell is the band, one second early', () => {
   });
 
   it('stands where the strip will, at every width the strip has', () => {
-    // 36 / 64 / 59 and the two breakpoints all live in packages/ui. The shell
-    // hard-coded 36, so every viewport at or under 1,280 px watched the band
-    // drop 28 px at the handover.
+    // 36 / 64 / 59 all live in packages/ui, and so does the one width the
+    // shell still has to name. The shell hard-coded 36, so every viewport that
+    // folds watched the band drop 28 px at the handover.
     const heights = /STATUS_STRIP_HEIGHTS = \{([\s\S]*?)\}/.exec(STATUS_STRIP)?.[1] ?? '';
     const rung = (name: string) => Number(new RegExp(`${name}: (\\d+)`).exec(heights)?.[1]);
     expect([rung('wide'), rung('compact'), rung('mobile')]).toEqual([36, 64, 59]);
@@ -114,11 +119,43 @@ describe('the shell is the band, one second early', () => {
     expect(script).toContain(`'${rung('compact')}px'`);
     expect(script).toContain(`'${rung('mobile')}px'`);
 
-    // …and at the widths the HUD itself changes at.
-    expect(HUD_OVERLAY).toContain("useMediaQuery('(max-width: 1280px)')");
+    // …and at the widths the HUD itself changes at. The phone is a media
+    // query on both sides and always was.
     expect(HUD_OVERLAY).toContain("useMediaQuery('(max-width: 560px)')");
-    expect(script).toContain("matchMedia('(max-width: 1280px)')");
     expect(script).toContain("matchMedia('(max-width: 560px)')");
+
+    // The fold is NOT. The HUD measures the row against the room it has
+    // (`useStatusStripFold`), and the shell — which has no strip yet and no
+    // layout to read — runs the ESTIMATE that hook computes: the row as
+    // measured, plus the slack it keeps, minus one because `max-width` is
+    // inclusive. What is pinned here is the ARITHMETIC, on both sides: the
+    // hook must derive its constant rather than type it, and the shell must
+    // restate the value that derivation produces.
+    const constant = (name: string) => Number(
+      new RegExp(`${name} = (\\d+)`).exec(STATUS_STRIP_FOLD)?.[1],
+    );
+    const measured = constant('STATUS_STRIP_WIDE_MEASURED_PX');
+    const slack = constant('STATUS_STRIP_FOLD_SLACK_PX');
+    expect([measured, slack], 'the fold constants moved or were renamed')
+      .toEqual([expect.any(Number), expect.any(Number)]);
+    expect(
+      STATUS_STRIP_FOLD.replace(/\s+/g, ' '),
+      'the estimate is a number now, not a derivation',
+    ).toContain(
+      'STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX = STATUS_STRIP_WIDE_MEASURED_PX'
+      + ' + STATUS_STRIP_FOLD_SLACK_PX - 1',
+    );
+    expect(script).toContain(`matchMedia('(max-width: ${measured + slack - 1}px)')`);
+
+    // And the HUD's own first render runs that same query, from that same
+    // file, before any box has been laid out — which is what makes the
+    // handover a handover and not a jump.
+    expect(HUD_OVERLAY).toContain('useStatusStripFold(');
+    expect(HUD_OVERLAY).toContain('STATUS_STRIP_FOLD_ESTIMATE_QUERY');
+    // The number that used to be typed on both sides is gone from both.
+    expect(HUD_OVERLAY, 'the fixed top-bar breakpoint is back')
+      .not.toContain('max-width: 1280px');
+    expect(script, 'the shell still guesses at 1,280').not.toContain('1280');
   });
 
   it('puts the boot faces in the head, preloaded, and nothing else', () => {
