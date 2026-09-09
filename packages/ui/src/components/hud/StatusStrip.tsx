@@ -19,8 +19,9 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
+import { useCoarsePointer } from '../../hooks/useCoarsePointer';
 import { BrandMark } from '../BrandMark';
-import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, TOUCH_TARGET_MIN_PX, rgba } from './hudTheme';
 import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
@@ -86,6 +87,7 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
       onPointerDown={(e) => e.stopPropagation()}
       onMouseEnter={() => setHot(true)}
       onMouseLeave={() => setHot(false)}
+      className="cknerv-touch-target"
       data-build-chip
       style={{
         ...NAV_MODULE_STYLE,
@@ -173,7 +175,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
     >
       <button
         type="button"
-        className="cknerv-hud-control-button"
+        className="cknerv-hud-control-button cknerv-touch-target"
         aria-label={`Configure HUD panels, ${visibleCount} of ${panels.length} visible`}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -284,7 +286,10 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
                   gridTemplateColumns: '58px minmax(0,1fr) auto',
                   alignItems: 'center',
                   width: '100%',
-                  height: 27,
+                  // The dropdown exists between two taps and is placed over
+                  // the scene, so unlike the bar's own controls this row can
+                  // simply BE the size a hand needs.
+                  height: TOUCH_TARGET_MIN_PX,
                   padding: '0 5px',
                   border: 0,
                   borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`,
@@ -391,7 +396,7 @@ function EnrichmentChip({ source, compact = false }: {
       <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 5px ${color}` }} />
       {source.source === 'ckbadger' ? (
         <a
-          className="cknerv-hud-link"
+          className="cknerv-hud-link cknerv-touch-target"
           href="https://ckbadger.web5.info/"
           target="_blank"
           rel="noopener noreferrer"
@@ -419,6 +424,18 @@ function fmtCellCount(count: number): string {
   return `${Number.isInteger(compact) ? compact : compact.toFixed(1)}K`;
 }
 
+/** Where along the track a pointer landed, as a cap. Reads the element's own
+ *  box, so it is correct whatever the track measures in the layout it is in. */
+function setCellDisplayFromPointer(element: HTMLInputElement, clientX: number): void {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const maximum = cellDisplaySliderMaximum();
+  setCellDisplayLimit(
+    cellDisplaySliderValueToLimit(Math.round(ratio * maximum)),
+  );
+}
+
 function CellDisplayControl({
   availableCells,
   capacity = CELL_DISPLAY_MAX,
@@ -430,6 +447,7 @@ function CellDisplayControl({
 }) {
   const quality = useQualityRuntime();
   const display = useCellDisplayRuntime();
+  const coarse = useCoarsePointer();
   const serverCapacity = Number.isFinite(capacity)
     ? Math.max(0, Math.floor(capacity))
     : CELL_DISPLAY_MAX;
@@ -522,7 +540,7 @@ function CellDisplayControl({
       </output>
       <button
         type="button"
-        className="cknerv-hud-control-button cknerv-cell-display-auto"
+        className="cknerv-hud-control-button cknerv-cell-display-auto cknerv-touch-target"
         aria-label="Automatic cell count"
         aria-pressed={display.mode === 'auto'}
         title={display.mode === 'auto'
@@ -660,15 +678,41 @@ function CellDisplayControl({
               cellDisplaySliderValueToLimit(Number(event.currentTarget.value)),
             );
           }}
+          // ——— A TAP ON THE TRACK IS A VALUE, ON EVERY BROWSER ———
+          //
+          // Chromium jumps the thumb to a click on the track; WebKit does
+          // not — it requires the THUMB to be grabbed and dragged. This
+          // thumb is `opacity: 0` and the track is 64 px wide, so on an iPad
+          // the control was a 64 x 18 px box holding an invisible grip, and
+          // the reader had no way to find out where it was. Setting the
+          // value from the pointer's own x makes the two browsers agree, and
+          // makes the whole track the control it looks like.
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setCellDisplayFromPointer(event.currentTarget, event.clientX);
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            setCellDisplayFromPointer(event.currentTarget, event.clientX);
+          }}
           style={{
             appearance: 'none',
             position: 'absolute',
             zIndex: 1,
-            inset: 0,
+            left: 0,
+            right: 0,
+            // A hand grabs the whole rung, not the hairline: the box grows
+            // around the track's own middle and paints nothing, so the rail,
+            // the ticks and the cap marker stand exactly where they did.
+            top: '50%',
+            height: coarse ? TOUCH_TARGET_MIN_PX : '100%',
+            transform: 'translateY(-50%)',
             width: '100%',
-            height: '100%',
             margin: 0,
             opacity: 0,
+            // The gesture is this control's; without it a horizontal drag can
+            // be claimed by a scrolling ancestor and the cap stops following.
+            touchAction: 'none',
             cursor: 'ew-resize',
           }}
         />
@@ -779,7 +823,7 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
             <button
               key={mode}
               type="button"
-              className="cknerv-hud-control-button cknerv-quality-option"
+              className="cknerv-hud-control-button cknerv-quality-option cknerv-touch-target"
               aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} render quality`}
               aria-pressed={active}
               data-quality-option={mode}

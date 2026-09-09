@@ -438,6 +438,19 @@ export const HUD_TYPE = {
   micro: 7.5,
 } as const;
 
+/**
+ * The smallest a control may be to a HAND, in CSS px.
+ *
+ * Apple's 44 pt, and on an 11" iPad — 130.6 CSS px to the inch — that is
+ * 8.5 mm, which is a fingertip. It is deliberately NOT a rung of `HUD_TYPE`:
+ * type size is how loud a reading is and this is how far a hand can miss, and
+ * the two only ever coincided because nothing had asked the second question.
+ *
+ * Read by `.cknerv-touch-target` (below) and by the controls that grow their
+ * own box rather than a pseudo-element, so the answer is spelled once.
+ */
+export const TOUCH_TARGET_MIN_PX = 44;
+
 // ——— Tracking ————————————————————————————————————————————————————————————
 //
 // Letter-spacing had drifted to 45 distinct values across the HUD — 0.28 and
@@ -984,6 +997,32 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translate3d(0,0,0);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translate3d(0,100%,0);opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.76)}))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,${rgba(HUD_COLORS.goldInk, 0.42)}))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
+    // ——— WHAT A HAND CAN REACH, WHICH IS NOT WHAT THE INSTRUMENT DRAWS ———
+    //
+    // Measured on an 11" iPad in landscape: every one of the eleven controls
+    // in the top bar was under Apple's 44 pt minimum, and the worst axis was
+    // always the same one. The quality options are 23 x 18 px — 4.5 x 3.5 mm
+    // against a fingertip's 8-10 — and the AUTO/MAN button and the stage-cells
+    // track are 18 tall too. The bar itself is 36.
+    //
+    // The density of this row is a design commitment and the row has 77 px of
+    // headroom before it folds (`useStatusStripFold`), so the CONTROLS do not
+    // grow: their REACH does, through a pseudo-element that paints nothing.
+    //
+    // ⭐ HEIGHT ONLY, and that is the load-bearing half. Growing the width
+    // would overlap the neighbours — H, M and L stand 23 px apart — and the
+    // reader would press one letter and get another, which is worse than a
+    // small target. Vertically there is nothing beside these controls but the
+    // bar's own ground, so the reach costs nothing and takes nothing.
+    //
+    // ⚠️ In the folded and phone layouts the controls row carries
+    // `overflow-y: hidden` (it scrolls horizontally), so there the reach is
+    // clipped to that row's 32 px band. Still nearly double what it was, and
+    // the alternative is a row that scrolls in both directions.
+    + `\n@media (pointer: coarse){`
+    + `.cknerv-touch-target{position:relative}`
+    + `.cknerv-touch-target::after{content:'';position:absolute;left:0;right:0;top:50%;height:${TOUCH_TARGET_MIN_PX}px;transform:translateY(-50%)}`
+    + `}`
     + `\n.cknerv-hud-link{color:${HUD_COLORS.dim};text-decoration:underline;text-decoration-color:${rgba(HUD_COLORS.cyanWire, 0.25)};text-underline-offset:3px}`
     + `\n.cknerv-hud-link:hover,.cknerv-hud-link:focus-visible{color:${HUD_COLORS.cyanInk};text-decoration-color:currentColor}`
     + `\n.cknerv-hud-link:focus-visible{outline:1px solid ${rgba(HUD_COLORS.cyanWire, 0.55)};outline-offset:2px}`

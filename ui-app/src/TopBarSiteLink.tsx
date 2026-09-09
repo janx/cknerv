@@ -2,7 +2,7 @@
 export default function TopBarSiteLink() {
   return (
     <a
-      className="cknerv-hud-link"
+      className="cknerv-hud-link cknerv-touch-target"
       href="https://web5.info/"
       target="_blank"
       rel="noopener noreferrer"

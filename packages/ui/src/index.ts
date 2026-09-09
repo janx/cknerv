@@ -222,6 +222,11 @@ export { usePeerInspectionRetention } from './hooks/usePeerInspectionRetention';
 // not `LIVE.time.reduced` (D-11, `MOTION_POLICY` in `hudTheme.ts`).
 export { useReducedMotion } from './components/hud/useReducedMotion';
 export {
+  COARSE_POINTER_QUERY,
+  coarsePointerMatches,
+  useCoarsePointer,
+} from './hooks/useCoarsePointer';
+export {
   default as NodeInspectionOverlay,
   NodeInspectionAnchor,
   createNodeInspectionHandles,

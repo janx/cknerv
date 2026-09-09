@@ -678,7 +678,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
         <button
           ref={toggleRef}
           type="button"
-          className="cknerv-hud-control-button cknerv-jukebox-chip"
+          className="cknerv-hud-control-button cknerv-jukebox-chip cknerv-touch-target"
           data-jukebox-trigger
           data-jukebox-attract={attract}
           aria-controls={PANEL_ID}
@@ -800,7 +800,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             <button
               ref={closeRef}
               type="button"
-              className="cknerv-hud-control-button"
+              className="cknerv-hud-control-button cknerv-touch-target"
               aria-label="Close Jukebox player"
               title="Close and stop playback"
               onClick={close}
@@ -837,7 +837,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
                 <button
                   key={mode.id}
                   type="button"
-                  className="cknerv-hud-control-button"
+                  className="cknerv-hud-control-button cknerv-touch-target"
                   data-jukebox-mode={mode.id}
                   aria-label={mode.selectorLabel}
                   aria-pressed={selected}
