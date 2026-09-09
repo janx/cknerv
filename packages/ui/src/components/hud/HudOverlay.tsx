@@ -653,13 +653,6 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
-  // The session's start; the uptime counts from it inside the status strip's
-  // own leaf. No clock is held here: this root used to tick `Date.now()` as
-  // state once a second, and every panel it owns re-rendered for the four
-  // spans that print a time. Those spans subscribe to the shared HUD clock
-  // themselves now (`hudClock`), and this body renders when data changes — or
-  // when the one time-derived word below, the cadence condition, flips.
-  const mountAt = useRef(Date.now());
   // The phase needs no clock — it is the worst channel's own word — and it is
   // what the layout below clears its rails under. The silence beside it is
   // the banner's business, in its own leaf.
@@ -708,9 +701,8 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
     ? Math.max(1, chain.last_reorg_depth ?? 1)
     : 0;
 
-  // Both walk `peers` (with allocations/sorts); the 1 Hz uptime tick
-  // re-renders this component with unchanged data, so key them on their
-  // actual inputs instead of recomputing per render.
+  // Both walk `peers` (with allocations/sorts); key them on their actual
+  // inputs instead of recomputing for unrelated overlay updates.
   const summary = useMemo(
     () => summarizeNetwork(peers, chain, localNode),
     // Keyed on the three chain fields the summary reads, not on the entity:
@@ -843,7 +835,6 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
    *  reader is actually looking at and the two `memo`s see one set of
    *  identities. */
   const stripProps = {
-    uptimeSinceMs: mountAt.current,
     build,
     cellCount: cellCount ?? cellsStats.inView,
     cellCapacity,

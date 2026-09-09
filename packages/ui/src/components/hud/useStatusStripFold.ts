@@ -12,9 +12,9 @@ import type { RefObject } from 'react';
  *  folded anyway.
  *
  *  A better number would be wrong the same way, because the row's width IS
- *  content: the ckbadger status word and its lag digits, the level word
- *  (NOMINAL / DEGRADED / …), the uptime, `PANELS n/m`, whatever the host puts
- *  in the actions slot. Any constant is right for exactly one content state.
+ *  content: the ckbadger status word and its lag digits, `PANELS n/m`,
+ *  whatever the host puts in the actions slot. Any constant is right for
+ *  exactly one content state.
  *  So the rule is the one the rails already keep — `RAILS_COLLAPSE_*` in
  *  `HudOverlay.tsx` is "DERIVED and not chosen" — taken one step further:
  *  derived not from a table of measures but from the row itself, live.

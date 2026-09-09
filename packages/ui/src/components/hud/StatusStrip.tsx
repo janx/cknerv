@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode, Ref } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
-import { useHudClockSelector } from './hudClock';
 import {
   QUALITY_MODE_CONTROL,
   setQualityMode,
@@ -70,25 +69,6 @@ const NAV_MODULE_STYLE: CSSProperties = {
   borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, STRIP_RAIL_ALPHA)}`,
   background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent 78%)`,
 };
-
-function fmtUptime(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-  const ss = String(s % 60).padStart(2, '0');
-  return `UP ${hh}:${mm}:${ss}`;
-}
-
-/** The one span in the strip that changes when the second does, re-rendered
- *  by nothing but itself. A host that runs a clock hands the instant it
- *  mounted down and the span counts from it on the shared HUD clock; a lab or
- *  a test hands a fixed `uptimeMs` and the span prints it. */
-function UptimeReadout({ uptimeMs, sinceMs }: { uptimeMs: number; sinceMs?: number }) {
-  const text = useHudClockSelector((clock) => (
-    fmtUptime(sinceMs === undefined ? uptimeMs : clock - sinceMs)
-  ));
-  return <>{text}</>;
-}
 
 // Build identity sits on the same angular rail as the other HUD modules and
 // shows the full package version and commit hash.
@@ -860,8 +840,6 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
 }
 
 function StatusStrip({
-  uptimeMs = 0,
-  uptimeSinceMs,
   build,
   cellCount,
   cellCapacity,
@@ -874,11 +852,6 @@ function StatusStrip({
   probe = false,
   probeRef,
 }: {
-  /** A fixed uptime, for labs and tests. Ignored when `uptimeSinceMs` is set. */
-  uptimeMs?: number;
-  /** The instant the host mounted: the uptime counts from it on the shared
-   *  HUD clock, inside a leaf, so the strip itself never renders for a tick. */
-  uptimeSinceMs?: number;
   build?: BuildInfo;
   /** Records currently available to the visual layer, before its draw cap. */
   cellCount?: number;
@@ -915,8 +888,8 @@ function StatusStrip({
    *  and there for no reason but to be measured.
    *
    *  The only thing that knows how wide one row wants to be is the row —
-   *  its width IS content (the ckbadger status word and its lag digits, the
-   *  uptime, `PANELS n/m`, whatever the host puts in
+   *  its width IS content (the ckbadger status word and its lag digits,
+   *  `PANELS n/m`, whatever the host puts in
    *  `actions`), so any number typed for it is right for one content state and
    *  wrong the moment the content moves. A probe makes the fold a function of
    *  what is actually there, at every moment.
@@ -1169,20 +1142,11 @@ function StatusStrip({
       <span style={{ flex: 1 }} />
       {performanceControls}
       {contextControls}
-      <span
-        data-status-uptime
-        style={{ ...NAV_MODULE_STYLE, padding: '0 1px 0 10px', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.tech, color: HUD_COLORS.dim, letterSpacing: 0.6 }}
-      >
-        <UptimeReadout uptimeMs={uptimeMs} sinceMs={uptimeSinceMs} />
-      </span>
       {probe ? null : accentRail}
     </div>
   );
 }
 
-// Memoized: the overlay used to tick a clock at its root once a second and
-// hand this strip a fresh `uptimeMs` every time, which re-rendered its three
-// control groups for one span. The uptime is a leaf now and every other prop
-// is a value, a record or a callback the overlay holds by identity, so the
-// strip renders when its data or a control changes.
+// The overlay holds props stable so the strip renders when its data or a
+// control changes.
 export default memo(StatusStrip);

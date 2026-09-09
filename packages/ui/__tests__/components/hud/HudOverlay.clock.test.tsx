@@ -1,5 +1,5 @@
 // The render-count half of the HUD clock: five ticks of the shared clock
-// reach the three spans that print a time and nothing else — not the overlay
+// reach the two spans that print a time and nothing else — not the overlay
 // root, not one of the six memoized panels. The second suite holds the other
 // promise the panel memos make: a chain batch that moved only the mempool
 // reaches CKB·01, which prints it, and no other panel.
@@ -172,18 +172,17 @@ const snapshot = () => Object.fromEntries(
 );
 
 describe('HudOverlay and the shared clock', () => {
-  it('lets five ticks reach the three time readouts and nothing else', () => {
+  it('lets five ticks reach the two time readouts and nothing else', () => {
     const { container } = mountSettled();
     const before = snapshot();
     const text = () => container.textContent ?? '';
-    // Boot settled 1.3s after mount: the three readouts print that.
-    expect(text()).toContain('UP 00:00:01');
+    // Boot settled 1.3s after mount: the two readouts print that.
     expect(text()).toContain('1S AGO');
     expect(text()).toContain('LAST FRAME 18S');
 
     act(() => { vi.advanceTimersByTime(5_000); });
 
-    expect(text()).toContain('UP 00:00:06');
+    expect(container.querySelector('[data-status-uptime]')).toBeNull();
     expect(text()).toContain('6S AGO');
     expect(text()).toContain('LAST FRAME 23S');
     // …and no panel, nor the root, rendered for it.

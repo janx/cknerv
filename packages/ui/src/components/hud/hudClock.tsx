@@ -3,11 +3,11 @@
 // The overlay used to hold `Date.now()` as state at its root and tick it once
 // a second, which re-rendered every panel it owns — some sixty components and
 // three hundred host elements — for the handful of spans that print a time:
-// the uptime in the status strip, the DAO record's freshness line, the stream
-// banner's silence, and the ages on the floating cards, each of which ran a
-// 1 Hz interval of its own on top. The tick lives out here instead: one
+// the DAO record's freshness line, the stream banner's silence, and the ages
+// on the floating cards, each of which ran a 1 Hz interval of its own on top.
+// The tick lives out here instead: one
 // interval for the whole page, published to whoever asked for the exact slice
-// they read. A span that prints `UP 00:12:07` re-renders once a second; the
+// they read. A span that prints `7S AGO` re-renders once a second; the
 // panel around it renders when its DATA changes, never because a clock moved.
 //
 // The same pattern as `cellScanClock` — a plain store and a
