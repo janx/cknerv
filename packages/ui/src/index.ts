@@ -190,7 +190,7 @@ export {
 // dressed in them: leva's dev panel, which writes into the same store the
 // status strip's QUALITY control does and shipped in a stock third-party skin
 // (report E, E-10).
-export { HUD_COLORS, HUD_FONTS, HUD_MOTION, rgba } from './components/hud/hudTheme';
+export { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './components/hud/hudTheme';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';

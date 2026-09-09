@@ -64,8 +64,12 @@ import {
   ConsensusRouteCamera,
   ConsensusWriteSeal,
   HUD_COLORS,
+  HUD_FONTS,
   HUD_MOTION,
+  HUD_TYPE,
   HudOverlay,
+  rgba,
+  useCoarsePointer,
   useReducedMotion,
   deriveCellPopulationField,
   resolveCellDisplayLimit,
@@ -375,6 +379,9 @@ export default function App({
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
   const [cameraFrame, setCameraFrame] = useState<HudCameraFrame | null>(null);
   const initialCamera = useInitialStageCamera(cameraFrame);
+  /** The GPU has taken the drawing context back. See the Canvas's
+   *  `onCreated`, which is the only place that can hear it. */
+  const [glContextLost, setGlContextLost] = useState(false);
   const [cellScanInteractionActive, setCellScanInteractionActive] = useState(
     false,
   );
@@ -549,9 +556,16 @@ export default function App({
       points.onAfterRender = () => {};
     };
   }, []);
+  // A touch device is a fanless one, and AUTO spends accordingly: the ceiling
+  // drops to 1.5 while AUTO holds the tier, which costs 44% of the fill and
+  // costs the reading nothing (the HUD is DOM — see
+  // `COARSE_POINTER_AUTO_MAX_DPR`). A reader who names a tier by hand has
+  // said what they want the picture to be, and keeps the display's density.
+  const coarsePointer = useCoarsePointer();
   const canvasDpr = resolveCanvasDpr(
     typeof window === 'undefined' ? 1 : window.devicePixelRatio,
     qualityCascade.maxDpr,
+    coarsePointer && qualityRuntime.mode === 'auto',
   );
   // MSAA is a context attribute fixed when the Canvas creates its GL context,
   // so unlike the DPR it cannot follow the runtime tier: it is decided once at
@@ -2231,7 +2245,66 @@ export default function App({
           visible through the ` panel toggle or ?render-stats=1. */}
       {forceRenderStats ? <RenderStatsPanel /> : null}
 
-      {showableCellCount === 0 ? (
+      {/* The stage is gone and nothing else on the page can say so: the HUD
+          is DOM and goes on reading the chain perfectly over a black canvas.
+          Above the empty-stage notice below, which would otherwise argue with
+          it — there is no shortage of Cells here, there is no renderer. */}
+      {glContextLost ? (
+        <div
+          data-gl-context="lost"
+          role="alert"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            top: '50%',
+            zIndex: 14,
+            transform: 'translate(-50%, -50%)',
+            maxWidth: 'min(420px, calc(100vw - 48px))',
+            padding: '13px 16px 14px',
+            border: `1px solid ${rgba(HUD_COLORS.danger, 0.34)}`,
+            background: rgba(HUD_COLORS.stageGround, 0.96),
+            boxShadow: `0 8px 28px ${rgba(HUD_COLORS.ground, 0.72)}`,
+            color: HUD_COLORS.dim,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: HUD_TYPE.label,
+            letterSpacing: 0.9,
+            lineHeight: 1.55,
+            textAlign: 'center',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div style={{ color: HUD_COLORS.danger, letterSpacing: 1.2 }}>
+            THE GPU RECLAIMED THE STAGE
+          </div>
+          <div style={{ marginTop: 6 }}>
+            The browser took this page's drawing context back — memory
+            pressure, a long spell in the background, or another tab. The
+            readings above are live and the scene is not.
+          </div>
+          <button
+            type="button"
+            className="cknerv-hud-control-button cknerv-touch-target"
+            data-gl-context-reload
+            onClick={() => window.location.reload()}
+            style={{
+              appearance: 'none',
+              marginTop: 9,
+              padding: '5px 12px',
+              border: 0,
+              borderBottom: `1px solid ${rgba(HUD_COLORS.dim, 0.55)}`,
+              background: 'transparent',
+              color: HUD_COLORS.ink,
+              font: `400 ${HUD_TYPE.label}px/1.4 ${HUD_FONTS.mono}`,
+              letterSpacing: 1.2,
+              cursor: 'pointer',
+            }}
+          >
+            RELOAD
+          </button>
+        </div>
+      ) : null}
+
+      {showableCellCount === 0 && !glContextLost ? (
         <div
           data-empty-stage={cellsCache.backfill ? 'populating' : 'empty'}
           role="status"
@@ -2289,6 +2362,33 @@ export default function App({
           onCreated={({ gl }) => {
             completeBootPhase('gl');
             setGpuSampleCount(readDrawingBufferSampleCount(gl.getContext()));
+            // ——— WHEN THE GPU TAKES THE SCENE BACK ———
+            //
+            // A browser may drop a WebGL context at any moment and iPadOS
+            // Safari does it readily: under memory pressure, after a long
+            // spell in the background, when another tab wants the GPU. three
+            // already calls `preventDefault` on the loss (so the context CAN
+            // be restored) and re-initialises on `webglcontextrestored`, and
+            // it announces both with a `console.log` — which is the whole of
+            // what the reader was told. The canvas simply went black under a
+            // live HUD, and if the restore never came it stayed that way.
+            //
+            // `index.html` has a vocabulary for exactly this and the running
+            // application had none, so the loss now says so on the glass.
+            // RELOAD is offered rather than promised-away: three restores its
+            // own GL state, but this scene also carries timer-query pools and
+            // a drawing-buffer sample count read once at creation, so the
+            // honest offer is "it may come back, and here is the sure path".
+            const canvas = gl.domElement;
+            const onLost = () => setGlContextLost(true);
+            const onRestored = () => {
+              // Read again: `antialias` is negotiated per context, and a
+              // restored one may not have answered the same way.
+              setGpuSampleCount(readDrawingBufferSampleCount(gl.getContext()));
+              setGlContextLost(false);
+            };
+            canvas.addEventListener('webglcontextlost', onLost);
+            canvas.addEventListener('webglcontextrestored', onRestored);
           }}
           onPointerMissed={() => {
             // The inspection card is a Canvas sibling, so its clicks can no
