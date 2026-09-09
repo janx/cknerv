@@ -36,6 +36,12 @@ export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 export {
+  CKNERV_BRAND,
+} from './brandIdentity';
+export {
+  BrandMark,
+} from './components/BrandMark';
+export {
   GPU_FRAME_BRACKET_PERIOD,
   PERFORMANCE_PROBE_LABELS,
   PERFORMANCE_PROBE_SAMPLE_CAPACITY,

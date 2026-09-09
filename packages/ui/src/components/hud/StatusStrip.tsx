@@ -19,6 +19,7 @@ import {
   setCellDisplayMode,
   useCellDisplayRuntime,
 } from '../../tweaks/cellDisplay';
+import { BrandMark } from '../BrandMark';
 import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba } from './hudTheme';
 import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
@@ -947,20 +948,23 @@ function StatusStrip({
       <span
         data-status-brand
         style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: dense ? 6 : 7,
           flexShrink: 0,
           paddingRight: dense ? 3 : 7,
           fontFamily: HUD_FONTS.display,
-          fontWeight: 700,
+          fontWeight: 500,
           fontSize: dense ? HUD_TYPE.section : HUD_TYPE.panelTitle,
           // Declared exception to the tracking table in `hudTheme.ts`: the
           // spacing here IS the wordmark. Snapping it to a rung would not make
           // the bar more coherent, it would make the logotype a label.
           letterSpacing: dense ? 2.6 : 4.2,
-          color: HUD_COLORS.orange,
-          textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.46)}`,
+          color: HUD_COLORS.ink,
         }}
       >
-        CKNERV
+        <BrandMark size={24} />
+        <span>CKNERV</span>
       </span>
       {build ? <BuildChip build={build} compact={dense} /> : null}
       {onPanelVisibilityChange && panelControls?.length ? (

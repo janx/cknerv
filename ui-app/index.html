@@ -16,68 +16,86 @@
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="CKNERV's cyan diamond mark on a dark background, with the words A visible body for CKB." />
+    <meta property="og:image:alt" content="CKNERV dual mesh mark with the words In the cells we share, the world’s mind unfolds." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="CKNERV — CKB Chain Visualization" />
     <meta name="twitter:description" content="Explore CKB as a living cell galaxy. Watch real blocks, transactions, cells, and peers in a local-first, read-only chain visualization." />
     <meta name="twitter:image" content="https://cknerv.web5.info/social-preview.png" />
-    <meta name="twitter:image:alt" content="CKNERV's cyan diamond mark on a dark background, with the words A visible body for CKB." />
+    <meta name="twitter:image:alt" content="CKNERV dual mesh mark with the words In the cells we share, the world’s mind unfolds." />
     <style>
       :root { color-scheme: dark; background:#02030a; }
       body { margin:0; overflow:hidden; background:#02030a; color:#7c8794; font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace; }
       #root { width:100vw; height:100vh; }
-      #cknerv-startup { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; box-sizing:border-box; padding:24px; overflow:hidden; background:#02030a; opacity:1; transition:opacity 400ms ease; }
+      #cknerv-startup { position:fixed; inset:0; z-index:10000; display:flex; flex-direction:column; align-items:center; box-sizing:border-box; padding:24px; overflow:hidden; background:#02030a; opacity:1; transition:opacity 400ms ease; }
       #cknerv-startup[data-state="leaving"] { opacity:0; pointer-events:none; }
-      .cknerv-startup-aura { position:absolute; width:min(74vw,680px); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,rgba(32,240,255,.11),rgba(32,240,255,.025) 34%,transparent 69%); animation:cknerv-breathe 4s ease-in-out infinite; }
-      .cknerv-startup-grid { position:absolute; inset:0; opacity:.13; background-image:linear-gradient(rgba(32,240,255,.16) 1px,transparent 1px),linear-gradient(90deg,rgba(32,240,255,.16) 1px,transparent 1px); background-size:48px 48px; mask-image:radial-gradient(circle at center,#000,transparent 72%); }
-      .cknerv-startup-body { position:relative; width:min(460px,calc(100vw - 40px)); text-align:center; }
-      .cknerv-startup-mark { width:104px; height:104px; margin:0 auto 25px; color:#20f0ff; filter:drop-shadow(0 0 18px rgba(32,240,255,.32)); animation:cknerv-breathe 4s ease-in-out infinite; }
-      .cknerv-startup-word { margin:0; font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif; font-size:clamp(30px,6vw,48px); font-weight:700; letter-spacing:.24em; text-indent:.24em; color:#C9F8FF; }
-      .cknerv-startup-tagline { margin:7px 0 43px; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#70808f; }
-      .cknerv-startup-readout { height:180px; }
-      #cknerv-startup-status { min-height:18px; color:#20f0ff; font-size:11px; letter-spacing:.16em; }
-      #cknerv-startup-detail { height:30px; margin-top:8px; color:#7c8794; font-size:9px; line-height:1.55; letter-spacing:.1em; overflow:auto; overflow-wrap:anywhere; }
-      .cknerv-startup-track { position:relative; height:1px; margin:12px auto 0; width:min(330px,78vw); overflow:hidden; background:rgba(124,135,148,.22); }
-      #cknerv-startup-progress { position:absolute; inset:0; transform:scaleX(0); transform-origin:left; background:#20f0ff; transition:transform 120ms linear; }
-      .cknerv-startup-track[data-indeterminate="true"]::after { content:""; position:absolute; inset:0; width:36%; background:linear-gradient(90deg,transparent,#20f0ff,transparent); animation:cknerv-scan 1.6s linear infinite; }
-      #cknerv-startup-reload { margin-top:17px; padding:8px 18px; border:1px solid rgba(32,240,255,.55); background:rgba(2,3,10,.82); color:#C9F8FF; font:10px 'Share Tech Mono',ui-monospace,monospace; letter-spacing:.16em; cursor:pointer; }
+      .cknerv-startup-body { position:relative; flex:1; width:min(580px,calc(100vw - 40px)); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; transform:translateY(-7px); }
+      .cknerv-startup-mark { width:148px; height:148px; overflow:visible; }
+      .cknerv-startup-mark .boot-base { opacity:.27; }
+      .cknerv-startup-mark .boot-geometry { fill:none; stroke-width:1.05; stroke-linecap:round; stroke-linejoin:round; }
+      .cknerv-startup-mark .boot-cells { stroke:var(--brand-cell); stroke-opacity:.92; }
+      .cknerv-startup-mark .boot-chain { stroke:var(--brand-peer); stroke-opacity:.65; }
+      .cknerv-startup-mark .boot-progress { stroke-width:1.25; stroke-dasharray:1; stroke-dashoffset:calc(1 - var(--boot-progress,0)); transition:stroke-dashoffset 180ms linear; }
+      .cknerv-startup-mark .boot-fabric,.cknerv-startup-mark .boot-nodes { opacity:.22; transition:opacity 220ms ease; }
+      .cknerv-startup-mark [data-state="done"] .boot-fabric,.cknerv-startup-mark [data-state="done"] .boot-nodes { opacity:.8; }
+      .cknerv-startup-mark [data-indeterminate="true"] .boot-progress { stroke-dasharray:.09 .91; animation:cknerv-flow 3.6s linear infinite; transition:none; }
+      .cknerv-startup-center-halo { fill:var(--brand-ink); opacity:.05; animation:cknerv-breathe 5.5s ease-in-out infinite; }
+      .cknerv-startup-center { fill:var(--brand-ground); stroke:var(--brand-legend); stroke-width:.85; }
+      #cknerv-startup[data-center="lit"] .cknerv-startup-center { fill:var(--brand-ink); stroke:var(--brand-ink); }
+      #cknerv-startup[data-center="lit"] .cknerv-startup-center-halo,#cknerv-startup[data-state="leaving"] .cknerv-startup-center-halo { animation:none; opacity:0; }
+      .cknerv-startup-word { margin:25px 0 0; font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif; font-size:27px; line-height:1.3; font-weight:500; letter-spacing:.29em; text-indent:.29em; color:var(--brand-ink); }
+      .cknerv-startup-tagline { margin:12px 0 0; color:var(--brand-legend); font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif; font-size:15px; line-height:1.5; letter-spacing:.035em; text-wrap:balance; }
+      .cknerv-startup-tagline span { display:inline-block; }
+      .cknerv-startup-readout { flex:none; height:142px; text-align:center; }
+      #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:142px; max-height:calc(100vh - 190px); padding:0 8px max(12px,env(safe-area-inset-bottom)); overflow-y:auto; box-sizing:border-box; }
+      #cknerv-startup-status { min-height:18px; color:#9FB0BD; font-size:11px; line-height:1.5; letter-spacing:.12em; }
+      #cknerv-startup-detail { min-height:18px; max-height:38px; margin-top:8px; color:#7C8794; font-size:12px; line-height:1.5; overflow:auto; overflow-wrap:anywhere; }
+      #cknerv-startup-reload { margin-top:9px; padding:5px 0; border:0; border-bottom:1px solid #5A6879; background:transparent; color:#C2CBD5; font:11px 'Share Tech Mono',ui-monospace,monospace; letter-spacing:.12em; cursor:pointer; }
       .cknerv-startup-diagnostics { margin:16px auto 0; width:min(380px,82vw); color:#7C8794; font-size:8px; line-height:1.55; letter-spacing:.08em; }
-      .cknerv-startup-diagnostics summary { cursor:pointer; color:#7C8794; }
+      .cknerv-startup-diagnostics summary { cursor:pointer; color:#7C8794; font-size:11px; line-height:1.5; }
       #cknerv-startup-diagnostics { display:block; margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere; }
-      #cknerv-startup[data-state="failed"] #cknerv-startup-status,#cknerv-startup[data-state="failed"] #cknerv-startup-detail { color:#FF3030; }
-      #cknerv-startup[data-state="failed"] .cknerv-startup-mark,#cknerv-startup[data-state="failed"] .cknerv-startup-aura { color:#FF3030; animation:none; }
-      @keyframes cknerv-breathe { 50% { opacity:.7; transform:scale(.975); } }
-      @keyframes cknerv-scan { from { transform:translateX(-110%); } to { transform:translateX(320%); } }
-      @media (prefers-reduced-motion:reduce) { .cknerv-startup-aura,.cknerv-startup-mark,.cknerv-startup-track::after { animation:none!important; } #cknerv-startup { transition:none; } }
-      @media (max-width:390px) { #cknerv-startup { padding:18px; } .cknerv-startup-mark { width:78px; height:78px; margin-bottom:18px; } .cknerv-startup-tagline { margin-bottom:32px; } }
-      @media (max-height:440px) and (orientation:landscape) { .cknerv-startup-mark { width:58px; height:58px; margin-bottom:10px; } .cknerv-startup-word { font-size:26px; } .cknerv-startup-tagline { margin:3px 0 16px; } }
+      #cknerv-startup[data-state="failed"] #cknerv-startup-status { color:#FF3030; }
+      #cknerv-startup[data-state="failed"] .boot-progress,#cknerv-startup[data-state="failed"] .cknerv-startup-center-halo { animation:none; }
+      #cknerv-startup[data-state="waiting"] #cknerv-startup-status { color:#FFB000; }
+      @keyframes cknerv-breathe { 0%,100% { opacity:.035; transform:scale(1); } 50% { opacity:.095; transform:scale(1.5); } }
+      @keyframes cknerv-flow { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
+      @media (prefers-reduced-motion:reduce) { .cknerv-startup-center-halo,.boot-progress { animation:none!important; transition:none!important; } #cknerv-startup { transition:none; } }
+      @media (max-width:480px) { #cknerv-startup { padding:18px; } .cknerv-startup-mark { width:132px; height:132px; } .cknerv-startup-word { margin-top:23px; font-size:25px; } .cknerv-startup-tagline { font-size:14px; } .cknerv-startup-tagline span { display:block; } .cknerv-startup-readout { height:144px; } }
+      @media (pointer:coarse) { #cknerv-startup-reload { min-width:64px; min-height:44px; padding:5px 10px; } }
+      @media (max-height:440px) and (orientation:landscape) { .cknerv-startup-mark { width:68px; height:68px; } .cknerv-startup-word { margin-top:8px; font-size:21px; } .cknerv-startup-tagline { margin-top:2px; font-size:12px; } .cknerv-startup-readout { height:78px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-body { flex:0 1 138px; min-height:112px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:0; max-height:calc(100vh - 148px); } .cknerv-startup-diagnostics { margin-top:4px; } }
     </style>
   </head>
   <body>
     <div id="root" inert></div>
-    <div id="cknerv-startup" data-boot-shell data-state="preparing">
-      <div class="cknerv-startup-grid" aria-hidden="true"></div>
-      <div class="cknerv-startup-aura" aria-hidden="true"></div>
+    <div id="cknerv-startup" data-boot-shell data-state="preparing" data-center="open" style="--brand-ground:#02030A;--brand-cell:#FF7A85;--brand-peer:#1AD1FF;--brand-ink:#E8E8E8;--brand-legend:#9FB0BD">
       <div class="cknerv-startup-body">
-        <svg class="cknerv-startup-mark" viewBox="0 0 120 120" aria-hidden="true">
-          <path d="M60 7 113 60 60 113 7 60Z" fill="none" stroke="currentColor" stroke-width="1.25" opacity=".72"/>
-          <path d="M60 20 100 60 60 100 20 60Z" fill="none" stroke="currentColor" stroke-width="2"/>
-          <path d="M60 35 85 60 60 85 35 60Z" fill="rgba(32,240,255,.035)" stroke="currentColor" stroke-width="1" opacity=".7"/>
-          <circle cx="60" cy="60" r="3" fill="currentColor"/>
+        <!-- brand-mark:start -->
+        <svg class="cknerv-startup-mark" viewBox="0 0 148 148" role="img" aria-label="CKNERV startup: Cell and Chain snapshot progress, waiting for the first frame.">
+          <g transform="translate(74 74)">
+            <g data-boot-mesh="cells" data-state="pending" data-indeterminate="false" class="boot-cells boot-geometry">
+              <path class="boot-base" d="M0 -47 C-12 -49 -31 -40 -35 -23 C-40 -17 -47 -10 -47 0 C-47 10 -40 17 -35 23 C-31 40 -12 49 0 47"/><path class="boot-progress" pathLength="1" d="M0 -47 C-12 -49 -31 -40 -35 -23 C-40 -17 -47 -10 -47 0 C-47 10 -40 17 -35 23 C-31 40 -12 49 0 47"/>
+              <path class="boot-fabric" d="M0 -47 C-2 -29 -10 -11 0 0 C-10 11 -2 29 0 47 M-35 -23 C-22 -23 -14 -12 0 0 C-14 12 -22 23 -35 23 M-47 0 C-31 -9 -17 -9 0 0"/><g class="boot-nodes" fill="#FF7A85" stroke="none"><circle cx="-35" cy="-23" r="1.6"/><circle cx="-47" r="1.6"/><circle cx="-35" cy="23" r="1.6"/></g>
+            </g>
+            <g data-boot-mesh="chain" data-state="pending" data-indeterminate="false" class="boot-chain boot-geometry">
+              <path class="boot-base" d="M0 -47 L35 -23 L47 0 L35 23 L0 47"/><path class="boot-progress" pathLength="1" d="M0 -47 L35 -23 L47 0 L35 23 L0 47"/>
+              <path class="boot-fabric" d="M0 -47 L0 0 L0 47 M35 -23 L0 0 L35 23 M47 0 L0 0"/><g class="boot-nodes" fill="#1AD1FF" stroke="none"><circle cx="35" cy="-23" r="1.6"/><circle cx="47" r="1.6"/><circle cx="35" cy="23" r="1.6"/></g>
+            </g>
+            <g fill="#E8E8E8" opacity=".7"><circle cy="-47" r="1.6"/><circle cy="47" r="1.6"/></g>
+            <circle class="cknerv-startup-center-halo" r="8"/><circle r="3.6" fill="#02030a"/><circle class="cknerv-startup-center" r="1.9"/>
+          </g>
         </svg>
+        <!-- brand-mark:end -->
         <h1 class="cknerv-startup-word">CKNERV</h1>
-        <p class="cknerv-startup-tagline">A visible body for CKB.</p>
-        <div class="cknerv-startup-readout">
+        <p class="cknerv-startup-tagline"><span>In the cells we share,</span> <span>the world’s mind unfolds.</span></p>
+      </div>
+      <div class="cknerv-startup-readout">
           <div id="cknerv-startup-status" role="status" aria-live="polite" aria-atomic="true">PREPARING CKNERV</div>
           <div id="cknerv-startup-detail"></div>
-          <div class="cknerv-startup-track" aria-hidden="true"><div id="cknerv-startup-progress"></div></div>
           <div id="cknerv-startup-error" hidden></div>
           <button id="cknerv-startup-reload" type="button" hidden>RELOAD</button>
-          <details class="cknerv-startup-diagnostics">
+          <details id="cknerv-startup-diagnostics-wrap" class="cknerv-startup-diagnostics" hidden>
             <summary>DETAILS</summary>
             <span id="cknerv-startup-diagnostics">BUNDLE PENDING</span>
           </details>
-        </div>
       </div>
     </div>
     <noscript><div style="position:fixed;inset:auto 16px 18px;z-index:10001;text-align:center;color:#FF3030;font:11px ui-monospace,monospace">CKNERV REQUIRES JAVASCRIPT TO RENDER THE LIVE VIEW.</div></noscript>
@@ -88,14 +106,14 @@
         var detail=document.getElementById('cknerv-startup-detail');
         var reload=document.getElementById('cknerv-startup-reload');
         var claimed=false;
-        function waiting(){if(claimed||!shell)return;status.textContent='STILL PREPARING CKNERV';detail.textContent='THE APPLICATION IS TAKING LONGER THAN EXPECTED.';shell.dataset.state='waiting';}
+        function waiting(){if(claimed||!shell)return;status.textContent='STILL PREPARING CKNERV';detail.textContent='THE APPLICATION IS TAKING LONGER THAN EXPECTED.';document.getElementById('cknerv-startup-diagnostics-wrap').hidden=false;shell.dataset.state='waiting';}
         function reloadable(){if(claimed||!shell)return;waiting();reload.hidden=false;}
         var slow=setTimeout(waiting,8000), long=setTimeout(reloadable,30000);
         reload.addEventListener('click',function(){location.reload();});
         function stopEarlyWatch(){clearTimeout(slow);clearTimeout(long);window.removeEventListener('error',onScriptError,true);}
         function onScriptError(event){var target=event.target;if(target&&target.tagName==='SCRIPT'&&target.type==='module')window.__cknervBootFault('The application script could not be loaded.');}
         window.__cknervBootTakeover=function(){claimed=true;stopEarlyWatch();delete window.__cknervBootTakeover;};
-        window.__cknervBootFault=function(text){if(!shell||!shell.isConnected)return false;claimed=true;clearTimeout(slow);clearTimeout(long);shell.dataset.state='failed';status.setAttribute('role','alert');status.textContent='UNABLE TO LOAD CKNERV';detail.textContent=String(text);reload.hidden=false;return true;};
+        window.__cknervBootFault=function(text){if(!shell||!shell.isConnected)return false;claimed=true;clearTimeout(slow);clearTimeout(long);shell.dataset.state='failed';status.setAttribute('role','alert');status.textContent='UNABLE TO LOAD CKNERV';detail.textContent=String(text);document.getElementById('cknerv-startup-diagnostics-wrap').hidden=false;reload.hidden=false;return true;};
         window.__cknervBootCleanup=function(){claimed=true;stopEarlyWatch();delete window.__cknervBootTakeover;delete window.__cknervBootFault;delete window.__cknervBootCleanup;};
         window.addEventListener('error',onScriptError,true);
       })();

@@ -4,6 +4,7 @@
   "version": "1.0.3",
   "license": "GPL-3.0",
   "scripts": {
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"

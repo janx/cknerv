@@ -25,6 +25,7 @@ import {
   showBootShellFault,
 } from '../src/boot-shell';
 import { BOOT_FACES, bootFaceTags } from '../vite-boot-faces';
+import identity from '../../packages/ui/src/brandIdentity.json';
 
 const INDEX_HTML = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
 const HUD_THEME = readFileSync(
@@ -69,7 +70,7 @@ describe('static startup document', () => {
     expect(root.contains(shell)).toBe(false);
     expect(root.hasAttribute('inert')).toBe(true);
     expect(shell.textContent).toContain('CKNERV');
-    expect(shell.textContent).toContain('A visible body for CKB.');
+    expect(shell.textContent).toContain('In the cells we share, the world’s mind unfolds.');
     expect(shipped.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('PREPARING CKNERV');
     expect(shipped.querySelector('noscript')?.textContent).toContain('REQUIRES JAVASCRIPT');
   });
@@ -88,9 +89,10 @@ describe('static startup document', () => {
   });
 
   it('uses the existing HUD palette and bundled font families', () => {
-    for (const name of ['stageGround', 'cyanWire', 'cyanInk', 'dim', 'danger']) {
+    for (const name of ['stageGround', 'cellRose', 'ink', 'legendInk', 'dim', 'danger']) {
       expect(INDEX_HTML.toLowerCase()).toContain(String(token(name)).toLowerCase());
     }
+    expect(INDEX_HTML).toContain('#1AD1FF');
     expect(INDEX_HTML).toContain("font-family:'Saira'");
     expect(INDEX_HTML).toContain("font-family:'Share Tech Mono'");
     expect(INDEX_HTML).not.toContain('#d9fbff');
@@ -107,9 +109,17 @@ describe('static startup document', () => {
 
   it('has reduced-motion and narrow/landscape layouts', () => {
     expect(INDEX_HTML).toContain('prefers-reduced-motion:reduce');
-    expect(INDEX_HTML).toContain('max-width:390px');
+    expect(INDEX_HTML).toContain('max-width:480px');
     expect(INDEX_HTML).toContain('orientation:landscape');
-    expect(INDEX_HTML).toContain('.cknerv-startup-aura { color:#FF3030; animation:none; }');
+    expect(INDEX_HTML).toContain('[data-state="failed"] .boot-progress');
+  });
+
+  it('keeps waiting and failure recovery readable and scrollable in short landscape viewports', () => {
+    expect(INDEX_HTML).toContain('#cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout');
+    expect(INDEX_HTML).toContain('max-height:calc(100vh - 148px)');
+    expect(INDEX_HTML).toContain('overflow-y:auto');
+    expect(INDEX_HTML).toContain('.cknerv-startup-diagnostics summary { cursor:pointer; color:#7C8794; font-size:11px;');
+    expect(INDEX_HTML).toContain('@media (pointer:coarse) { #cknerv-startup-reload { min-width:64px; min-height:44px;');
   });
 
   it('preloads exactly the faces used by the shell', () => {
@@ -133,15 +143,23 @@ describe('static startup document', () => {
   it('keeps the favicon in the HUD palette and the mobile safe-area contract', () => {
     const favicon = readFileSync(resolve(process.cwd(), 'public/favicon.svg'), 'utf8');
     expect(favicon.toLowerCase()).toContain(String(token('stageGround')).toLowerCase());
-    expect(favicon.toLowerCase()).toContain(String(token('cyanWire')).toLowerCase());
+    expect(favicon.toLowerCase()).toContain('#1ad1ff');
     expect(favicon).not.toMatch(/<text\b/);
+    for (const path of Object.values(identity.favicon)) expect(favicon).toContain(path);
     expect(readFileSync(resolve(process.cwd(), 'src/Jukebox.tsx'), 'utf8'))
       .toContain('env(safe-area-inset-');
   });
 
+  it('keeps the inline first-paint mark and copy synced with the browser identity source', () => {
+    expect(INDEX_HTML).toContain(identity.slogan);
+    expect(INDEX_HTML).toContain(identity.colors.cell);
+    expect(INDEX_HTML).toContain(identity.colors.peer);
+    for (const path of Object.values(identity.full)) expect(INDEX_HTML).toContain(path);
+  });
+
   it('reserves one readout footprint for waiting, details, and reload', () => {
-    expect(INDEX_HTML).toContain('.cknerv-startup-readout { height:180px; }');
-    expect(INDEX_HTML).toContain('#cknerv-startup-detail { height:30px;');
+    expect(INDEX_HTML).toContain('.cknerv-startup-readout { flex:none; height:142px;');
+    expect(INDEX_HTML).toContain('#cknerv-startup-detail { min-height:18px;');
   });
 });
 
@@ -154,9 +172,11 @@ describe('observed presentation', () => {
     const json = beginBootRequest('cells', 'cells-json', 4);
     reportBootRequestResponse('cells', json, 5, null);
     const state = bootPresentation(getBootSequence(), 5);
-    expect(state.heading).toBe('RECEIVING CHAIN DATA');
-    expect(state.detail).toBe('WAITING FOR RESPONSE');
-    expect(state.progress).toBeNull();
+    expect(state.heading).toBe('WAITING FOR CELLS');
+    expect(state.detail).toBe('');
+    expect(state.cells.progress).toBeNull();
+    expect(state.cells.indeterminate).toBe(true);
+    expect(state.chain.state).toBe('pending');
   });
 
   it('uses activity time for waiting and withdraws the warning on progress', () => {
@@ -175,10 +195,24 @@ describe('observed presentation', () => {
     reportBootRequestResponse('cells', cells, 1, 4);
     reportBootRequestProgress('cells', cells, 2, 4);
     completeBootRequest('cells', cells, 3);
-    expect(bootPresentation(getBootSequence(), 4).detail).toContain('WAITING FOR CHAIN SNAPSHOT');
+    expect(bootPresentation(getBootSequence(), 4).heading).toContain('WAITING FOR NETWORK');
     completeBootRequest('chain', chain, 5);
     markBootViewPreparing(6);
     expect(bootPresentation(getBootSequence(), 6).heading).toBe('PREPARING THE VIEW');
+  });
+
+  it('keeps the two request meshes independent and leaves the center open until presentation', () => {
+    const chain = beginBootRequest('chain', 'chain-json', 0);
+    const cells = beginBootRequest('cells', 'cells-binary', 0);
+    reportBootRequestResponse('chain', chain, 1, 200);
+    reportBootRequestProgress('chain', chain, 2, 50);
+    reportBootRequestResponse('cells', cells, 1, 100);
+    reportBootRequestProgress('cells', cells, 2, 100);
+    completeBootRequest('cells', cells, 3);
+    const state = bootPresentation(getBootSequence(), 3);
+    expect(state.cells).toMatchObject({ state: 'done', progress: 1, indeterminate: false });
+    expect(state.chain).toMatchObject({ state: 'active', progress: 0.25, indeterminate: false });
+
   });
 });
 
@@ -189,9 +223,13 @@ describe('startup shell lifecycle', () => {
     const cleanup = vi.fn();
     window.__cknervBootCleanup = cleanup;
     const stop = installBootShellReadout(() => 0);
+    const shell = document.getElementById(BOOT_SHELL_ID)!;
+    shell.insertAdjacentHTML('beforeend', '<svg><g data-boot-mesh="cells"></g><g data-boot-mesh="chain"></g></svg>');
     document.getElementById('root')!.replaceChildren(document.createElement('canvas'));
     expect(document.getElementById(BOOT_SHELL_ID)).not.toBeNull();
+    expect(shell.dataset.center).toBe('open');
     markBootViewPresented('populated');
+    expect(shell.dataset.center).toBe('lit');
     expect(document.getElementById(BOOT_SHELL_ID)?.dataset.state).toBe('leaving');
     markBootViewPresented('populated');
     vi.advanceTimersByTime(600);
@@ -217,7 +255,7 @@ describe('startup shell lifecycle', () => {
     installMarkup();
     installBootShellReadout(() => 1);
     beginBootRequest('cells', 'cells-json', 1);
-    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('RECEIVING CHAIN DATA');
+    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('WAITING FOR CELLS');
     expect(document.getElementById('cknerv-startup-diagnostics')?.textContent)
       .toContain('CELLS #1 CELLS-JSON REQUESTING');
   });

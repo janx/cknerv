@@ -5,9 +5,9 @@ export const BOOT_SHELL_ID = 'cknerv-startup';
 export const BOOT_SHELL_PHASE_ID = 'cknerv-startup-status';
 export const BOOT_SHELL_DETAIL_ID = 'cknerv-startup-detail';
 export const BOOT_SHELL_RELOAD_ID = 'cknerv-startup-reload';
-const BOOT_SHELL_PROGRESS_ID = 'cknerv-startup-progress';
 const BOOT_SHELL_ERROR_ID = 'cknerv-startup-error';
 const BOOT_SHELL_DIAGNOSTICS_ID = 'cknerv-startup-diagnostics';
+const BOOT_SHELL_DIAGNOSTICS_WRAP_ID = 'cknerv-startup-diagnostics-wrap';
 const BOOT_FADE_MS = 400;
 
 declare global {
@@ -61,6 +61,31 @@ export function installBootShellReadout(now: () => number = () => performance.no
   };
   const paint = (): void => {
     const state = getBootSequence();
+    const presentation = bootPresentation(state, now());
+    const paintMesh = (kind: 'cells' | 'chain'): void => {
+      const mesh = document.querySelector<SVGGElement>(`[data-boot-mesh="${kind}"]`);
+      if (!mesh) return;
+      const value = presentation[kind];
+      mesh.dataset.state = value.state;
+      mesh.dataset.indeterminate = value.indeterminate ? 'true' : 'false';
+      mesh.style.setProperty('--boot-progress', String(value.progress ?? 0));
+    };
+    paintMesh('cells');
+    paintMesh('chain');
+    shell.dataset.center = state.viewPresented ? 'lit' : 'open';
+    const mark = shell.querySelector<SVGElement>('.cknerv-startup-mark');
+    if (mark) {
+      const describe = (kind: 'cells' | 'chain', label: string): string => {
+        const value = presentation[kind];
+        if (value.state === 'done') return `${label} snapshot received`;
+        if (value.progress !== null) return `${label} snapshot ${Math.floor(value.progress * 100)} percent received`;
+        if (value.state === 'active') return `${label} snapshot receiving, total size unknown`;
+        return `${label} snapshot ${value.state}`;
+      };
+      mark.setAttribute('aria-label', `${describe('cells', 'Cell')}. ${describe('chain', 'Chain and Peer')}. ${
+        state.viewPresented ? 'First frame displayed.' : 'Waiting for the first frame.'
+      }`);
+    }
     if (state.viewPresented) {
       const active = document.activeElement;
       const root = document.getElementById('root');
@@ -75,25 +100,20 @@ export function installBootShellReadout(now: () => number = () => performance.no
       }
       return;
     }
-    const presentation = bootPresentation(state, now());
     shell.dataset.state = presentation.state;
     const heading = document.getElementById(BOOT_SHELL_PHASE_ID);
     const detail = document.getElementById(BOOT_SHELL_DETAIL_ID);
     const reload = document.getElementById(BOOT_SHELL_RELOAD_ID);
-    const progress = document.getElementById(BOOT_SHELL_PROGRESS_ID);
     const error = document.getElementById(BOOT_SHELL_ERROR_ID);
     const diagnostics = document.getElementById(BOOT_SHELL_DIAGNOSTICS_ID);
+    const diagnosticsWrap = document.getElementById(BOOT_SHELL_DIAGNOSTICS_WRAP_ID);
     if (heading) heading.setAttribute('role', presentation.state === 'failed' ? 'alert' : 'status');
     setText(heading, presentation.heading);
     setText(detail, presentation.detail);
     setText(diagnostics, diagnosticText());
     if (reload) reload.hidden = !presentation.showReload;
     if (error) error.hidden = presentation.state !== 'failed';
-    if (progress) {
-      const transform = presentation.progress === null ? 'scaleX(0)' : `scaleX(${presentation.progress})`;
-      if (progress.style.transform !== transform) progress.style.transform = transform;
-      progress.parentElement?.setAttribute('data-indeterminate', presentation.state === 'receiving' && presentation.progress === null ? 'true' : 'false');
-    }
+    if (diagnosticsWrap) diagnosticsWrap.hidden = presentation.state !== 'failed' && presentation.state !== 'waiting';
   };
   unsubscribe = subscribeBootSequence(paint);
   timer = setInterval(paint, 500);

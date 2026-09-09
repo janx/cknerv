@@ -8,7 +8,14 @@ export interface BootPresentation {
   heading: string;
   detail: string;
   showReload: boolean;
+  cells: BootMeshPresentation;
+  chain: BootMeshPresentation;
+}
+
+export interface BootMeshPresentation {
+  state: 'pending' | 'active' | 'done' | 'failed';
   progress: number | null;
+  indeterminate: boolean;
 }
 
 function latestRequest(sequence: BootSequenceSnapshot, kind: BootRequestSnapshot['kind']): BootRequestSnapshot | null {
@@ -25,22 +32,35 @@ function bytes(value: number): string {
   return `${value} B`;
 }
 
-function cellsDetail(request: BootRequestSnapshot | null): string {
+function requestStatus(label: string, request: BootRequestSnapshot | null): string {
   if (!request) return '';
   if (request.totalBytes !== null && request.totalBytes > 0) {
     const progress = Math.min(1, request.receivedBytes / request.totalBytes);
-    return `${Math.floor(progress * 100)}% · ${bytes(request.receivedBytes)} / ${bytes(request.totalBytes)}`;
+    return `RECEIVING ${label} · ${Math.floor(progress * 100)}%`;
   }
-  return request.receivedBytes > 0 ? `${bytes(request.receivedBytes)} RECEIVED` : 'WAITING FOR RESPONSE';
+  return request.receivedBytes > 0
+    ? `RECEIVING ${label} · ${bytes(request.receivedBytes)}`
+    : `WAITING FOR ${label}`;
+}
+
+function mesh(request: BootRequestSnapshot | null): BootMeshPresentation {
+  if (!request) return { state: 'pending', progress: null, indeterminate: false };
+  if (request.state === 'done') return { state: 'done', progress: 1, indeterminate: false };
+  if (request.state === 'failed') return { state: 'failed', progress: null, indeterminate: false };
+  const progress = request.totalBytes === null
+    ? null
+    : Math.min(1, request.receivedBytes / request.totalBytes);
+  return { state: 'active', progress, indeterminate: progress === null };
 }
 
 /** Pure mapping from observed boot events and an injectable monotonic clock. */
 export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number): BootPresentation {
-  if (sequence.viewPresented) {
-    return { state: 'presented', heading: '', detail: '', showReload: false, progress: null };
-  }
   const chain = latestRequest(sequence, 'chain');
   const cells = latestRequest(sequence, 'cells');
+  const meshes = { chain: mesh(chain), cells: mesh(cells) };
+  if (sequence.viewPresented) {
+    return { state: 'presented', heading: '', detail: '', showReload: false, ...meshes };
+  }
   const failedPhase = sequence.phases.find((phase) => phase.state === 'failed');
   const finalRequestFailure = chain?.state === 'failed'
     ? chain
@@ -51,7 +71,7 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
       heading: 'UNABLE TO LOAD CKNERV',
       detail: finalRequestFailure?.detail ?? failedPhase?.detail ?? 'Unknown startup error',
       showReload: true,
-      progress: null,
+      ...meshes,
     };
   }
   const requests = [chain, cells].filter((request): request is BootRequestSnapshot => (
@@ -60,15 +80,25 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
   if (requests.length > 0) {
     const idleMs = Math.max(...requests.map((request) => nowMs - request.lastActivityAtMs));
     const waiting = idleMs >= BOOT_SLOW_MS;
-    let detail = cellsDetail(cells);
-    if (cells?.state === 'done' && chain?.state !== 'done') detail = 'CELL DATA RECEIVED · WAITING FOR CHAIN SNAPSHOT';
-    const progress = cells?.totalBytes && cells.totalBytes > 0 ? Math.min(1, cells.receivedBytes / cells.totalBytes) : null;
+    const activeCells = cells?.state === 'requesting' || cells?.state === 'reading';
+    const activeChain = chain?.state === 'requesting' || chain?.state === 'reading';
+    let current = activeCells && activeChain
+      ? ((cells?.lastActivityAtMs ?? 0) >= (chain?.lastActivityAtMs ?? 0) ? cells : chain)
+      : activeCells ? cells : chain;
+    if (waiting) current = requests.reduce((stalled, request) => (
+      request.lastActivityAtMs < stalled.lastActivityAtMs ? request : stalled
+    ));
+    const label = current?.kind === 'cells' ? 'CELLS' : 'NETWORK';
+    const receiving = requestStatus(label, current);
+    const received = current && current.receivedBytes > 0
+      ? `${bytes(current.receivedBytes)} RECEIVED`
+      : 'WAITING FOR RESPONSE';
     return {
       state: waiting ? 'waiting' : 'receiving',
-      heading: waiting ? 'STILL WAITING FOR DATA' : 'RECEIVING CHAIN DATA',
-      detail,
+      heading: waiting ? 'STILL WAITING FOR DATA' : receiving,
+      detail: waiting ? `${received} · NO NEW DATA` : '',
       showReload: idleMs >= BOOT_RELOAD_MS,
-      progress,
+      ...meshes,
     };
   }
   if (chain?.state === 'done' && cells?.state === 'done') {
@@ -76,9 +106,9 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
     return {
       state: 'view',
       heading: 'PREPARING THE VIEW',
-      detail: 'THE LIVE VIEW IS ALMOST READY',
+      detail: '',
       showReload: waitingMs >= BOOT_RELOAD_MS,
-      progress: null,
+      ...meshes,
     };
   }
   return {
@@ -86,6 +116,6 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
     heading: 'PREPARING CKNERV',
     detail: '',
     showReload: false,
-    progress: null,
+    ...meshes,
   };
 }

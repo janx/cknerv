@@ -51,9 +51,24 @@ running chain connection. The absolute share URLs identify the public demo at
 `og:url`, `og:image`, and `twitter:image` together. These tags do not configure
 the dashboard's data sources.
 
+`packages/ui/src/brandIdentity.json` is the browser identity source for the
+approved copy, colors, and full, compact, and favicon geometry. The static
+first-paint SVG in `ui-app/index.html`, favicon, and share artwork are generated
+from it; the React topbar mark reads it directly. The startup SVG stays inline
+so it does not wait for an image request; its fonts remain local bundled faces
+with the existing first-paint preloads.
+
+Regenerate the inline startup mark, metadata copy, favicon, and editable share
+SVG after changing the identity source:
+
+```bash
+pnpm brand:assets
+```
+
 `ui-app/public/social-preview.png` is the 1200 × 630 share card, copied by Vite
-and embedded into the CLI. Its editable source uses the existing favicon mark
-and bundled fonts. Regenerate it from the repository root with:
+and embedded into the CLI. Its editable source is `ui-app/social-preview.svg`
+and uses the same identity and bundled font. Regenerate the PNG from the
+repository root with:
 
 ```bash
 chromium --headless=new --no-sandbox --hide-scrollbars \

@@ -77,10 +77,19 @@ describe('StatusStrip', () => {
     const { container } = render(<StatusStrip />);
     const root = container.firstElementChild as HTMLElement;
     expect(container.textContent).toContain('CKNERV');
+    expect(container.querySelector('[data-cknerv-brand-mark]')).not.toBeNull();
+    expect((container.querySelector('[data-status-brand]') as HTMLElement).style.fontWeight).toBe('500');
+    expect((container.querySelector('[data-status-brand]') as HTMLElement).style.letterSpacing).toBe('4.2px');
     expect(root.dataset.statusLayout).toBe('wide');
     expect(root.style.height).toBe('36px');
     expect(container.querySelector('[data-status-uptime]')).toBeNull();
     expect(container.querySelector('[data-status-accent-rail]')).not.toBeNull();
+  });
+  it('includes the compact mark in the hidden measurement probe', () => {
+    const ref = createRef<HTMLDivElement>();
+    const { container } = render(<StatusStrip probe probeRef={ref} />);
+    expect(container.querySelector('[data-status-probe="true"] [data-cknerv-brand-mark]')).not.toBeNull();
+    expect(container.textContent).toContain('CKNERV');
   });
   it.each([
     { layout: 'wide', compact: false, mobile: false },
