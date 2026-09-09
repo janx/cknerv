@@ -61,6 +61,50 @@ const socialSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="
 </svg>\n`;
 await writeFile(resolve(root, 'ui-app/social-preview.svg'), socialSvg);
 
+// The home-screen mark. iOS accepts no SVG for `apple-touch-icon`, so this is
+// the editable source and `docs/development.md` carries the raster step, the
+// way the share card already does. It is the favicon's geometry on the same
+// ground with room to breathe — a home screen sets icons much larger than a
+// tab, and the 32-unit mark's strokes go thin and its rounded square gets
+// clipped by the platform's own mask without the inset.
+const appIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180" fill="none">
+  <title>${name}</title><rect width="180" height="180" fill="${colors.ground}"/>
+  <g transform="translate(90 90) scale(0.83)" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.6">
+    <g stroke="${colors.cell}" opacity=".92"><path d="${full.cellOuter}"/><path opacity=".62" stroke-width="1.9" d="${full.cellInner}"/></g>
+    <g stroke="${colors.peer}" opacity=".68"><path d="${full.peerOuter}"/><path opacity=".62" stroke-width="1.9" d="${full.peerInner}"/></g>
+    <g fill="${colors.cell}" opacity=".94" stroke="none"><circle cx="-35" cy="-23" r="3.1"/><circle cx="-47" r="3.1"/><circle cx="-35" cy="23" r="3.1"/></g>
+    <g fill="${colors.peer}" opacity=".74" stroke="none"><circle cx="35" cy="-23" r="3.1"/><circle cx="47" r="3.1"/><circle cx="35" cy="23" r="3.1"/></g>
+    <g fill="${colors.ink}" opacity=".7" stroke="none"><circle cy="-47" r="3.1"/><circle cy="47" r="3.1"/></g>
+    <circle r="7" fill="${colors.ground}" stroke="none"/><circle r="3.7" fill="${colors.ink}" stroke="none"/>
+  </g>
+</svg>\n`;
+await writeFile(resolve(root, 'ui-app/app-icon.svg'), appIconSvg);
+
+// The install manifest. `display: standalone` is the whole point of it on a
+// tablet: the instrument then owns the screen outright and the floating
+// browser chrome that covers the top bar is simply not there.
+const manifest = {
+  name,
+  short_name: name,
+  description: slogan,
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: colors.ground,
+  theme_color: colors.ground,
+  icons: [
+    { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml' },
+    { src: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    { src: '/app-icon-192.png', sizes: '192x192', type: 'image/png' },
+    { src: '/app-icon-512.png', sizes: '512x512', type: 'image/png' },
+  ],
+};
+await writeFile(
+  resolve(root, 'ui-app/public/manifest.webmanifest'),
+  `${JSON.stringify(manifest, null, 2)}\n`,
+);
+
 // Keep the compact source exercised by this generator even though React reads
 // it directly; malformed identity manifests fail here before reaching a build.
 for (const path of Object.values(compact)) if (!path.startsWith('M')) throw new Error('Invalid compact mark path');

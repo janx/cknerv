@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#02030a" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Added to a home screen, the instrument owns the screen outright and
+         the floating browser chrome that covers the top bar is simply not
+         there. `black-translucent` puts the system status bar OVER the page,
+         which is only safe because the HUD frame stands inside
+         `env(safe-area-inset-*)` (d5086302) and every box inside it measures
+         against the same insets. Both the manifest and the Apple meta: iOS
+         reads `display` from the manifest since 16.4 and the meta before it,
+         and `mobile-web-app-capable` is the standard's own spelling. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="CKNERV" />
     <title>CKNERV</title>
     <meta name="description" content="Explore CKB as a living cell galaxy. Watch real blocks, transactions, cells, and peers in a local-first, read-only chain visualization." />
     <meta property="og:type" content="website" />

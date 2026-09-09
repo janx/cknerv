@@ -304,3 +304,48 @@ describe('startup shell lifecycle', () => {
     expect(window.__cknervBootCleanup).toBeUndefined();
   });
 });
+
+describe('installed as an application', () => {
+  const MANIFEST = JSON.parse(readFileSync(
+    resolve(process.cwd(), 'public/manifest.webmanifest'),
+    'utf8',
+  ));
+
+  it('asks for the whole screen, which is the point of it on a tablet', () => {
+    // Standalone is what makes the floating browser chrome — the surface that
+    // covered the entire top bar on an 11" iPad — simply not be there.
+    expect(MANIFEST.display).toBe('standalone');
+    expect(INDEX_HTML).toContain('<link rel="manifest" href="/manifest.webmanifest" />');
+    // iOS reads `display` from the manifest since 16.4 and the meta before
+    // it; `mobile-web-app-capable` is the standard's own spelling.
+    expect(INDEX_HTML).toContain('name="apple-mobile-web-app-capable" content="yes"');
+    expect(INDEX_HTML).toContain('name="mobile-web-app-capable" content="yes"');
+  });
+
+  it('takes the status bar over the page, which the safe area now pays for', () => {
+    // `black-translucent` is only safe because the HUD frame stands inside
+    // `env(safe-area-inset-*)` and every box inside it measures against the
+    // same insets. Without that this line would hide the top bar again.
+    expect(INDEX_HTML).toContain(
+      'name="apple-mobile-web-app-status-bar-style" content="black-translucent"',
+    );
+    expect(INDEX_HTML).toContain('viewport-fit=cover');
+  });
+
+  it('carries one identity, and a PNG because iOS accepts no SVG icon', () => {
+    expect(MANIFEST.name).toBe(identity.name);
+    expect(MANIFEST.description).toBe(identity.slogan);
+    expect(MANIFEST.background_color).toBe(identity.colors.ground);
+    expect(MANIFEST.theme_color).toBe(identity.colors.ground);
+    // The theme colour the document already declares and the manifest's must
+    // be the same near-black, or the shell paints one and the page the other.
+    expect(INDEX_HTML).toContain(
+      `<meta name="theme-color" content="${identity.colors.ground.toLowerCase()}" />`,
+    );
+    expect(INDEX_HTML).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />');
+    const sizes = MANIFEST.icons.map((icon: { sizes: string }) => icon.sizes);
+    expect(sizes).toContain('180x180');
+    expect(sizes).toContain('192x192');
+    expect(sizes).toContain('512x512');
+  });
+});
