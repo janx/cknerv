@@ -182,10 +182,19 @@ function injectJukeboxStyles(doc: Document = document): void {
 // chip reads as part of the instrument, and a module standing four pixels
 // inside every other module's line reads as the one thing that is not bolted
 // to the frame (report A, A-11).
+//
+// And the 14 is measured from the same edge the rails measure from, which is
+// the SAFE-AREA edge and not the page's (`HudOverlay.tsx`, `ROOT_STYLE`). It
+// used to read `max(14px, env(...))`, which agrees with the frame on every
+// screen that covers nothing and parts from it on every screen that does: an
+// iPad hands back a 25 px bottom inset, so the chip would stand at 25 while
+// SND·06's neighbours in the right rail stand at inset + 14 = 39 — the module
+// four pixels outside every other module's line, which is the arrangement the
+// paragraph above was written to rule out. `calc()` keeps the one line.
 const floatingStyle: CSSProperties = {
   position: 'fixed',
-  right: 'max(14px, env(safe-area-inset-right, 0px))',
-  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+  right: 'calc(14px + env(safe-area-inset-right, 0px))',
+  bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
   zIndex: 22,
   display: 'inline-flex',
   alignItems: 'center',

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { emptyScriptCensus } from '@cknerv/cache';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
@@ -271,6 +273,43 @@ describe('HudOverlay', () => {
     expect(meshRail.textContent).not.toContain('STAGE SAMPLE');
     expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
+  });
+
+  it('stands the frame inside the safe area and leaves the ground full bleed', () => {
+    // A page that asked for `viewport-fit=cover` is handed the parts of the
+    // screen a system surface is sitting on, and iPadOS 26 Safari floats its
+    // toolbar over exactly the band the status strip lives in — measured
+    // 2026-09-09, ~33 px of a 36 px row, every HUD control inside it.
+    //
+    // Pinned at the SOURCE, not through `style.top`: jsdom's CSS parser drops
+    // `env()` outright (the property comes back empty), so a rendered
+    // assertion here would pass just as happily on `inset: 0`. Comments are
+    // stripped first — the paragraph above `ROOT_STYLE` quotes both the
+    // property names and the `inset: 0` it replaced.
+    const stripComments = (text: string) => text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const overlay = stripComments(readFileSync(
+      resolve(process.cwd(), 'src/components/hud/HudOverlay.tsx'), 'utf8',
+    ));
+    const rootStyle = /const ROOT_STYLE: CSSProperties = \{[\s\S]*?\n\};/.exec(overlay)?.[0] ?? '';
+    expect(rootStyle).toBeTruthy();
+    for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+      expect(rootStyle).toContain(`${side}: 'env(safe-area-inset-${side}, 0px)'`);
+    }
+    expect(rootStyle).not.toContain('inset: 0');
+    // …and the asymmetry is the point: the card layer keeps the whole
+    // viewport, because a card is placed at its cell's PROJECTED screen
+    // position and an inset layer would slide every one of them off its
+    // anchor. The canvas keeps it for the same reason a floor does.
+    const inspection = stripComments(readFileSync(
+      resolve(process.cwd(), 'src/components/sceneInspection.tsx'), 'utf8',
+    ));
+    const cardLayer = /export const INSPECTION_LAYER_STYLE: CSSProperties = \{[\s\S]*?\n\};/
+      .exec(inspection)?.[0] ?? '';
+    expect(cardLayer).toBeTruthy();
+    expect(cardLayer).toContain('inset: 0');
+    expect(cardLayer).not.toContain('safe-area');
   });
 
   it('rules the whole overlay with scan lines that blend against nothing', () => {

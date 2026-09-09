@@ -86,7 +86,46 @@ const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behi
 // yet, and it is `mono` because that is what a HUD leaf that says nothing is
 // asking for — the readout voice. A leaf that wants a different one still says
 // so; this is the floor, not a decision taken away from it.
-const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', userSelect: 'none', overflow: 'hidden', fontFamily: HUD_FONTS.mono };
+//
+// ——— And the frame stands inside the SAFE AREA, not inside the viewport ———
+//
+// `ui-app/index.html` asks for `viewport-fit=cover`. That is a promise to
+// paint edge to edge and a debt taken on in the same breath: the page is then
+// handed the whole screen INCLUDING whatever a system surface is sitting on,
+// and the only thing it gets back is a measurement of where those parts are
+// (`env(safe-area-inset-*)`). iPadOS 26 Safari floats its toolbar OVER the
+// page rather than standing above it, and 2026-09-09 measured what the unpaid
+// debt costs: on an 11" iPad in landscape the toolbar covers the page's top
+// ~33 px, so all 36 px of the status strip sat under it and the only thing
+// that reached the screen was its 1 px accent rail. Every control the
+// instrument has — the PANELS menu, the stage-cells slider, the quality
+// selector, the ckbadger chip, both links — lives in that row, so an iPad
+// could read the HUD and touch none of it.
+//
+// All four sides, because it is one reason and not four: a rail standing
+// 14 px off the page edge (`RAIL_INSET_PX`) is measuring from an edge the
+// reader can SEE, and on a covered edge that measurement is a fiction. On a
+// desktop every inset resolves to `0px` and this is `inset: 0` again, pixel
+// for pixel — the rule costs nothing where nothing is covered.
+//
+// ⚠️ The CANVAS underneath is deliberately NOT inset. The ground the galaxy
+// is painted on is meant to run under the system's chrome, full bleed; it is
+// the instrument's READINGS that move in. And this is the HUD frame only:
+// `INSPECTION_LAYER_STYLE` (`sceneInspection.tsx`) stays at `inset: 0` because
+// a card is placed by its cell's PROJECTED screen position, so insetting that
+// layer would slide every card off the thing it points at.
+const ROOT_STYLE: CSSProperties = {
+  position: 'fixed',
+  top: 'env(safe-area-inset-top, 0px)',
+  right: 'env(safe-area-inset-right, 0px)',
+  bottom: 'env(safe-area-inset-bottom, 0px)',
+  left: 'env(safe-area-inset-left, 0px)',
+  zIndex: 15,
+  pointerEvents: 'none',
+  userSelect: 'none',
+  overflow: 'hidden',
+  fontFamily: HUD_FONTS.mono,
+};
 // The scan lines are the first thing the root paints and the only thing under
 // them is the root's own transparent ground: every band, rail and panel below
 // carries a z-index or arrives later in the tree, so all of them paint above.

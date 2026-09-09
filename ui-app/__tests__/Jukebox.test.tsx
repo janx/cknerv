@@ -470,7 +470,13 @@ describe('Jukebox', () => {
     });
 
     expect(floating.style.position).toBe('fixed');
+    // 14 px inside the SAFE-AREA edge, which is the edge the HUD's rails
+    // stand off too (`HudOverlay.tsx`, `ROOT_STYLE`) — an additive `calc`,
+    // never `max(14px, env(...))`, which parts from the frame on exactly the
+    // screens that cover an edge at all.
+    expect(floating.style.right).toMatch(/calc\(\s*14px\s*\+/);
     expect(floating.style.right).toContain('safe-area-inset-right');
+    expect(floating.style.bottom).toMatch(/calc\(\s*14px\s*\+/);
     expect(floating.style.bottom).toContain('safe-area-inset-bottom');
     expect(opener.style.height).toBe(`${JUKEBOX_CHIP_HEIGHT_PX}px`);
 

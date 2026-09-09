@@ -5928,9 +5928,13 @@ describe('every mark the HUD writes', () => {
     // What `applicableStacks` assumes, stated. The overlay and the card layer
     // are the only two elements every HUD leaf hangs under, and neither named
     // a face until 2026-09-05.
+    // Both spans, not one line: `ROOT_STYLE` stopped being a one-liner when
+    // the frame moved inside the safe area (four `env()` sides), and a rule
+    // about which FACE a root names has no business also pinning how the
+    // declaration wraps.
     const overlay = SOURCES.find((source) => source.name === 'HudOverlay.tsx');
     expect(code(overlay?.text ?? ''), 'the HUD root names no face')
-      .toMatch(/ROOT_STYLE[^\n]*fontFamily: HUD_FONTS\.mono/);
+      .toMatch(/ROOT_STYLE[\s\S]{0,900}?fontFamily: HUD_FONTS\.mono/);
 
     const inspection = readFileSync(
       resolve(HUD_DIR, '../sceneInspection.tsx'),
