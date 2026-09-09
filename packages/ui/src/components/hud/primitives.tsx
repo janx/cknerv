@@ -439,20 +439,56 @@ export function Gauge({ ratio, color }: { ratio: number; color: string }) {
  *  below is not decoration: `appearance:none`, no border, no padding, the
  *  ground transparent. `type="button"` because a bare button inside a form
  *  submits it. */
+/** Where the `×` stands: clear px from the card's top and right edges. It was
+ *  `top`/`right` on the button itself, and now it is the button's own padding,
+ *  because the glyph's POSITION and the button's REACH stopped being the same
+ *  measurement (see {@link CLOSE_BUTTON_HIT_PX}). */
+const CLOSE_GLYPH_TOP_PX = 6;
+const CLOSE_GLYPH_RIGHT_PX = 11;
+
+/**
+ * How big the control is to a HAND, which is not how big the glyph is.
+ *
+ * `×` at `HUD_TYPE.emphasis` in the mono face measures 7.6 x 14 px — 1.5 x
+ * 2.7 mm on an 11" iPad, where a fingertip covers 8-10 mm. It is the one
+ * control every card carries and it was the smallest target in the entire
+ * instrument (measured: 20 of 20 targets under Apple's 44 pt minimum with a
+ * card open, this one by a factor of five).
+ *
+ * The fix cannot move the glyph — the card's corner is composed — so the
+ * offsets that used to hold it there became padding inside a 44 px box
+ * anchored to the corner: `border-box` width and height, the glyph pinned to
+ * its top-right by flex, and the reach growing INWARD over the card's own
+ * empty corner rather than outward past a clip that would swallow it.
+ * The `×` lands on exactly the pixel it did before.
+ */
+const CLOSE_BUTTON_HIT_PX = 44;
+
 export function CloseButton({ onClose, title }: { onClose: () => void; title?: string }) {
+  const tint = (event: { currentTarget: EventTarget & HTMLElement }, lit: boolean) => {
+    event.currentTarget.style.color = lit ? HUD_COLORS.danger : HUD_COLORS.dim;
+  };
   return (
     <button
       type="button"
       aria-label="close"
       title={title}
       onClick={(e) => { e.stopPropagation(); onClose(); }}
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.danger; }}
-      onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
-      onBlur={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
+      // A finger has no hover, so the press IS the feedback — without this the
+      // control answered a touch with nothing at all until the card vanished.
+      onPointerDown={(e) => { e.stopPropagation(); tint(e, true); }}
+      onPointerUp={(e) => tint(e, false)}
+      onPointerCancel={(e) => tint(e, false)}
+      onMouseOver={(e) => tint(e, true)}
+      onMouseOut={(e) => tint(e, false)}
+      onBlur={(e) => tint(e, false)}
       style={{
-        appearance: 'none', border: 0, padding: 0, background: 'transparent',
-        position: 'absolute', top: 6, right: 11, cursor: 'pointer', pointerEvents: 'auto',
+        appearance: 'none', border: 0, background: 'transparent',
+        position: 'absolute', top: 0, right: 0, cursor: 'pointer', pointerEvents: 'auto',
+        boxSizing: 'border-box',
+        width: CLOSE_BUTTON_HIT_PX, height: CLOSE_BUTTON_HIT_PX,
+        padding: `${CLOSE_GLYPH_TOP_PX}px ${CLOSE_GLYPH_RIGHT_PX}px 0 0`,
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end',
         fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.emphasis, lineHeight: 1, color: HUD_COLORS.dim,
       }}
     >×</button>

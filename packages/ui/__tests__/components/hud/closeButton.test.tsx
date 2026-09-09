@@ -50,9 +50,51 @@ describe('CloseButton', () => {
     const { getByRole } = render(<CloseButton onClose={() => {}} />);
     const btn = getByRole('button', { name: 'close' }) as HTMLElement;
     expect(btn.style.border).toBe('0px');
-    expect(btn.style.padding).toBe('0px');
     expect(btn.style.background).toBe('transparent');
     expect(btn.style.appearance).toBe('none');
+    // The padding is no longer zero and is no longer chrome: it is where the
+    // glyph's offsets went when the button grew a hand-sized reach around
+    // them (see below).
+    expect(btn.style.padding).toBe('6px 11px 0px 0px');
+  });
+
+  it('is big enough for a finger, without moving the glyph a pixel', () => {
+    // The smallest target in the instrument: `×` measures 7.6 x 14 px, which
+    // is 1.5 x 2.7 mm on an 11" iPad against a fingertip's 8-10 mm. Apple's
+    // minimum is 44 pt, and the card's corner is composed — so the reach grows
+    // INWARD, over the card's own empty corner, and the glyph stays put.
+    const { getByRole } = render(<CloseButton onClose={() => {}} />);
+    const btn = getByRole('button', { name: 'close' }) as HTMLElement;
+    expect(btn.style.width).toBe('44px');
+    expect(btn.style.height).toBe('44px');
+    // `border-box`, or the padding would add to the 44 instead of living
+    // inside it and the box would reach past the card's edges.
+    expect(btn.style.boxSizing).toBe('border-box');
+    // Anchored to the corner and the glyph pinned to ITS corner: top 0 +
+    // 6 px of padding and right 0 + 11 px are the same two numbers the
+    // button used to carry as offsets.
+    expect(btn.style.top).toBe('0px');
+    expect(btn.style.right).toBe('0px');
+    expect(btn.style.alignItems).toBe('flex-start');
+    expect(btn.style.justifyContent).toBe('flex-end');
+  });
+
+  it('answers a press, because a finger never hovers', () => {
+    // The tint was `onMouseOver`/`onMouseOut` only, so on a touch screen the
+    // one control every card carries acknowledged nothing until the card
+    // vanished.
+    const { getByRole } = render(<CloseButton onClose={() => {}} />);
+    const btn = getByRole('button', { name: 'close' }) as HTMLElement;
+    expect(btn.style.color).toBe('rgb(124, 135, 148)');
+    fireEvent.pointerDown(btn);
+    expect(btn.style.color).toBe('rgb(255, 48, 48)');
+    fireEvent.pointerUp(btn);
+    expect(btn.style.color).toBe('rgb(124, 135, 148)');
+    // A press the browser takes away (a scroll claiming the gesture) must
+    // not leave the control lit.
+    fireEvent.pointerDown(btn);
+    fireEvent.pointerCancel(btn);
+    expect(btn.style.color).toBe('rgb(124, 135, 148)');
   });
 
   it('takes the HUD\'s focus ring, with every other button in the overlay', () => {
