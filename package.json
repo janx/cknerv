@@ -1,7 +1,7 @@
 {
   "name": "cknerv-workspace",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "license": "GPL-3.0",
   "scripts": {
     "brand:assets": "node scripts/generate-brand-assets.mjs",

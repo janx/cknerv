@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "cknerv-adapter-ckb"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "cknerv-adapter-ckbadger"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "cknerv-cli"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "cknerv-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "cknerv-server"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
