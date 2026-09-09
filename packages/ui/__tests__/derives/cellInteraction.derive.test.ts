@@ -7,6 +7,8 @@ import {
   CELL_INSPECTION_GALAXY_ROTATION_SCALE,
   CELL_NUCLEUS_LOD_REFRESH_INTERVAL_S,
   CELL_SELECTED_FOCUS,
+  CELL_CLICK_MAX_POINTER_DELTA_PX,
+  CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX,
   CONSENSUS_BRAID_BASE_SCALE,
   cellGalaxyRotationScaleTarget,
   cellCanvasCursor,
@@ -17,6 +19,8 @@ import {
   consensusBraidRenderScale,
   NETWORK_PEER_PICK_FLAG,
   networkColonyRotationScaleTarget,
+  eventPointerType,
+  pointerClickSlopPx,
   pointerRayOwnedByNetworkPeer,
   dampCellGalaxyRotationScale,
   type CellPickStaleReasons,
@@ -291,5 +295,47 @@ describe('cellPickRebuildDecision', () => {
       .toBe('defer');
     expect(cellPickRebuildDecision(open('camera', 'detailEpoch'), false))
       .toBe('rebuild');
+  });
+});
+
+describe('pointerClickSlopPx', () => {
+  it('measures a finger with the finger\'s tolerance and everything else with the mouse\'s', () => {
+    expect(pointerClickSlopPx('touch')).toBe(CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX);
+    // A stylus lands where it is pointed, so precision is what it asked for.
+    expect(pointerClickSlopPx('pen')).toBe(CELL_CLICK_MAX_POINTER_DELTA_PX);
+    expect(pointerClickSlopPx('mouse')).toBe(CELL_CLICK_MAX_POINTER_DELTA_PX);
+    // An unknown or absent type is a mouse: the tight tolerance is the
+    // conservative answer for a picker whose job is not to select the wrong
+    // thing, and it is what R3F's own synthetic events carry.
+    expect(pointerClickSlopPx(undefined)).toBe(CELL_CLICK_MAX_POINTER_DELTA_PX);
+    expect(pointerClickSlopPx(null)).toBe(CELL_CLICK_MAX_POINTER_DELTA_PX);
+    expect(pointerClickSlopPx('')).toBe(CELL_CLICK_MAX_POINTER_DELTA_PX);
+  });
+
+  it('keeps the finger wide enough for a real tap and narrow enough to be a click', () => {
+    // Measured refusals on the shipped build at 1180x763 @dpr2: 5 px and
+    // 8.6 px slips were both thrown away as drags.
+    expect(CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX).toBeGreaterThanOrEqual(9);
+    // Past about a finger's own width the gesture is a drag by any reading,
+    // and the camera under it deserves the pixel.
+    expect(CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX).toBeLessThanOrEqual(12);
+  });
+});
+
+describe('eventPointerType', () => {
+  it('reads the type R3F carries but does not declare', () => {
+    // What a finger's click actually arrives as: R3F copies every
+    // non-function property off the `pointerup` it synthesised the click
+    // from, so the field is present even though `ThreeEvent<MouseEvent>`
+    // does not mention it.
+    expect(eventPointerType({ delta: 4, pointerType: 'touch' })).toBe('touch');
+    expect(eventPointerType({ pointerType: 'pen' })).toBe('pen');
+    // A genuine MouseEvent never had one, and neither did a synthetic event
+    // built in a test — both are the mouse, which is the tight tolerance.
+    expect(eventPointerType({ delta: 0 })).toBeUndefined();
+    expect(eventPointerType(null)).toBeUndefined();
+    expect(eventPointerType(undefined)).toBeUndefined();
+    // Anything that is not a string is not an answer.
+    expect(eventPointerType({ pointerType: 3 })).toBeUndefined();
   });
 });

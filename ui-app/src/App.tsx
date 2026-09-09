@@ -494,7 +494,12 @@ export default function App({
   useEffect(() => {
     const gesture = orbitGestureRef.current;
     const notePress = (event: PointerEvent) => {
-      noteOrbitPointerDown(gesture, event.clientX, event.clientY);
+      noteOrbitPointerDown(
+        gesture,
+        event.clientX,
+        event.clientY,
+        event.pointerType,
+      );
       holdOrbitDeadZone();
     };
     const noteTravel = (event: PointerEvent) => {

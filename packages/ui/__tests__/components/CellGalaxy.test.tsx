@@ -592,9 +592,16 @@ describe('CellGalaxy click', () => {
     expect(cellPointerGestureIsClick(3)).toBe(false);
     expect(cellPointerGestureIsClick(Number.NaN)).toBe(false);
 
+    // A finger is measured with the finger's tolerance, and the click handler
+    // hands the pointer's own type over so it can be.
+    expect(cellPointerGestureIsClick(5, 'touch')).toBe(true);
+    expect(cellPointerGestureIsClick(10, 'touch')).toBe(true);
+    expect(cellPointerGestureIsClick(11, 'touch')).toBe(false);
+    expect(cellPointerGestureIsClick(3, 'pen')).toBe(false);
+
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
     expect(source).toContain(
-      'if (!cellPointerGestureIsClick(e.delta)) return;',
+      'if (!cellPointerGestureIsClick(e.delta, eventPointerType(e))) return;',
     );
   });
 

@@ -4,6 +4,71 @@ export const CELL_SELECTION_PREFIX = 'cell:';
  * explicitly — and so must every other surface that has to tell a click from
  * the start of a camera drag, since the camera lives under all of them. */
 export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
+/**
+ * The same tolerance for a FINGER, and it is a different number because a
+ * finger is a different instrument.
+ *
+ * A mouse reports the pixel it is on. A fingertip covers about 8-10 mm of
+ * glass — on an 11" iPad, 40-50 CSS px — and the browser hands the page one
+ * point out of that whole contact patch, recomputed from the centroid on
+ * every frame the finger is down. The centroid moves as the finger settles
+ * and again as it lifts, so a tap that the reader experienced as perfectly
+ * still routinely travels 3-10 px. Measured on the shipped build at
+ * 1180x763 @dpr2 with a cell under the pointer: a 5 px slip was refused, an
+ * 8.6 px slip was refused, and only 0 px and 2 px selected anything.
+ *
+ * 10 px is the platform's own answer to the same question — Chromium's touch
+ * slop is 8 dp and iOS's is about 10 pt — so a gesture this application calls
+ * a drag is one the operating system underneath it would also call a drag.
+ */
+export const CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX = 10;
+
+/**
+ * How far a press may travel and still be a click, for the pointer that is
+ * actually asking.
+ *
+ * ⭐ THE POINTER'S OWN TYPE, NOT A MEDIA QUERY. `(pointer: coarse)` describes
+ * the machine's PRIMARY input; `PointerEvent.pointerType` describes the thing
+ * touching the glass right now. On an iPad with a Magic Keyboard both exist,
+ * and the reader switches between them mid-session without telling anyone —
+ * a media query answers that page one way for the whole session and is wrong
+ * for half of it. This is asked per gesture and is never stale.
+ *
+ * `pen` is precise and takes the mouse's tolerance: an Apple Pencil lands
+ * where it is pointed, and a reader who reached for one did so to be exact.
+ * An absent or unknown type is a mouse — that is what R3F's own synthetic
+ * events carry when nothing said otherwise, and the tight tolerance is the
+ * conservative answer for a picker whose whole job is not to select the wrong
+ * thing.
+ */
+export function pointerClickSlopPx(pointerType?: string | null): number {
+  return pointerType === 'touch'
+    ? CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX
+    : CELL_CLICK_MAX_POINTER_DELTA_PX;
+}
+
+/**
+ * The pointer type carried by an event whose TYPE does not promise one.
+ *
+ * R3F declares a click as `ThreeEvent<MouseEvent>` and then dispatches
+ * something wider: it builds the synthetic event by copying every
+ * non-function property off the DOM event it was given (`for (let prop in
+ * event)`, `events.ts`), and the DOM event behind a click is the `pointerup`
+ * — a `PointerEvent`. So `pointerType` is there at runtime and absent from
+ * the type, which is exactly the shape a structural read answers: ask for it,
+ * accept a string, and treat anything else as a genuine mouse event that
+ * never had one.
+ *
+ * The parameter is `unknown` rather than a shape with one optional field,
+ * because that shape is a WEAK TYPE and TypeScript refuses to pass it an
+ * event that declares none of its properties — which is every event this
+ * function exists to read.
+ */
+export function eventPointerType(event: unknown): string | undefined {
+  if (event === null || typeof event !== 'object') return undefined;
+  const { pointerType } = event as { pointerType?: unknown };
+  return typeof pointerType === 'string' ? pointerType : undefined;
+}
 export const CELL_HOVER_FOCUS = 0.46;
 export const CELL_SELECTED_FOCUS = 1;
 export const CELL_INSPECTION_GALAXY_ROTATION_SCALE = 0.12;

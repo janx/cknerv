@@ -95,7 +95,6 @@ import {
   consensusMemoryCoreIdentity,
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
-  CELL_CLICK_MAX_POINTER_DELTA_PX,
   CELL_EXPANDED_DETAIL_THRESHOLD,
   CELL_EXPANDED_PICK_MIN_RADIUS_PX,
   CELL_EXPANDED_PICK_PADDING_PX,
@@ -113,6 +112,8 @@ import {
   cellPickRebuildDecision,
   consensusBraidRenderScale,
   dampCellGalaxyRotationScale,
+  eventPointerType,
+  pointerClickSlopPx,
   selectedCellNumericId,
   type CellPickStaleReasons,
 } from '../derives/cellInteraction.derive';
@@ -967,10 +968,16 @@ interface CellPickerProps {
   onSelect: (id: string | null) => void;
 }
 
-export function cellPointerGestureIsClick(delta: number): boolean {
+/** `pointerType` comes off the R3F event, which extends the DOM
+ *  `PointerEvent` and carries it: the tolerance is the finger's when a finger
+ *  asked and the mouse's otherwise (`pointerClickSlopPx`). */
+export function cellPointerGestureIsClick(
+  delta: number,
+  pointerType?: string | null,
+): boolean {
   return Number.isFinite(delta)
     && delta >= 0
-    && delta <= CELL_CLICK_MAX_POINTER_DELTA_PX;
+    && delta <= pointerClickSlopPx(pointerType);
 }
 
 /** The DOM events whose raycast a suspended picker still answers. R3F takes
@@ -1771,7 +1778,7 @@ function CellPicker({
         // the event walk on to the node.
         if (pointerRayOwnedByNetworkPeer(e.intersections)) return;
         e.stopPropagation();
-        if (!cellPointerGestureIsClick(e.delta)) return;
+        if (!cellPointerGestureIsClick(e.delta, eventPointerType(e))) return;
         if (
           typeof e.instanceId !== 'number'
           || e.instanceId < 0

@@ -1,4 +1,4 @@
-import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '@cknerv/ui';
+import { CELL_CLICK_MAX_POINTER_DELTA_PX, pointerClickSlopPx } from '@cknerv/ui';
 
 export const ORBIT_POINTER_ACTION_SUPPRESS_MS = 180;
 
@@ -11,6 +11,12 @@ export const ORBIT_POINTER_ACTION_SUPPRESS_MS = 180;
  * the user drag". Gating selection on the former throws away an ordinary click
  * whose pointer wobbled one pixel between press and release — which is most
  * real clicks, and every one of them on a small target like a peer node.
+ *
+ * ⚠️ THIS IS THE MOUSE'S TRAVEL AND NO LONGER THE WHOLE RULE. A finger's is
+ * wider (`pointerClickSlopPx`), and the two layers must agree on it or one
+ * accepts what the other drops — so the live figure rides on the gesture
+ * itself, fixed at the press, and this constant is what a state that has seen
+ * no pointer yet stands on.
  */
 export const ORBIT_DRAG_MIN_TRAVEL_PX = CELL_CLICK_MAX_POINTER_DELTA_PX;
 
@@ -22,6 +28,12 @@ export interface OrbitGestureState {
   /** Where the press landed. NaN until a pointer-down has been seen. */
   originX: number;
   originY: number;
+  /** How far THIS gesture may travel and still be a click — the pressing
+   *  pointer's own tolerance, taken at the press and held for the gesture's
+   *  life. A finger that lands beside a stylus must not retune a press
+   *  already in flight, and the picker resolves the same click against the
+   *  same instrument (`pointerClickSlopPx`). */
+  clickSlopPx: number;
   suppressPointerActionUntilMs: number;
   /** OrbitControls reported a camera change since the last frame settled.
    *  Latched by `change`, read and cleared once per frame. */
@@ -38,6 +50,7 @@ export function createOrbitGestureState(): OrbitGestureState {
     revisionNoted: false,
     originX: Number.NaN,
     originY: Number.NaN,
+    clickSlopPx: ORBIT_DRAG_MIN_TRAVEL_PX,
     suppressPointerActionUntilMs: 0,
     cameraChangedSinceFrame: false,
     cameraMoving: false,
@@ -49,15 +62,20 @@ export function createOrbitGestureState(): OrbitGestureState {
  * pointer at all, so it only records where the gesture started — and retires
  * the previous gesture's suppression window, whose one job (covering the drag's
  * own release) is finished by the time the next press arrives.
+ *
+ * `pointerType` is the DOM event's own — the press is the moment the gesture
+ * learns which instrument is making it, and the only moment it may ask.
  */
 export function noteOrbitPointerDown(
   state: OrbitGestureState,
   x: number,
   y: number,
+  pointerType?: string | null,
 ): void {
   state.originX = x;
   state.originY = y;
   state.dragged = false;
+  state.clickSlopPx = pointerClickSlopPx(pointerType);
   state.suppressPointerActionUntilMs = 0;
 }
 
@@ -74,7 +92,7 @@ export function noteOrbitPointerMove(
   const dy = y - state.originY;
   // Rounded, exactly as R3F rounds its own click delta: the two must agree on
   // where a click stops being a click, or one layer accepts what another drops.
-  if (Math.round(Math.sqrt(dx * dx + dy * dy)) <= ORBIT_DRAG_MIN_TRAVEL_PX) return false;
+  if (Math.round(Math.sqrt(dx * dx + dy * dy)) <= state.clickSlopPx) return false;
   state.dragged = true;
   return true;
 }

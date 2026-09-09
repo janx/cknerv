@@ -44,6 +44,40 @@ describe('orbit gesture state', () => {
     expect(orbitGestureSuppressesPointerAction(state, 100)).toBe(false);
   });
 
+  it('measures a press with the instrument that made it', () => {
+    const finger = createOrbitGestureState();
+    // The slip that cost the shipped build every touch selection: measured on
+    // an iPad-sized viewport, a 5 px slip was refused as a drag.
+    noteOrbitPointerDown(finger, 400, 300, 'touch');
+    beginOrbitGesture(finger);
+    expect(noteOrbitPointerMove(finger, 404, 303)).toBe(false);
+    expect(noteOrbitPointerMove(finger, 407, 305)).toBe(false);
+    // And a finger that genuinely drags still drags.
+    expect(noteOrbitPointerMove(finger, 412, 306)).toBe(true);
+
+    // A stylus is precise and keeps the mouse's tolerance, and so does an
+    // event that names no type at all.
+    for (const pointerType of ['pen', 'mouse', undefined]) {
+      const precise = createOrbitGestureState();
+      noteOrbitPointerDown(precise, 400, 300, pointerType);
+      beginOrbitGesture(precise);
+      expect(noteOrbitPointerMove(precise, 404, 303)).toBe(true);
+    }
+  });
+
+  it('holds one gesture to one tolerance, fixed at the press', () => {
+    const state = createOrbitGestureState();
+    noteOrbitPointerDown(state, 400, 300, 'touch');
+    beginOrbitGesture(state);
+    // A second pointer touching down elsewhere does not retune a press that
+    // is already in flight; the finger's own gesture keeps the finger's slop.
+    expect(state.clickSlopPx).toBe(10);
+    expect(noteOrbitPointerMove(state, 406, 300)).toBe(false);
+    // The NEXT press is the moment the tolerance may change.
+    noteOrbitPointerDown(state, 100, 100, 'mouse');
+    expect(state.clickSlopPx).toBe(ORBIT_DRAG_MIN_TRAVEL_PX);
+  });
+
   it('yields automation once and suppresses drag-release hit and miss actions', () => {
     const state = createOrbitGestureState();
 

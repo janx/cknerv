@@ -8,7 +8,10 @@ import {
 } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { CELL_CLICK_MAX_POINTER_DELTA_PX } from '../derives/cellInteraction.derive';
+import {
+  CELL_CLICK_MAX_POINTER_DELTA_PX,
+  pointerClickSlopPx,
+} from '../derives/cellInteraction.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_MOTION, rgba } from './hud/hudTheme';
 import type { HudOcclusionRect } from './hudOcclusion';
 
@@ -402,6 +405,23 @@ export function useSceneInspectionLayoutFamily(
 export const SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX =
   CELL_CLICK_MAX_POINTER_DELTA_PX;
 
+/**
+ * The same tolerance for the pointer that actually pressed, which for a
+ * finger is `pointerClickSlopPx`'s wider one.
+ *
+ * It matters more here than anywhere: this gesture starts OUTSIDE the card,
+ * which is to say on the galaxy, which is to say on the camera. A reader who
+ * taps the scene to put a card away and slips 5 px got neither — the card
+ * stayed, and the camera did not move either, because the dead zone holds
+ * rotate at zero until the same tolerance is crossed. The press has to be
+ * measured with the instrument that made it.
+ */
+export function sceneInspectionDismissMaxTravelPx(
+  pointerType?: string | null,
+): number {
+  return pointerClickSlopPx(pointerType);
+}
+
 /** Screen coordinate of a pointer event, or 0 where the environment gives
  * none — a gesture with no coordinates at all has travelled nowhere. */
 function pointerCoordinate(value: number | undefined): number {
@@ -433,6 +453,10 @@ export function useSceneInspectionDismiss(
     let pressX = 0;
     let pressY = 0;
     let travelled = 0;
+    // Fixed at the press, not read at the release: one gesture is measured
+    // with one instrument, and a stylus that touches down beside a finger
+    // must not retune the tolerance of a press already in flight.
+    let slopPx = SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX;
     const outside = (target: EventTarget | null): boolean => {
       const boundary = boundaryRef.current;
       return !(boundary && target instanceof Node && boundary.contains(target));
@@ -451,6 +475,7 @@ export function useSceneInspectionDismiss(
       pressX = pointerCoordinate(event.clientX);
       pressY = pointerCoordinate(event.clientY);
       travelled = 0;
+      slopPx = sceneInspectionDismissMaxTravelPx(event.pointerType);
     };
     const travel = (event: PointerEvent) => {
       if (!pressed || pointerCoordinate(event.pointerId) !== pressId) return;
@@ -463,7 +488,7 @@ export function useSceneInspectionDismiss(
       pressed = false;
       if (!outside(event.target)) return;
       const reach = Math.max(travelled, travelFrom(event));
-      if (reach > SCENE_INSPECTION_DISMISS_MAX_TRAVEL_PX) return;
+      if (reach > slopPx) return;
       onDismiss();
     };
     // ESCAPE CLOSES THE INNERMOST THING, AND THE CARD IS THE OUTERMOST ONE.
