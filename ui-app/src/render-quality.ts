@@ -17,13 +17,49 @@ export function shouldApplyAutoStartupQuality(
   return !reviewRouteActive || hasQuerySwitch(search, 'adaptive-quality');
 }
 
+/**
+ * What AUTO will spend on a fanless machine, whatever its display says.
+ *
+ * A tablet reports `devicePixelRatio` 2 and a screen at 264 ppi, so an 11"
+ * iPad in landscape asks for a 2360x1640 drawing buffer — 3.87 MP of the
+ * additive halo, on a passively cooled GPU that will throttle rather than
+ * spin a fan. The startup ceiling reads that as a HIGH-class buffer, which
+ * is the right reading of the AREA and says nothing about the silicon: the
+ * same 3.87 MP is a quiet frame on a desktop and a thermal budget here.
+ *
+ * 1.5 costs 44% of the fill (3.87 -> 2.18 MP) and costs the READING nothing,
+ * because the HUD is a DOM overlay: every glyph, rail and figure stays at the
+ * display's own density and only the galaxy renders coarser. And 1.5 is the
+ * density this file already calls geometrically anti-aliased
+ * ({@link MSAA_OFF_MIN_DPR}) — an edge is spread across more than one sample
+ * before anything multisamples it — so the picture loses less than the
+ * arithmetic suggests.
+ *
+ * ⭐ AUTO ONLY. A reader who names a tier has said what they want the picture
+ * to be, and this is a machine's budget, not a preference. `high` chosen by
+ * hand still renders at the display's full density on the same tablet — it
+ * may drop frames, and that is the reader's call to make.
+ */
+export const COARSE_POINTER_AUTO_MAX_DPR = 1.5;
+
 /** Resolve a runtime Canvas DPR without ever supersampling below CSS-pixel
- * density. Invalid browser readings fall back to one. */
-export function resolveCanvasDpr(devicePixelRatio: number, maxDpr: number): number {
+ * density. Invalid browser readings fall back to one.
+ *
+ * `coarseAuto` is "a touch device, with AUTO still holding the tier" and
+ * lowers the ceiling to {@link COARSE_POINTER_AUTO_MAX_DPR}. It lowers only:
+ * a preset whose own `maxDpr` is already below it keeps its own answer. */
+export function resolveCanvasDpr(
+  devicePixelRatio: number,
+  maxDpr: number,
+  coarseAuto = false,
+): number {
   const deviceDpr = Number.isFinite(devicePixelRatio)
     ? Math.max(1, devicePixelRatio)
     : 1;
-  return Math.min(deviceDpr, maxDpr);
+  const ceiling = coarseAuto
+    ? Math.min(maxDpr, COARSE_POINTER_AUTO_MAX_DPR)
+    : maxDpr;
+  return Math.min(deviceDpr, ceiling);
 }
 
 /** AUTO's cold-start load classes, expressed as pixels in the drawing buffer

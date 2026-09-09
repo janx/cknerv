@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COARSE_POINTER_AUTO_MAX_DPR,
   AUTO_STARTUP_LOW_BUFFER_PIXELS,
   AUTO_STARTUP_MED_BUFFER_PIXELS,
   MSAA_OFF_MIN_DPR,
@@ -129,5 +130,31 @@ describe('render quality route helpers', () => {
     expect(resolveQualityOverride('?quality=low')).toBe('low');
     expect(resolveQualityOverride('?quality=auto')).toBeNull();
     expect(resolveQualityOverride('?quality=')).toBeNull();
+  });
+});
+
+describe('the coarse-pointer ceiling', () => {
+  it('lowers AUTO to 1.5 on a tablet and leaves a named tier alone', () => {
+    // An 11" iPad reports dpr 2, so AUTO asked for 3.87 MP of additive halo
+    // on a passively cooled GPU. The ceiling costs 44% of the fill and costs
+    // the reading nothing — the HUD is a DOM overlay at the display's own
+    // density either way.
+    expect(resolveCanvasDpr(2, 2, true)).toBe(COARSE_POINTER_AUTO_MAX_DPR);
+    expect(resolveCanvasDpr(2, 2, false)).toBe(2);
+    // A reader who names a tier has said what they want the picture to be.
+    expect(resolveCanvasDpr(3, 2, false)).toBe(2);
+  });
+
+  it('only ever lowers, and never raises a preset that asked for less', () => {
+    expect(resolveCanvasDpr(2, 1, true)).toBe(1);
+    expect(resolveCanvasDpr(1, 2, true)).toBe(1);
+  });
+
+  it('lands exactly where MSAA stops paying, so the verdict does not move', () => {
+    // 1.5 IS `MSAA_OFF_MIN_DPR`: a buffer at that density already
+    // anti-aliases geometrically, so lowering the ceiling to it cannot turn
+    // multisampling back on for a device that had it off.
+    expect(COARSE_POINTER_AUTO_MAX_DPR).toBe(MSAA_OFF_MIN_DPR);
+    expect(resolveStartupAntialias(1180, 763, 2, 2)).toBe(false);
   });
 });
