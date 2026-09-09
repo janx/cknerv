@@ -60,14 +60,26 @@ function crowd(padded?: { index: number; radius: number }): ScreenSpaceHitIndex 
   return index;
 }
 
+/** The same crowd with every radius raised to `floor` — what a floored query
+ *  has to answer exactly as. */
+function flooredCrowd(floor: number): ScreenSpaceHitIndex {
+  const index = new ScreenSpaceHitIndex(8, 32);
+  index.begin(200, 160, floor);
+  for (const [i, x, y, radius, depth] of CROWD) {
+    index.insert(i, x, y, Math.max(radius, floor), depth);
+  }
+  return index;
+}
+
 function raster(
   index: ScreenSpaceHitIndex,
   pads?: readonly ScreenSpaceRadiusPad[],
+  minRadiusPx?: number,
 ): Array<number | null> {
   const answers: Array<number | null> = [];
   for (let y = 1; y < 160; y += 3) {
     for (let x = 1; x < 200; x += 3) {
-      answers.push(index.find(x, y, pads)?.index ?? null);
+      answers.push(index.find(x, y, pads, minRadiusPx)?.index ?? null);
     }
   }
   return answers;
@@ -214,5 +226,80 @@ describe('ScreenSpaceHitIndex in-place radius patches', () => {
     expect(raster(index)).toEqual(raster(crowd({ index: 1, radius: 2 })));
     index.begin(200, 160);
     expect(index.maxRadiusPx).toBe(0);
+  });
+});
+
+
+describe('ScreenSpaceHitIndex query-time radius floor', () => {
+  it('answers exactly as an index built with every radius raised to it', () => {
+    // The same equivalence bar the pads keep: for every pointer position on
+    // the screen, a floored query must return what a rebuild at those radii
+    // returns — ties, depth ordering and bucket walk order included.
+    for (const floor of [8, 14, 22, 30]) {
+      expect(raster(crowd(), undefined, floor)).toEqual(raster(flooredCrowd(floor)));
+    }
+  });
+
+  it('leaves every unfloored query on the indexed radii', () => {
+    // The whole point: one build answers a mouse exactly and a finger
+    // forgivingly, within one frame, without storing either answer.
+    const index = crowd();
+    const precise = raster(index);
+    expect(raster(index, undefined, 22)).not.toEqual(precise);
+    expect(raster(index)).toEqual(precise);
+    // 20 px from every centre: nothing a mouse could be pointing at, and
+    // exactly the neighbourhood a fingertip covers.
+    expect(index.find(80, 60)).toBeNull();
+    expect(index.find(80, 60, undefined, 22)?.index).toBe(1);
+  });
+
+  it('gives the finger the NEAREST entry, not the first or the frontmost', () => {
+    // Two competitors inside one finger: 0 at (60,60) and 1 at (96,60). The
+    // pointer sits nearer 0, and 1 is nearer the camera — distance wins, so
+    // the reader gets the Cell under their fingertip and not the one in
+    // front of it.
+    const index = crowd();
+    expect(index.find(70, 60, undefined, 22)?.index).toBe(0);
+    expect(index.find(88, 60, undefined, 22)?.index).toBe(1);
+  });
+
+  it('widens the probe window by the floor, not just by the indexed max', () => {
+    // The bug a floor applied only in the radius test would have: the walk
+    // stops at ceil(maxRadius / bucketSize) buckets and never reaches the
+    // entry the floor was supposed to catch.
+    const index = new ScreenSpaceHitIndex(4, 8);
+    index.begin(200, 160, 30);
+    index.insert(0, 100, 100, 2, 0.5);
+    expect(index.find(100, 122)).toBeNull();
+    expect(index.find(100, 122, undefined, 24)?.index).toBe(0);
+  });
+
+  it('is the last word, over a pad as well as over the indexed radius', () => {
+    // A pad only ever grows a disc, so raising an already-padded one to the
+    // floor can never shrink it.
+    const index = crowd();
+    expect(index.find(80, 60, [{ index: 1, radius: 8 }], 22)?.radiusSq).toBe(484);
+    expect(index.find(96, 62, [{ index: 1, radius: 30 }], 22)?.radiusSq).toBe(900);
+  });
+
+  it('cannot reach what the index never admitted', () => {
+    const empty = new ScreenSpaceHitIndex(4, 32);
+    empty.begin(200, 160, 22);
+    expect(empty.find(50, 50, undefined, 22)).toBeNull();
+    // A floor is a query-time reading of entries the index HOLDS, and
+    // `admits` keeps out anything with no radius at all — so an entry that
+    // draws nothing stays unreachable however wide the finger is. That is
+    // the same rule a pad lives under, and it is why the floor can never
+    // answer differently from a rebuild.
+    const invisible = new ScreenSpaceHitIndex(4, 32);
+    invisible.begin(200, 160, 22);
+    expect(invisible.insert(0, 50, 50, 0, 0.5)).toBe(false);
+    expect(invisible.find(60, 50, undefined, 22)).toBeNull();
+  });
+
+  it('ignores a floor that is not a number', () => {
+    const index = crowd();
+    expect(raster(index, undefined, Number.NaN)).toEqual(raster(index));
+    expect(raster(index, undefined, -5)).toEqual(raster(index));
   });
 });

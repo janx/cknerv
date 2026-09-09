@@ -79,6 +79,37 @@ export const CONSENSUS_BRAID_LOCAL_RADIUS = 0.55;
 export const CELL_EXPANDED_PICK_MIN_RADIUS_PX = 14;
 export const CELL_EXPANDED_PICK_PADDING_PX = 5;
 export const CELL_EXPANDED_DETAIL_THRESHOLD = 0.02;
+/**
+ * The smallest disc a FINGER may aim at, whatever the Cell draws.
+ *
+ * Measured on the shipped build at 1180x763 @dpr2, in the default overview
+ * pose: the disc around a cell the picker was reporting survived +1 px in x
+ * and 0 px in y. That is the honest visual radius — at this distance a Cell
+ * is a point sprite a pixel or two across — and it is a target no hand can
+ * hit. A fingertip covers 40-50 CSS px of this screen, so a tap does not
+ * name a pixel; it names a neighbourhood, and the only question worth
+ * answering is which Cell is nearest the middle of it.
+ *
+ * `find` already answers exactly that — nearest centre, tie-broken by depth
+ * — so the floor is a query-time argument and nothing about the field
+ * changes. 22 px of radius is Apple's 44 pt minimum as a diameter.
+ *
+ * ⚠️ IT MUST STAY UNDER {@link CELL_PICK_FOCUS_PAD_CEILING_PX}, and that is
+ * load-bearing twice. The index admits entries within the pad ceiling of the
+ * viewport, so an entry a floored query can reach was admitted; and the
+ * drift envelope is budgeted against `maxRadiusPx +` that ceiling, which
+ * bounds a floored disc for the same reason. A floor above it would make
+ * both statements false and neither would fail loudly.
+ */
+export const CELL_TOUCH_PICK_MIN_RADIUS_PX = 22;
+
+/** The pick floor for the pointer that is asking. A mouse gets none: it
+ *  reports the pixel it is on, and a picker that widened every disc for it
+ *  would answer with a Cell the reader was not pointing at. */
+export function cellPickFloorPx(pointerType?: string | null): number {
+  return pointerType === 'touch' ? CELL_TOUCH_PICK_MIN_RADIUS_PX : 0;
+}
+
 /** Ceiling on how many px focus can add to a Cell's pick disc. Focus reaches
  * the disc through `focusedBraidScale` alone, which drives a fully selected
  * braid at a 24 px screen radius; capacity presence scales that by at most

@@ -108,6 +108,7 @@ import {
   cellCanvasCursor,
   pointerRayOwnedByNetworkPeer,
   cellGalaxyRotationScaleTarget,
+  cellPickFloorPx,
   cellPickRadiusPx,
   cellPickRebuildDecision,
   consensusBraidRenderScale,
@@ -1116,8 +1117,13 @@ export interface CellPickRaycastSources {
    *  pre-window behaviour exactly. */
   cameraMotionActiveRef?: { readonly current: boolean };
   /** The DOM event R3F is dispatching this raycast for — its `lastEvent`. A
-   *  raycast with no event on record counts as a hover probe. */
-  pointerEventRef?: { readonly current: { readonly type: string } | null };
+   *  raycast with no event on record counts as a hover probe, and one that
+   *  names no `pointerType` counts as a mouse (`eventPointerType`). */
+  pointerEventRef?: {
+    readonly current:
+      | { readonly type: string; readonly pointerType?: unknown }
+      | null;
+  };
   forcePreciseRef: React.MutableRefObject<boolean>;
   viewportRef: React.MutableRefObject<{ width: number; height: number }>;
 }
@@ -1611,10 +1617,15 @@ export function createCellPickRaycast({
       }
     }
 
+    // The floor the PRESSING pointer deserves, asked of the event this
+    // raycast is being run for. Nothing in the index changes: one build
+    // answers a mouse exactly and a finger forgivingly, and it can answer
+    // both within one frame.
     const hit = screenIndex.find(
       (clickNdcX + 1) * halfW,
       (1 - clickNdcY) * halfH,
       focusPads,
+      cellPickFloorPx(eventPointerType(pointerEventRef?.current)),
     );
     if (!hit) return;
     const hitCell = cells[hit.index];

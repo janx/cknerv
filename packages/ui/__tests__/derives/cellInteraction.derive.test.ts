@@ -9,6 +9,8 @@ import {
   CELL_SELECTED_FOCUS,
   CELL_CLICK_MAX_POINTER_DELTA_PX,
   CELL_TOUCH_CLICK_MAX_POINTER_DELTA_PX,
+  CELL_TOUCH_PICK_MIN_RADIUS_PX,
+  CELL_PICK_FOCUS_PAD_CEILING_PX,
   CONSENSUS_BRAID_BASE_SCALE,
   cellGalaxyRotationScaleTarget,
   cellCanvasCursor,
@@ -19,6 +21,7 @@ import {
   consensusBraidRenderScale,
   NETWORK_PEER_PICK_FLAG,
   networkColonyRotationScaleTarget,
+  cellPickFloorPx,
   eventPointerType,
   pointerClickSlopPx,
   pointerRayOwnedByNetworkPeer,
@@ -337,5 +340,34 @@ describe('eventPointerType', () => {
     expect(eventPointerType(undefined)).toBeUndefined();
     // Anything that is not a string is not an answer.
     expect(eventPointerType({ pointerType: 3 })).toBeUndefined();
+  });
+});
+
+describe('cellPickFloorPx', () => {
+  it('widens the disc for a finger and for nothing else', () => {
+    expect(cellPickFloorPx('touch')).toBe(CELL_TOUCH_PICK_MIN_RADIUS_PX);
+    // A mouse reports the pixel it is on. Widening its disc would answer
+    // with a Cell the reader was not pointing at, which is worse than the
+    // small target it aimed for.
+    expect(cellPickFloorPx('mouse')).toBe(0);
+    expect(cellPickFloorPx('pen')).toBe(0);
+    expect(cellPickFloorPx(undefined)).toBe(0);
+    expect(cellPickFloorPx(null)).toBe(0);
+  });
+
+  it('stays under the focus pad ceiling, which two invariants rest on', () => {
+    // The index admits entries within the pad ceiling of the viewport, so an
+    // entry a floored query can reach was admitted; and the drift envelope
+    // is budgeted against `maxRadiusPx +` that ceiling, which bounds a
+    // floored disc for the same reason. A floor above it would make both
+    // statements false and neither would fail loudly.
+    expect(CELL_TOUCH_PICK_MIN_RADIUS_PX)
+      .toBeLessThanOrEqual(CELL_PICK_FOCUS_PAD_CEILING_PX);
+  });
+
+  it('is at least a fingertip wide, measured as a diameter', () => {
+    // Apple's 44 pt minimum, as a radius. Measured against the disc it
+    // replaces: 1 px in x and 0 px in y in the default overview pose.
+    expect(CELL_TOUCH_PICK_MIN_RADIUS_PX * 2).toBeGreaterThanOrEqual(44);
   });
 });

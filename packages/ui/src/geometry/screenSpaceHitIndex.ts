@@ -222,16 +222,34 @@ export class ScreenSpaceHitIndex {
     return true;
   }
 
+  /**
+   * The nearest entry whose disc covers the point, tie-broken by depth.
+   *
+   * `minRadiusPx` is a FLOOR every entry is measured against for this one
+   * query, and it is how one index answers two instruments. A mouse asks for
+   * the pixel it is on and gets the disc the geometry actually draws; a
+   * finger asks with a floor and gets the nearest entry within it, which is
+   * the only honest answer available when the contact patch is wider than
+   * the things under it. Nothing is stored, nothing is re-projected, and the
+   * two answers can differ from one event to the next off the same build —
+   * which they must, because the reader may be holding a stylus in one hand
+   * and pressing with the other.
+   */
   find(
     x: number,
     y: number,
     pads: readonly ScreenSpaceRadiusPad[] = NO_RADIUS_PADS,
+    minRadiusPx = 0,
   ): ScreenSpaceHit | null {
-    if (this.maxRadius <= 0) return null;
+    const minRadius = Number.isFinite(minRadiusPx) ? Math.max(0, minRadiusPx) : 0;
+    const minRadiusSq = minRadius * minRadius;
+    // A floor can make a field hittable that no drawn radius would: an entry
+    // is only worth finding at all if SOMETHING gives it area.
+    if (this.maxRadius <= 0 && minRadius <= 0) return null;
     // The probe window is derived from the largest radius the scan may use,
-    // so a pad has to widen it or its own entry falls outside the buckets
-    // walked below.
-    let probeRadius = this.maxRadius;
+    // so a pad — or the floor — has to widen it or its own entry falls
+    // outside the buckets walked below.
+    let probeRadius = Math.max(this.maxRadius, minRadius);
     for (let p = 0; p < pads.length; p += 1) {
       const pad = pads[p];
       if (pad.index >= 0 && pad.radius > probeRadius) probeRadius = pad.radius;
@@ -271,6 +289,10 @@ export class ScreenSpaceHitIndex {
               break;
             }
           }
+          // The floor is the last word, over the stored radius and over a
+          // pad: a pad only ever grows a disc, so raising an already-padded
+          // one to the floor cannot shrink anything.
+          if (radiusSq < minRadiusSq) radiusSq = minRadiusSq;
           if (
             distanceSq <= radiusSq
             && (
