@@ -19,7 +19,17 @@ import {
 } from 'react';
 import type { Peer } from '@cknerv/types';
 import { useHudClockSelector } from './hudClock';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import {
+  CJK_BASELINE_LIFT,
+  COMPANION_OPACITY,
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_MOTION,
+  HUD_TYPE,
+  rgba,
+  STALE_OPACITY,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import {
   CloseButton,
   DiamondMark,
@@ -548,7 +558,7 @@ export default function PeerLinkCard({
         rowGap: 8,
         alignItems: 'start',
         width: CARD_WIDTH_PX,
-        maxWidth: 'calc(100vw - 28px)',
+        maxWidth: viewportMinusSafeArea('width', 28),
         boxSizing: 'border-box',
         pointerEvents: 'none',
         color: HUD_COLORS.ink,

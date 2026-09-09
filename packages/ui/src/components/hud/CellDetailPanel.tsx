@@ -36,7 +36,18 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import type { CellById } from '../../types';
-import { CELL_CARD_ACCENT, CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
+import {
+  CELL_CARD_ACCENT,
+  CJK_BASELINE_LIFT,
+  COMPANION_OPACITY,
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_MOTION,
+  HUD_TYPE,
+  rgba,
+  STALE_OPACITY,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import {
   CloseButton,
   DragAxisMark,
@@ -2191,7 +2202,7 @@ function CellDetailPanel({
         // this is the last resort it was meant to be rather than the only
         // narrow rule the card has. It answers one case the ladder cannot: a
         // window narrower than the card's own floor.
-        maxWidth: `calc(100vw - ${CARD_EDGE_RESERVE_PX}px)`,
+        maxWidth: viewportMinusSafeArea('width', CARD_EDGE_RESERVE_PX),
         // …and the same rule on the other axis, but only when the solver says
         // the card is docked. The band is the viewport less the HUD's safe top
         // and the bottom edge — the two numbers the placement solver clamps
@@ -2200,7 +2211,7 @@ function CellDetailPanel({
         // the bottom of a 800px screen with its PROOF anchor below the fold.
         ...(docked
           ? {
-            maxHeight: `calc(100vh - ${CARD_DOCK_RESERVE_PX}px)`,
+            maxHeight: viewportMinusSafeArea('height', CARD_DOCK_RESERVE_PX),
             overflow: 'hidden',
           }
           : null),

@@ -25,7 +25,14 @@ import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import type { BlockProducerView } from '../../derives/blockProducers.derive';
 import { useBootSequence } from '../../boot/bootSequence';
-import { HUD_COLORS, HUD_FONTS, HUD_MOTION, injectHudTheme, rgba } from './hudTheme';
+import {
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_MOTION,
+  injectHudTheme,
+  rgba,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import { revealStageStyle } from './primitives';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -181,13 +188,13 @@ const PULSE_ANCHOR_STYLE: CSSProperties = { position: 'relative', flex: '0 0 aut
 // The panel widths are constants, so their flow styles are constants too: a
 // memoized panel handed a fresh `{ ...PANEL_FLOW, width }` per render is not
 // memoized at all.
-const CHAIN_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
-const CHAIN_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, calc(100vw - 58px))` };
+const CHAIN_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, ${viewportMinusSafeArea('width', 58)})` };
+const CHAIN_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, ${viewportMinusSafeArea('width', 58)})` };
 // ECG·04 is the lower companion to CKB·01, not a footer for the whole
 // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
 // visible or CKB·01 is temporarily hidden from the panel menu.
-const PULSE_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` };
-const PULSE_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, calc(100vw - 58px))` };
+const PULSE_PANEL_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, ${viewportMinusSafeArea('width', 58)})` };
+const PULSE_PANEL_DENSE_STYLE: CSSProperties = { ...PANEL_FLOW, width: `min(${CHAIN_PANEL_DENSE_WIDTH_PX}px, ${viewportMinusSafeArea('width', 58)})` };
 
 /** What a `HudPanel` adds around its declared measure: `13px 15px` of padding
  *  on a box that is not `border-box`, so 30 px of width. Restated here rather
@@ -818,7 +825,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
     + (topBandVisible || streamInterrupted ? 42 : 12)
     + alarmBandHeight;
   const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: viewportMinusSafeArea('height', contentTop + 14), overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
     : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // SND·06's flag out to the app that mounts it. An effect and not a render
@@ -973,7 +980,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
         <div
           ref={leftRailRef}
           data-hud-left-rail
-          style={{ ...LEFT_HUD_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
+          style={{ ...LEFT_HUD_STYLE, top: contentTop, maxWidth: viewportMinusSafeArea('width', 28) }}
         >
           {chainPanelVisible || panelVisibility.stage || panelVisibility.render ? (
             <div

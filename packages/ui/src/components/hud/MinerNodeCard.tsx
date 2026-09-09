@@ -86,7 +86,13 @@ import type {
 } from '../../derives/blockProducers.derive';
 import { midTruncate } from './cellFormat';
 import { HudAge } from './hudClock';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import {
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_TYPE,
+  rgba,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -359,7 +365,7 @@ export default function MinerNodeCard({
         rowGap: 8,
         alignItems: 'start',
         width: CARD_WIDTH_PX,
-        maxWidth: 'calc(100vw - 28px)',
+        maxWidth: viewportMinusSafeArea('width', 28),
         boxSizing: 'border-box',
         pointerEvents: 'none',
         color: HUD_COLORS.ink,

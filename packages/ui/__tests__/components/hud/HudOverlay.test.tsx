@@ -14,7 +14,12 @@ import {
   resetBootSequenceForTest,
   type BootPhaseId,
 } from '../../../src/boot/bootSequence';
-import { HUD_COLORS, HUD_MOTION, rgba } from '../../../src/components/hud/hudTheme';
+import {
+  HUD_COLORS,
+  HUD_MOTION,
+  rgba,
+  viewportMinusSafeArea,
+} from '../../../src/components/hud/hudTheme';
 import { LIVE, publishReducedMotion } from '../../../src/tweaks/liveTweaks';
 import { REVEAL_GHOST_OPACITY } from '../../../src/components/hud/primitives';
 import type { StreamHealthChannels } from '../../../src/derives/streamHealth.derive';
@@ -887,7 +892,7 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-status-controls]')).not.toBeNull();
     expect(leftRail.style.top).toBe('76px');
     expect(meshRail.style.top).toBe('76px');
-    expect(meshRail.style.maxHeight).toBe('calc(100vh - 90px)');
+    expect(meshRail.style.maxHeight).toBe(viewportMinusSafeArea('height', 90));
   });
 
   it('keeps a CKB-only phone bar to two priority rows', () => {
@@ -905,7 +910,7 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-status-context]')).toBeNull();
     expect(leftRail.style.top).toBe('71px');
     expect(meshRail.style.top).toBe('71px');
-    expect(meshRail.style.maxHeight).toBe('calc(100vh - 85px)');
+    expect(meshRail.style.maxHeight).toBe(viewportMinusSafeArea('height', 85));
   });
 
   it('adds the mobile context row only when enhanced status is present', () => {
@@ -1078,7 +1083,7 @@ describe('HudOverlay', () => {
     expect(banner.style.top).toBe('64px');
     expect(leftRail.style.top).toBe('106px');
     expect(meshRail.style.top).toBe('106px');
-    expect(meshRail.style.maxHeight).toBe('calc(100vh - 120px)');
+    expect(meshRail.style.maxHeight).toBe(viewportMinusSafeArea('height', 120));
   });
 
   it('keeps every scene-tethered detail out of the fixed HUD', () => {

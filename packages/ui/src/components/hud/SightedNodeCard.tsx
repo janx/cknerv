@@ -30,7 +30,15 @@ import type { PeerMiningCandidacy } from '../../derives/blockProducers.derive';
 import { MiningCandidacyStamp } from './MinerNodeCard';
 import { formatAge, midTruncate } from './cellFormat';
 import { HudAge, useHudClockSelector } from './hudClock';
-import { CJK_BASELINE_LIFT, COMPANION_OPACITY, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import {
+  CJK_BASELINE_LIFT,
+  COMPANION_OPACITY,
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_TYPE,
+  rgba,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import {
   CloseButton,
   moduleTag,
@@ -214,7 +222,7 @@ export default function SightedNodeCard({
         rowGap: 8,
         alignItems: 'start',
         width: CARD_WIDTH_PX,
-        maxWidth: 'calc(100vw - 28px)',
+        maxWidth: viewportMinusSafeArea('width', 28),
         boxSizing: 'border-box',
         pointerEvents: 'none',
         color: HUD_COLORS.ink,

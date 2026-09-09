@@ -451,6 +451,41 @@ export const HUD_TYPE = {
  */
 export const TOUCH_TARGET_MIN_PX = 44;
 
+/**
+ * The viewport a reader can actually SEE, less a reservation, as a `calc`.
+ *
+ * `100vh` is the whole page box, and since `index.html` asked for
+ * `viewport-fit=cover` the page box includes whatever a system surface is
+ * sitting on: the home indicator's band, a floating browser toolbar, a
+ * notch's ears. `HudOverlay`'s root has stood inside `env(safe-area-inset-*)`
+ * since d5086302, and everything positioned INSIDE it went on measuring
+ * against the uninset viewport — so on any screen that covers something,
+ * every one of those boxes was over-tall or over-wide by the insets and lost
+ * the difference to the root's `overflow: hidden`.
+ *
+ * The floating cards need it for a different reason and get the same answer:
+ * their layer is deliberately NOT inset (a card is placed at its cell's
+ * projected screen position, so insetting the layer would slide every card
+ * off its anchor), but a card must still not be laid out into a band the
+ * reader cannot see.
+ *
+ * On a desktop every inset resolves to `0px` and this is `calc(100vh - N)`
+ * again, character for character in effect. `Jukebox.tsx` has spelled it out
+ * by hand since the safe-area work; this is that sentence, once.
+ */
+export function viewportMinusSafeArea(
+  axis: 'width' | 'height',
+  reservePx = 0,
+): string {
+  const [start, end] = axis === 'height'
+    ? ['top', 'bottom']
+    : ['left', 'right'];
+  const unit = axis === 'height' ? '100vh' : '100vw';
+  return `calc(${unit} - env(safe-area-inset-${start}, 0px) - env(safe-area-inset-${end}, 0px)${
+    reservePx ? ` - ${reservePx}px` : ''
+  })`;
+}
+
 // ——— Tracking ————————————————————————————————————————————————————————————
 //
 // Letter-spacing had drifted to 45 distinct values across the HUD — 0.28 and

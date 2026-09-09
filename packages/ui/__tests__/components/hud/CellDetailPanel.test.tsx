@@ -66,7 +66,12 @@ import {
   midTruncate,
 } from '../../../src/components/hud/cellFormat';
 import { INSPECTOR_EDGE_PX } from '../../../src/components/sceneInspection';
-import { HUD_COLORS, HUD_MOTION, HUD_TYPE } from '../../../src/components/hud/hudTheme';
+import {
+  HUD_COLORS,
+  HUD_MOTION,
+  HUD_TYPE,
+  viewportMinusSafeArea,
+} from '../../../src/components/hud/hudTheme';
 
 afterEach(() => {
   cleanup();
@@ -2889,7 +2894,7 @@ describe('CellDetailPanel', () => {
     );
 
     expect((container.firstElementChild as HTMLElement).style.maxWidth)
-      .toBe(`calc(100vw - ${INSPECTOR_EDGE_PX * 2}px)`);
+      .toBe(viewportMinusSafeArea('width', INSPECTOR_EDGE_PX * 2));
   });
 
   it('caps a docked card at the solver band and scrolls its dossier', () => {
@@ -2908,7 +2913,7 @@ describe('CellDetailPanel', () => {
       '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
 
-    expect(card.style.maxHeight).toBe('calc(100vh - 118px)');
+    expect(card.style.maxHeight).toBe(viewportMinusSafeArea('height', 118));
     expect(card.style.overflow).toBe('hidden');
     expect(card.style.gridTemplateRows).toBe('minmax(0, 1fr) auto');
     expect(analysis.style.overflowY).toBe('auto');

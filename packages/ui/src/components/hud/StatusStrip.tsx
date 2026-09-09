@@ -21,7 +21,15 @@ import {
 } from '../../tweaks/cellDisplay';
 import { useCoarsePointer } from '../../hooks/useCoarsePointer';
 import { BrandMark } from '../BrandMark';
-import { HUD_COLORS, HUD_FONTS, HUD_MOTION, HUD_TYPE, TOUCH_TARGET_MIN_PX, rgba } from './hudTheme';
+import {
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_MOTION,
+  HUD_TYPE,
+  rgba,
+  TOUCH_TARGET_MIN_PX,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP } from './primitives';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
@@ -232,7 +240,7 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
             top: menuOffset,
             left: 0,
             width: 244,
-            maxWidth: 'calc(100vw - 16px)',
+            maxWidth: viewportMinusSafeArea('width', 16),
             boxSizing: 'border-box',
             padding: '7px 8px 8px',
             border: `1px solid ${rgba(HUD_COLORS.orange, 0.34)}`,

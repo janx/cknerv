@@ -1,6 +1,12 @@
 import type { CSSProperties } from 'react';
 import type { ActiveReplayProgress } from '@cknerv/cache';
-import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
+import {
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_TYPE,
+  rgba,
+  viewportMinusSafeArea,
+} from './hudTheme';
 import { Gauge, PLATE_CUT_CLIP, plateStateChip } from './primitives';
 import { replayPresentation } from './replayPresentation';
 
@@ -24,7 +30,7 @@ export default function BackfillBar({ backfill, style }: {
         top: 40,
         left: '50%',
         transform: 'translateX(-50%)',
-        width: 'min(320px, calc(100vw - 24px))',
+        width: `min(320px, ${viewportMinusSafeArea('width', 24)})`,
         boxSizing: 'border-box',
         padding: '9px 13px 10px',
         // A replay banner is a floating object — it arrives because something
