@@ -2,6 +2,7 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   BootPhaseSnapshot,
+  BootRequestSnapshot,
   BootSequenceSnapshot,
 } from '../../../src/boot/bootSequence';
 import BootSequenceBanner from '../../../src/components/hud/BootSequenceBanner';
@@ -9,9 +10,12 @@ import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 afterEach(cleanup);
 
-function sequence(phases: BootPhaseSnapshot[]): BootSequenceSnapshot {
+function sequence(
+  phases: BootPhaseSnapshot[],
+  requests: BootRequestSnapshot[] = [],
+): BootSequenceSnapshot {
   const complete = phases.every((phase) => phase.state === 'done');
-  return { active: !complete, complete, phases };
+  return { active: !complete, complete, phases, requests };
 }
 
 /** A palette hex as jsdom serializes it back out of a style declaration. */
@@ -24,13 +28,22 @@ function cssColor(hex: string): string {
 /** A boot mid-download: the shape the band spends most of a slow load in. */
 const DOWNLOADING = sequence([
   { id: 'instrument', state: 'done' },
-  { id: 'snapshot', state: 'active', receivedBytes: 2_852_000, totalBytes: 4_600_000 },
+  { id: 'snapshot', state: 'active' },
   { id: 'decode', state: 'pending' },
   { id: 'gl', state: 'pending' },
   { id: 'first_light', state: 'pending' },
   { id: 'fabric', state: 'pending' },
   { id: 'data_plane', state: 'pending' },
-]);
+], [{
+  kind: 'cells',
+  transport: 'cells-binary',
+  attempt: 1,
+  state: 'reading',
+  startedAtMs: 0,
+  lastActivityAtMs: 1,
+  receivedBytes: 2_852_000,
+  totalBytes: 4_600_000,
+}]);
 
 const band = (root: HTMLElement) => root.querySelector('[data-boot-banner]') as HTMLElement;
 const line = (root: HTMLElement, id: string) => root.querySelector(`[data-boot-phase="${id}"]`) as HTMLElement;
@@ -83,8 +96,11 @@ describe('BootSequenceBanner', () => {
       <BootSequenceBanner
         boot={sequence([
           { id: 'instrument', state: 'done' },
-          { id: 'snapshot', state: 'active', receivedBytes: 3_240_000, totalBytes: null },
-        ])}
+          { id: 'snapshot', state: 'active' },
+        ], [{
+          kind: 'cells', transport: 'cells-json', attempt: 1, state: 'reading',
+          startedAtMs: 0, lastActivityAtMs: 1, receivedBytes: 3_240_000, totalBytes: null,
+        }])}
         top={36}
       />,
     );

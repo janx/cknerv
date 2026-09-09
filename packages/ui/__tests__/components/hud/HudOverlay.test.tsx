@@ -2,10 +2,13 @@ import { emptyScriptCensus } from '@cknerv/cache';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
+  beginBootPhase,
   completeBootPhase,
   failBootPhase,
   getBootSequence,
-  reportBootSnapshotProgress,
+  beginBootRequest,
+  reportBootRequestProgress,
+  reportBootRequestResponse,
   resetBootSequenceForTest,
   type BootPhaseId,
 } from '../../../src/boot/bootSequence';
@@ -1182,8 +1185,17 @@ describe('HudOverlay — the boot readout owns the top slot', () => {
   });
 
   it('folds the server replay in as its own line, with its own count', () => {
+    act(() => {
+      beginBootPhase('snapshot');
+      const attempt = beginBootRequest('cells', 'cells-binary', 1);
+      reportBootRequestResponse('cells', attempt, 2, 4_600_000);
+      reportBootRequestProgress('cells', attempt, 3, 2_852_000);
+    });
     const { container } = booting();
-    act(() => { reportBootSnapshotProgress(2_852_000, 4_600_000); });
+    expect(getBootSequence().requests?.at(-1)).toMatchObject({
+      receivedBytes: 2_852_000,
+      totalBytes: 4_600_000,
+    });
 
     expect((container.querySelector('[data-boot-phase="snapshot"]') as HTMLElement)
       .textContent).toBe('SNAPSHOT 62%');

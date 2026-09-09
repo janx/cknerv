@@ -68,7 +68,7 @@ export default function BootSequenceBanner({
         }}
       >
         {phases.map((phase, index) => {
-          const line = bootPhaseLine(phase);
+          const line = bootPhaseLine(phase, boot.requests);
           return (
             <Fragment key={phase.id}>
               {/* The separator stays dim whatever the phases either side of it

@@ -4,6 +4,18 @@ This file defines the deterministic capture workflow. The requirements those
 captures validate live in
 [`docs/canvas-rendering.md`](../docs/canvas-rendering.md).
 
+## Startup Handoff
+
+For production and every Lab route, first wait for `#cknerv-startup` to be
+removed, then apply the route's existing ready marker. Test bundle delay,
+256 KiB/s snapshot throttling, a chain-only 15 s delay, missing/encoded content
+length, binary-to-JSON fallback, and request failure with browser interception.
+At 8 s without activity the shell must say `STILL WAITING FOR DATA`; at 30 s it
+must expose `RELOAD`. A new chunk withdraws the waiting copy. Capture widths
+1440, 768, 390, and 320 px plus narrow landscape, and repeat with reduced motion.
+The App must remain at its fitted camera pose across handoff and resize, while a
+user-owned orbit remains unchanged after the startup layer is gone.
+
 ## Protocol Event
 
 Use the protocol-event Lab to review the selected A visual language against a

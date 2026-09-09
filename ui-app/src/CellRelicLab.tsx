@@ -4,6 +4,7 @@ import { View } from '@react-three/drei';
 import type { CellGalaxySnapshot } from '@cknerv/types';
 import {
   ASSET_COLORS,
+  BootViewSentinel,
   CellCoreArtwork,
   CellMorphologyLabArtwork,
   QUALITY_PRESETS,
@@ -16,6 +17,7 @@ import {
   type CellMorphologyLabMode,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
+import EmptyLabState from './EmptyLabState';
 import { selectRelicSamples, type RelicSampleBasis } from './cell-relic-samples';
 import {
   CONTROLLED_RELIC_CAMERAS,
@@ -194,7 +196,7 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
       </header>
 
       {(controlled ? sourceCell === null : samples.length === 0) ? (
-        <pre style={{ color: '#f88', padding: 20 }}>No Cell data available.</pre>
+        <EmptyLabState />
       ) : controlled ? (
         <section style={{ paddingTop: 12 }}>
           {controlledMatrix.map((row) => (
@@ -250,6 +252,7 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
                       frames={Infinity}
                       style={{ width: '100%', aspectRatio: '1 / 1' }}
                     >
+                      <BootViewSentinel populated />
                       <CellMorphologyLabArtwork
                         topology={topology}
                         camera={camera}
@@ -318,6 +321,7 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
                   <span style={{ color: '#46566b' }}>{String(index + 1).padStart(2, '0')}</span>
                 </div>
                 <View index={index + 1} frames={Infinity} style={{ width: '100%', aspectRatio: '1 / 1' }}>
+                  <BootViewSentinel populated />
                   <CellCoreArtwork
                     cell={cell}
                     direction="relic"

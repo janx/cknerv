@@ -6,6 +6,7 @@ import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   AdaptiveQualityController,
+  BootViewSentinel,
   CELLS_Y,
   CellGalaxy,
   CellGalaxyProvider,
@@ -29,6 +30,7 @@ import {
   type MutableSimClock,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
+import EmptyLabState from './EmptyLabState';
 import {
   hasQuerySwitch,
   resolveCanvasDpr,
@@ -388,6 +390,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   const [clockTargetS, setClockTargetS] = useState<number | null>(0);
   const [reviewReady, setReviewReady] = useState(false);
   const cellFlashRef = useRef<Map<number, number>>(new Map());
+  const bootCellDrawnRef = useRef(false);
   const flashDirtyRef = useRef(false);
   const flashDirtyIdsRef = useRef<Set<number>>(new Set());
   const landingFlashRef = useRef(createLandingFlashQueue());
@@ -585,7 +588,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       : null;
 
   if (fieldSnapshot.cells.length === 0) {
-    return <pre style={{ color: '#f88', padding: 20 }}>No Cell data available.</pre>;
+    return <EmptyLabState />;
   }
 
   return (
@@ -789,6 +792,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
             maxElapsedSec={clockMode === 'seeking' ? clockTargetS : null}
           >
             <SimClockTicker />
+            <BootViewSentinel populated contentDrawnRef={bootCellDrawnRef} />
             <ProtocolReviewCamera
               clock={reviewClock}
               mode={clockMode}
@@ -823,6 +827,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               />
             ) : null}
             <CellGalaxy
+              contentDrawnRef={bootCellDrawnRef}
               ckbNodeIds={[...REVIEW_NODE_IDS]}
               minerCkbNodeIds={['ckb:local']}
               universeSeed={EVENT_SEED}

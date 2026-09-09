@@ -2,12 +2,15 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   beginBootPhase,
+  beginBootRequest,
   completeBootPhase,
+  completeBootRequest,
   completeBootSeeding,
   failBootPhase,
   getBootSequence,
+  reportBootRequestProgress,
+  reportBootRequestResponse,
   reportBootSeeding,
-  reportBootSnapshotProgress,
   resetBootSequenceForTest,
   subscribeBootSequence,
   useBootSequence,
@@ -159,7 +162,7 @@ describe('boot sequence — completion', () => {
 
     beginBootPhase('snapshot');
     failBootPhase('gl', 'context lost');
-    reportBootSnapshotProgress(1_024, 4_096);
+    beginBootRequest('cells', 'cells-binary', 1);
     reportBootSeeding(3, 40);
     completeBootSeeding();
 
@@ -168,44 +171,48 @@ describe('boot sequence — completion', () => {
   });
 });
 
-describe('boot sequence — streamed snapshot bytes', () => {
-  it('starts the phase and records exact byte progress', () => {
-    reportBootSnapshotProgress(1_048_576, 4_600_000);
-    expect(phase('snapshot')).toEqual({
-      id: 'snapshot',
-      state: 'active',
+describe('boot sequence — observed snapshot requests', () => {
+  it('records exact byte progress on the current attempt', () => {
+    const attempt = beginBootRequest('cells', 'cells-binary', 1);
+    reportBootRequestResponse('cells', attempt, 2, 4_600_000);
+    reportBootRequestProgress('cells', attempt, 3, 1_048_576);
+    expect(getBootSequence().requests?.at(-1)).toMatchObject({
+      kind: 'cells',
+      attempt,
+      state: 'reading',
       receivedBytes: 1_048_576,
       totalBytes: 4_600_000,
     });
   });
 
   it('keeps a length-less response indeterminate instead of inventing one', () => {
-    reportBootSnapshotProgress(2_048, null);
-    expect(phase('snapshot')?.totalBytes).toBeNull();
+    const attempt = beginBootRequest('cells', 'cells-json', 1);
+    reportBootRequestResponse('cells', attempt, 2, null);
+    reportBootRequestProgress('cells', attempt, 3, 2_048);
+    expect(getBootSequence().requests?.at(-1)?.totalBytes).toBeNull();
     // A denominator that cannot be divided by is indeterminate too.
-    reportBootSnapshotProgress(4_096, Number.NaN);
-    expect(phase('snapshot')?.totalBytes).toBeNull();
-    expect(phase('snapshot')?.receivedBytes).toBe(4_096);
+    reportBootRequestResponse('cells', attempt, 4, Number.NaN);
+    reportBootRequestProgress('cells', attempt, 5, 4_096);
+    expect(getBootSequence().requests?.at(-1)?.totalBytes).toBeNull();
+    expect(getBootSequence().requests?.at(-1)?.receivedBytes).toBe(4_096);
   });
 
-  it('never walks the byte count backwards', () => {
-    // A stream error falling back to the JSON route restarts the count.
-    reportBootSnapshotProgress(900_000, 4_600_000);
-    const highWater = getBootSequence();
-    const listener = watch();
-
-    reportBootSnapshotProgress(100_000, 4_600_000);
-    reportBootSnapshotProgress(Number.NaN, 4_600_000);
-
-    expect(phase('snapshot')?.receivedBytes).toBe(900_000);
-    expect(getBootSequence()).toBe(highWater);
-    expect(listener).not.toHaveBeenCalled();
+  it('gives a fallback its own zero-based count and ignores invalid readings', () => {
+    const binary = beginBootRequest('cells', 'cells-binary', 1);
+    reportBootRequestProgress('cells', binary, 2, 900_000);
+    const json = beginBootRequest('cells', 'cells-json', 3);
+    reportBootRequestProgress('cells', json, 4, Number.NaN);
+    expect(getBootSequence().requests?.at(-1)?.receivedBytes).toBe(0);
+    reportBootRequestProgress('cells', json, 5, 100_000);
+    expect(getBootSequence().requests?.at(-1)?.receivedBytes).toBe(100_000);
   });
 
-  it('ignores progress once the phase is terminal', () => {
-    completeBootPhase('snapshot');
-    reportBootSnapshotProgress(1_024, 4_096);
-    expect(phase('snapshot')).toEqual({ id: 'snapshot', state: 'done' });
+  it('ignores progress once an attempt is terminal', () => {
+    const attempt = beginBootRequest('cells', 'cells-binary', 1);
+    completeBootRequest('cells', attempt, 2);
+    const done = getBootSequence().requests?.at(-1);
+    reportBootRequestProgress('cells', attempt, 3, 1_024);
+    expect(getBootSequence().requests?.at(-1)).toBe(done);
   });
 });
 
@@ -291,10 +298,15 @@ describe('boot sequence — store contract', () => {
     const view = renderHook(() => useBootSequence());
     expect(view.result.current).toEqual(AT_MODULE_LOAD);
 
-    act(() => { reportBootSnapshotProgress(512, 4_096); });
-    expect(view.result.current.phases[1]).toEqual({
-      id: 'snapshot',
-      state: 'active',
+    let attempt = 0;
+    act(() => {
+      attempt = beginBootRequest('cells', 'cells-binary', 1);
+      reportBootRequestResponse('cells', attempt, 2, 4_096);
+      reportBootRequestProgress('cells', attempt, 3, 512);
+    });
+    expect(view.result.current.requests?.at(-1)).toMatchObject({
+      kind: 'cells',
+      state: 'reading',
       receivedBytes: 512,
       totalBytes: 4_096,
     });

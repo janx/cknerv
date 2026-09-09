@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   BootPhaseId,
   BootPhaseSnapshot,
+  BootRequestSnapshot,
   BootPhaseState,
   BootSequenceSnapshot,
 } from '../../../src/boot/bootSequence';
@@ -34,11 +35,20 @@ function sequence(phases: BootPhaseSnapshot[]): BootSequenceSnapshot {
   return { active: !complete, complete, phases };
 }
 
-function snapshotPhase(
+function snapshotRequest(
   receivedBytes: number,
   totalBytes: number | null,
-): BootPhaseSnapshot {
-  return { id: 'snapshot', state: 'active', receivedBytes, totalBytes };
+): BootRequestSnapshot {
+  return {
+    kind: 'cells',
+    transport: 'cells-binary',
+    attempt: 1,
+    state: 'reading',
+    startedAtMs: 0,
+    lastActivityAtMs: 1,
+    receivedBytes,
+    totalBytes,
+  };
 }
 
 describe('boot phase labels', () => {
@@ -103,7 +113,10 @@ describe('streamed snapshot detail', () => {
 
 describe('boot phase detail', () => {
   it('measures only the two phases that were measured', () => {
-    expect(bootPhaseDetail(snapshotPhase(620, 1000))).toBe('62%');
+    expect(bootPhaseDetail(
+      { id: 'snapshot', state: 'active' },
+      [snapshotRequest(620, 1000)],
+    )).toBe('62%');
     expect(bootPhaseDetail({
       id: 'seeding',
       state: 'active',
@@ -137,9 +150,7 @@ describe('boot phase detail', () => {
     expect(bootPhaseDetail({
       id: 'snapshot',
       state: 'done',
-      receivedBytes: 1000,
-      totalBytes: 1000,
-    })).toBe('');
+    }, [snapshotRequest(1000, 1000)])).toBe('');
   });
 
   it('hands a failed phase its reason instead', () => {
@@ -155,7 +166,10 @@ describe('boot phase detail', () => {
 
 describe('boot phase line', () => {
   it('reads label then measurement', () => {
-    expect(bootPhaseLine(snapshotPhase(620, 1000))).toEqual({
+    expect(bootPhaseLine(
+      { id: 'snapshot', state: 'active' },
+      [snapshotRequest(620, 1000)],
+    )).toEqual({
       id: 'snapshot',
       state: 'active',
       color: HUD_COLORS.cyanWire,

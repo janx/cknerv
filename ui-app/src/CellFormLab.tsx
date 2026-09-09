@@ -7,6 +7,7 @@ import {
   CELL_CORE_DIRECTIONS,
   CONSENSUS_BRAID_FIELDS,
   CELLS_Y,
+  BootViewSentinel,
   CellDetailPanel,
   CellGalaxy,
   CellGalaxyProvider,
@@ -25,6 +26,7 @@ import {
   type ConsensusBraidField,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
+import EmptyLabState from './EmptyLabState';
 import { selectInitialLabCell } from './cell-form-lab-selection';
 import { resolveCanvasDpr } from './render-quality';
 
@@ -97,6 +99,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
   }), [snapshot, fieldCells]);
   const cache = useMemo(() => fromCellsSnapshot(1, fieldSnapshot), [fieldSnapshot]);
   const cellFlashRef = useRef<Map<number, number>>(new Map());
+  const bootCellDrawnRef = useRef(false);
   const flashDirtyRef = useRef(false);
   const flashDirtyIdsRef = useRef<Set<number>>(new Set());
   // No colony in this lab, so nothing ever lands; the galaxy still mounts its
@@ -110,7 +113,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
   }, []);
 
   if (!selected) {
-    return <pre style={{ color: '#f88', padding: 20 }}>No Cell data available.</pre>;
+    return <EmptyLabState />;
   }
 
   const selectedWorldY = CELLS_Y + selected.pos_seed[1];
@@ -275,6 +278,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
             onPointerMissed={() => undefined}
           >
             <SimClockTicker />
+            <BootViewSentinel populated contentDrawnRef={bootCellDrawnRef} />
             <TweakSync />
             <RenderStatsSampler />
             <Stars
@@ -294,6 +298,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
               speed={0.2}
             />
             <CellGalaxy
+              contentDrawnRef={bootCellDrawnRef}
               ckbNodeIds={['ckb:local']}
               universeSeed={0x434b42}
               selectedId={null}

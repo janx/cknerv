@@ -152,6 +152,15 @@ chain snapshot and Cell projection snapshot in parallel before mounting the
 application. The Cell bootstrap prefers the compact binary snapshot endpoint
 and falls back to JSON if binary loading or decoding fails.
 
+The static startup layer is outside `#root` and remains over the mounted App
+until the current Canvas's scene/camera/renderer tuple reaches the scene's
+post-render callback. Context creation and pre-render frame callbacks are not
+presentation evidence. The handoff accepts a real populated draw or a rendered
+legal empty state and does not depend on the `first_light` smooth-frame gate,
+fabric rest, stream readiness, or optional enrichment. Review Lab Canvases use
+the same post-render signal; a Lab with no source Cell uses its committed DOM
+empty state as the equivalent presentation proof because it mounts no Canvas.
+
 After bootstrap, projection streams connect from the current revision.
 Incoming deltas are grouped at the next animation frame, with a short timer
 fallback when a frame is unavailable. A server `lagged` notification discards
@@ -290,6 +299,11 @@ that frame. Boot banners, panel reveals, fonts, and enrichment arrival do not
 reposition the camera. Inspection still uses live occlusion rectangles to
 place its cards. A user orbit or a memory-route flight takes camera ownership
 for the session, including after the gesture or flight has ended.
+
+The startup layer covers rather than hides the App, and `#root` is inert until
+the layer finishes its 400 ms fade (or is removed immediately for reduced
+motion). Canvas measurement and rendering therefore run at final geometry.
+The handoff does not replace the Canvas or camera, and it cannot reset a pose.
 
 Regression checks must compare camera position, orientation, and projection
 from the first visible frame through boot completion at desktop and narrow
@@ -2042,6 +2056,9 @@ The Canvas favors visible, diagnosable degradation over invented continuity.
 | Condition | Required behavior |
 |---|---|
 | Binary Cell snapshot fails | Fall back to the JSON snapshot path |
+| Required bootstrap request has no activity | Keep the request alive; show waiting copy after 8 s and manual reload after 30 s |
+| Initial React render or WebGL setup fails | Keep the static startup layer, show the safe error text and a keyboard-operable reload |
+| First-light smoothness is delayed or the stage is empty | Hand off after the actual main-scene draw; retain the diagnostic phase independently |
 | Server reports a lagged stream | Discard pending deltas, reset the cursor, and resynchronize from a snapshot |
 | Display journal is skipped or reset | Rebuild the staged cursor from authoritative cache state |
 | Topology worker is unavailable or fails | Use the same synchronous pure builder and expose diagnostics |
@@ -2065,6 +2082,9 @@ Reduced motion preserves the complete semantic result:
 - selected and recalled evidence remains visible;
 - input and camera response remain live; and
 - no extra event is generated to compensate for removed motion.
+
+The startup mark and ambient breath stop under `prefers-reduced-motion`, and a
+successful view handoff removes the startup layer without a fade.
 
 Color is reinforced by geometry, timing, labels, and focus state. Warm versus
 cool palette separation is important, but provenance and selection must not be

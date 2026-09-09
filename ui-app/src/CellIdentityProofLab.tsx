@@ -10,6 +10,7 @@ import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   CELLS_Y,
+  BootViewSentinel,
   CHAIN_Y,
   CellGalaxy,
   CellGalaxyProvider,
@@ -24,6 +25,7 @@ import {
   type CellIdentityProofKind,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
+import EmptyLabState from './EmptyLabState';
 import {
   CELL_IDENTITY_PROOF_REVIEW_KINDS,
   CELL_IDENTITY_PROOF_REVIEW_STAGES,
@@ -136,6 +138,7 @@ function ProofPanel({
   dpr: number;
   onReady: () => void;
 }) {
+  const bootCellDrawnRef = useRef(false);
   const meta = PROOF_META[kind];
   const frame = cellIdentityProofReviewFrame(stage, kind);
   const reviewCell = useMemo<Cell>(() => ({
@@ -240,9 +243,11 @@ function ProofPanel({
               fixedDeltaSec={0}
             >
               <SimClockTicker />
+              <BootViewSentinel populated contentDrawnRef={bootCellDrawnRef} />
               <ProofCamera targetY={meta.targetY} />
               <ReviewReady onReady={onReady} />
               <CellGalaxy
+                contentDrawnRef={bootCellDrawnRef}
                 ckbNodeIds={[]}
                 universeSeed={0x434b42}
                 selectedId={null}
@@ -316,7 +321,7 @@ export default function CellIdentityProofLab({
   }, []);
 
   if (!selected) {
-    return <pre style={{ color: '#f88', padding: 20 }}>No Cell data available.</pre>;
+    return <EmptyLabState />;
   }
 
   const stageHref = (nextStage: typeof stage): string => {

@@ -66,9 +66,16 @@ export {
 // ── Boot sequence (page-boot progress, written from the entry point) ─
 export {
   beginBootPhase,
+  beginBootRequest,
   completeBootPhase,
+  completeBootRequest,
   failBootPhase,
-  reportBootSnapshotProgress,
+  failBootRequest,
+  markBootModuleStarted,
+  markBootViewPreparing,
+  markBootViewPresented,
+  reportBootRequestProgress,
+  reportBootRequestResponse,
   reportBootSeeding,
   completeBootSeeding,
   getBootSequence,
@@ -79,8 +86,15 @@ export {
   type BootPhaseState,
   type BootPhaseSnapshot,
   type BootSequenceSnapshot,
+  type BootRequestKind,
+  type BootRequestState,
+  type BootRequestSnapshot,
+  type BootRequestTransport,
 } from './boot/bootSequence';
 export { default as BootFrameSentinel } from './boot/BootFrameSentinel';
+export { default as BootViewSentinel } from './boot/BootViewSentinel';
+export { BootEmptyViewSentinel, recordBootCellDraw } from './boot/BootViewSentinel';
+export { installBootViewAfterRender } from './boot/BootViewSentinel';
 export { default as BootNerveRestSentinel } from './boot/BootNerveRestSentinel';
 // The one piece of the HUD banner's vocabulary the pre-React shell also needs:
 // both readouts print the streamed byte count into the same band, minutes of

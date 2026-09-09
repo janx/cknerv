@@ -20,7 +20,7 @@ vi.mock('@cknerv/cache', async (importOriginal) => ({
   ...decode,
 }));
 
-import { fetchCellsSnapshot } from '../src/connect';
+import { fetchCellsSnapshot, fetchChainSnapshot } from '../src/connect';
 
 const BIN_URL = '/api/projections/cells/snapshot.bin';
 const JSON_URL = '/api/projections/cells/snapshot';
@@ -28,7 +28,7 @@ const JSON_BODY = '{"revision":12,"snapshot":{"cells":"json"}}';
 
 function streamed(
   chunks: readonly Uint8Array[],
-  options: { status?: number; length?: number | null } = {},
+  options: { status?: number; length?: number | null; encoding?: string } = {},
 ): Response {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -41,6 +41,7 @@ function streamed(
     ? chunks.reduce((total, chunk) => total + chunk.byteLength, 0)
     : options.length;
   if (declared !== null) headers.set('content-length', String(declared));
+  if (options.encoding) headers.set('content-encoding', options.encoding);
   return new Response(body, { status: options.status ?? 200, headers });
 }
 
@@ -54,18 +55,19 @@ function phase(id: BootPhaseId): BootPhaseSnapshot {
   return found;
 }
 
-/** Every progress report the store published, in order. */
-function recordProgress(): Array<{ received: number; total: number | null }> {
-  const trail: Array<{ received: number; total: number | null }> = [];
+/** Every cells-attempt reading the one request store published, in order. */
+function recordProgress(): Array<{ attempt: number; received: number; total: number | null }> {
+  const trail: Array<{ attempt: number; received: number; total: number | null }> = [];
   subscribeBootSequence(() => {
-    const snapshot = phase('snapshot');
-    if (snapshot.receivedBytes === undefined) return;
+    const snapshot = getBootSequence().requests?.filter((request) => request.kind === 'cells').at(-1);
+    if (!snapshot) return;
     const last = trail[trail.length - 1];
     const entry = {
+      attempt: snapshot.attempt,
       received: snapshot.receivedBytes,
       total: snapshot.totalBytes ?? null,
     };
-    if (last && last.received === entry.received && last.total === entry.total) return;
+    if (last && last.attempt === entry.attempt && last.received === entry.received && last.total === entry.total) return;
     trail.push(entry);
   });
   return trail;
@@ -96,10 +98,14 @@ describe('fetchCellsSnapshot streaming', () => {
     const result = await fetchCellsSnapshot();
 
     expect(result).toEqual({ revision: 91, snapshot: { cells: 'columnar' } });
-    expect(trail.map((entry) => entry.received)).toEqual([0, 400, 1000, 1024]);
-    expect(trail.every((entry) => entry.total === 1024)).toBe(true);
+    expect(trail.map((entry) => [entry.received, entry.total])).toEqual([
+      [0, null], [0, 1024], [400, 1024], [1000, 1024], [1024, 1024],
+    ]);
     expect(phase('snapshot').state).toBe('done');
     expect(phase('decode').state).toBe('done');
+    expect(getBootSequence().requests).toMatchObject([
+      { kind: 'cells', transport: 'cells-binary', attempt: 1, state: 'done' },
+    ]);
     // The decoder saw every byte, exactly once.
     const decoded = decode.decodeCellsColumnar.mock.calls[0][0] as ArrayBuffer;
     expect(decoded.byteLength).toBe(1024);
@@ -132,7 +138,9 @@ describe('fetchCellsSnapshot streaming', () => {
 
     await fetchCellsSnapshot();
 
-    expect(trail).toEqual([{ received: 4, total: 4 }]);
+    expect(trail.map((entry) => [entry.received, entry.total])).toEqual([
+      [0, null], [0, 4], [4, 4],
+    ]);
     expect(phase('snapshot').state).toBe('done');
   });
 
@@ -151,7 +159,11 @@ describe('fetchCellsSnapshot streaming', () => {
     expect(warn).not.toHaveBeenCalled();
     // The JSON route is the bigger download of the two, so it reports too.
     const bytes = new TextEncoder().encode(JSON_BODY).byteLength;
-    expect(trail[trail.length - 1]).toEqual({ received: bytes, total: bytes });
+    expect(trail.at(-1)).toEqual({ attempt: 2, received: bytes, total: bytes });
+    expect(getBootSequence().requests).toMatchObject([
+      { kind: 'cells', transport: 'cells-binary', attempt: 1, state: 'failed' },
+      { kind: 'cells', transport: 'cells-json', attempt: 2, state: 'done' },
+    ]);
     expect(phase('snapshot').state).toBe('done');
     expect(phase('decode').state).toBe('done');
   });
@@ -200,5 +212,56 @@ describe('fetchCellsSnapshot streaming', () => {
     expect(phase('snapshot').state).toBe('done');
     expect(phase('decode').state).toBe('failed');
     expect(phase('decode').detail).toBeTruthy();
+  });
+
+  it('does not trust a content length expressed in encoded bytes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => streamed(
+      [new Uint8Array(12)],
+      { length: 4, encoding: 'gzip' },
+    )));
+    decode.decodeCellsColumnar.mockReturnValue({ revision: 2 });
+    decode.cellsSnapshotFromColumnar.mockReturnValue({ cells: [] });
+
+    await fetchCellsSnapshot();
+
+    expect(getBootSequence().requests?.at(-1)).toMatchObject({
+      receivedBytes: 12,
+      totalBytes: null,
+      state: 'done',
+    });
+  });
+
+  it('invalidates a declared length that does not match the completed body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => streamed(
+      [new Uint8Array(12)],
+      { length: 20 },
+    )));
+    decode.decodeCellsColumnar.mockReturnValue({ revision: 2 });
+    decode.cellsSnapshotFromColumnar.mockReturnValue({ cells: [] });
+
+    await fetchCellsSnapshot();
+
+    expect(getBootSequence().requests?.at(-1)?.totalBytes).toBeNull();
+  });
+});
+
+describe('fetchChainSnapshot observation', () => {
+  it('observes chain response and body independently from Cells', async () => {
+    const body = '{"revision":4,"chain":{"tip":9}}';
+    vi.stubGlobal('fetch', vi.fn(async () => jsonStreamed(body)));
+
+    await expect(fetchChainSnapshot({ now: () => 42 })).resolves.toEqual({
+      revision: 4,
+      chain: { tip: 9 },
+    });
+    expect(getBootSequence().requests).toMatchObject([
+      {
+        kind: 'chain',
+        transport: 'chain-json',
+        attempt: 1,
+        state: 'done',
+        lastActivityAtMs: 42,
+      },
+    ]);
   });
 });

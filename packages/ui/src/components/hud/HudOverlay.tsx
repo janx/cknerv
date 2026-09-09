@@ -384,7 +384,10 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
     }, BOOT_READOUT_LINGER_MS);
     return () => clearTimeout(id);
   }, [boot.active, reduced]);
-  const bootReadoutVisible = boot.active || bootLingering;
+  // The fullscreen startup layer hands off on the first completed main-scene
+  // draw. Diagnostic phases may continue afterwards (fabric, data plane,
+  // first-light smoothness), but they must not suppress normal runtime bands.
+  const bootReadoutVisible = !boot.viewPresented && (boot.active || bootLingering);
 
   // The boot readout's second chapter. A freshly started server announces its
   // dashboard before its composition is back — so the page it auto-opens boots
@@ -512,11 +515,10 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   // over by +0.9 s). Two count-offs ran at once in two vocabularies: module
   // codes on the rails, phase names in the band, neither reading the other.
   //
-  // So the rails wait for FIRST LIGHT. The record already publishes exactly
-  // that, and it is the honest cue: a panel saying CKB·01 IS UP while the
-  // stage behind it is still black is the instrument lying about its own
-  // state. The last beat now lands inside the band's linger, which is what
-  // makes the two rituals read as one.
+  // So the rails wait until the current Canvas has actually presented, with
+  // FIRST LIGHT retained as the older smooth-frame diagnostic exit. A panel
+  // saying CKB·01 IS UP while the stage behind it is still black would make
+  // the instrument lie about its own state.
   //
   // ⚠️ AND IT NEVER WAITS FOREVER, which took two conditions rather than one.
   // A HUD that joined after the page was up sees a record that is no longer
@@ -529,7 +531,8 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
     (phase) => phase.id === 'first_light' && phase.state === 'done',
   );
   const bootFaulted = boot.phases.some((phase) => phase.state === 'failed');
-  const bootWaiting = bootRitual && boot.active && !galaxyLit && !bootFaulted;
+  const bootWaiting = bootRitual && !boot.viewPresented && boot.active
+    && !galaxyLit && !bootFaulted;
   const bootCounting = bootRitual && !bootWaiting && bootLit < bootRoster.length;
   // One timeout alive at a time, re-armed by its own result: the ritual costs
   // exactly one re-render per module and stops re-arming when the roster runs
@@ -883,13 +886,11 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
           (`data_plane`, `seeding`), and the arrangement they replace was
           measured shouting CONNECTING over a galaxy that had finished
           rendering half a second earlier.
-          The deliberate edge: a failed boot never completes, so the sequence
-          holds the slot for the session and keeps the other two suppressed. A
-          boot that died is the louder fault, and two banners disagreeing about
-          which emergency is the emergency is how a reader learns to ignore
-          both. Like the chrome above it this band is exempt from the count-off
-          — it reports a state, and nothing that reports a state is dimmed for
-          style. */}
+          Once the fullscreen layer hands off, diagnostic phases no longer own
+          this slot; stream health and stage composition can report the live
+          application even when first-light smoothness is still pending. Like
+          the chrome above it this band is exempt from the count-off — it
+          reports a state, and nothing that reports a state is dimmed for style. */}
       {bootReadoutVisible ? (
         <BootSequenceBanner
           boot={boot}

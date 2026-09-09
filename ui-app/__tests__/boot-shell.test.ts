@@ -1,505 +1,268 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   beginBootPhase,
+  beginBootRequest,
   completeBootPhase,
+  completeBootRequest,
   failBootPhase,
   getBootSequence,
-  reportBootSnapshotProgress,
+  markBootViewPreparing,
+  markBootViewPresented,
+  reportBootRequestProgress,
+  reportBootRequestResponse,
   resetBootSequenceForTest,
-  type BootSequenceSnapshot,
 } from '@cknerv/ui';
+import { bootPresentation } from '../src/boot-presentation';
 import {
-  activeBootShellPhase,
-  bootShellReadout,
+  BOOT_SHELL_DETAIL_ID,
+  BOOT_SHELL_ID,
+  BOOT_SHELL_PHASE_ID,
+  BOOT_SHELL_RELOAD_ID,
   chargeBootFault,
   installBootShellReadout,
   showBootShellFault,
-  BOOT_SHELL_DETAIL_ID,
-  BOOT_SHELL_PHASE_ID,
 } from '../src/boot-shell';
-
 import { BOOT_FACES, bootFaceTags } from '../vite-boot-faces';
 
 const INDEX_HTML = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
-/** The two files index.html restates a value from. It cannot import, so the
- *  pact is a test that reads both sides off disk — the same bargain the stage
- *  ground already makes in `App.sceneRoots.test.tsx`. */
 const HUD_THEME = readFileSync(
-  resolve(process.cwd(), '../packages/ui/src/components/hud/hudTheme.ts'), 'utf8',
+  resolve(process.cwd(), '../packages/ui/src/components/hud/hudTheme.ts'),
+  'utf8',
 );
-const STATUS_STRIP = readFileSync(
-  resolve(process.cwd(), '../packages/ui/src/components/hud/StatusStrip.tsx'), 'utf8',
-);
-const HUD_OVERLAY = readFileSync(
-  resolve(process.cwd(), '../packages/ui/src/components/hud/HudOverlay.tsx'), 'utf8',
-);
-/** The fold's own file: the shell restates ONE number from it, and it is the
- *  only number in the HUD the shell has to guess at rather than read. */
-const STATUS_STRIP_FOLD = readFileSync(
-  resolve(process.cwd(), '../packages/ui/src/components/hud/useStatusStripFold.ts'), 'utf8',
-);
-/** A font stack normalised for comparison: `index.html` writes them without
- *  spaces after the commas, `hudTheme.ts` writes them with, and the DOM hands
- *  back whichever quote it prefers. */
-const stack = (value: string) => value.replace(/\s+/g, '').replace(/"/g, "'");
+const token = (name: string) => new RegExp(`${name}: '(#[0-9A-Fa-f]{6})'`)
+  .exec(HUD_THEME)?.[1];
 
-function sequence(
-  phases: BootSequenceSnapshot['phases'],
-): BootSequenceSnapshot {
-  return { active: true, complete: false, phases };
+function installMarkup(): void {
+  document.body.innerHTML = `
+    <div id="root" inert><button id="app-action">APP</button></div>
+    <div id="${BOOT_SHELL_ID}" data-state="preparing">
+      <span id="${BOOT_SHELL_PHASE_ID}"></span>
+      <span id="${BOOT_SHELL_DETAIL_ID}"></span>
+      <div><i id="cknerv-startup-progress"></i></div>
+      <div id="cknerv-startup-error" hidden></div>
+      <button id="${BOOT_SHELL_RELOAD_ID}" hidden>RELOAD</button>
+      <span id="cknerv-startup-diagnostics"></span>
+    </div>`;
 }
 
-describe('boot shell / index.html pact', () => {
-  // The shell is markup in one file and writes in another; nothing else keeps
-  // the pair honest, so the ids are asserted against the real document.
-  const shipped = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
-
-  it('ships every node the updater writes into', () => {
-    expect(shipped.getElementById(BOOT_SHELL_PHASE_ID)).not.toBeNull();
-    expect(shipped.getElementById(BOOT_SHELL_DETAIL_ID)).not.toBeNull();
-  });
-
-  it('keeps the shell inside #root so root.render disposes of it', () => {
-    const root = shipped.getElementById('root');
-    expect(root?.contains(shipped.getElementById(BOOT_SHELL_PHASE_ID))).toBe(true);
-  });
-
-  it('reads correctly with no script at all', () => {
-    // A visitor whose bundle never arrives is looking at the truth: the page
-    // got as far as the instrument and no further.
-    expect(shipped.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('INSTRUMENT');
-    expect(shipped.getElementById(BOOT_SHELL_DETAIL_ID)?.textContent).toBe('');
-    expect(shipped.getElementById('cknerv-boot-shell')?.textContent).toContain(
-      'STAGE POWER-ON',
-    );
-  });
+beforeEach(() => {
+  resetBootSequenceForTest();
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })));
 });
 
-describe('the shell is the band, one second early', () => {
-  // The page's first second set ONE WORD in three typefaces (report E, E-2):
-  // this markup in the OS monospace, the first HUD commit in `system-ui`
-  // because `injectHudTheme` runs in an effect, and the third frame in Saira
-  // once seven hashed woff2 had been fetched — with nothing preloading them,
-  // so the fetch could not even start during the one to five seconds the
-  // snapshot takes. The shell says the band's faces now, and the build puts
-  // them in the head.
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  delete window.__cknervBootTakeover;
+  delete window.__cknervBootFault;
+  delete window.__cknervBootCleanup;
+});
+
+describe('static startup document', () => {
   const shipped = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
 
-  it('sets the band\'s words in the band\'s faces', () => {
-    const shell = shipped.getElementById('cknerv-boot-shell') as HTMLElement;
-    const title = shell.querySelector('span[style*="font-weight:700"]') as HTMLElement;
-    const diamond = shell.querySelector('span[aria-hidden="true"]') as HTMLElement;
-
-    const mono = /mono: "([^"]+)"/.exec(HUD_THEME)?.[1] ?? '';
-    const display = /display: "([^"]+)"/.exec(HUD_THEME)?.[1] ?? '';
-    expect(mono, 'HUD_FONTS.mono moved').toContain('Share Tech Mono');
-    expect(display, 'HUD_FONTS.display moved').toContain('Saira');
-
-    // The trail and the phase lines inherit the band's own stack; the title
-    // and the ◇ name theirs.
-    expect(stack(shell.style.fontFamily)).toBe(stack(mono));
-    expect(stack(title.style.fontFamily)).toBe(stack(display));
-    expect(stack(diamond.style.fontFamily)).toContain(stack("'JetBrains Mono Local'"));
+  it('ships a complete shell beside the inert React root', () => {
+    const root = shipped.getElementById('root')!;
+    const shell = shipped.getElementById(BOOT_SHELL_ID)!;
+    expect(root.contains(shell)).toBe(false);
+    expect(root.hasAttribute('inert')).toBe(true);
+    expect(shell.textContent).toContain('CKNERV');
+    expect(shell.textContent).toContain('A visible body for CKB.');
+    expect(shipped.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('PREPARING CKNERV');
+    expect(shipped.querySelector('noscript')?.textContent).toContain('REQUIRES JAVASCRIPT');
   });
 
-  it('stands where the strip will, at every width the strip has', () => {
-    // 36 / 64 / 59 all live in packages/ui, and so does the one width the
-    // shell still has to name. The shell hard-coded 36, so every viewport that
-    // folds watched the band drop 28 px at the handover.
-    const heights = /STATUS_STRIP_HEIGHTS = \{([\s\S]*?)\}/.exec(STATUS_STRIP)?.[1] ?? '';
-    const rung = (name: string) => Number(new RegExp(`${name}: (\\d+)`).exec(heights)?.[1]);
-    expect([rung('wide'), rung('compact'), rung('mobile')]).toEqual([36, 64, 59]);
-
-    const shell = shipped.getElementById('cknerv-boot-shell') as HTMLElement;
-    expect(shell.style.top).toBe(`${rung('wide')}px`);
-    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
-    expect(script, 'the shell no longer sizes itself').toContain('cknerv-boot-shell');
-    expect(script).toContain(`'${rung('compact')}px'`);
-    expect(script).toContain(`'${rung('mobile')}px'`);
-
-    // …and at the widths the HUD itself changes at. The phone is a media
-    // query on both sides and always was.
-    expect(HUD_OVERLAY).toContain("useMediaQuery('(max-width: 560px)')");
-    expect(script).toContain("matchMedia('(max-width: 560px)')");
-
-    // The fold is NOT. The HUD measures the row against the room it has
-    // (`useStatusStripFold`), and the shell — which has no strip yet and no
-    // layout to read — runs the ESTIMATE that hook computes: the row as
-    // measured, plus the slack it keeps, minus one because `max-width` is
-    // inclusive. What is pinned here is the ARITHMETIC, on both sides: the
-    // hook must derive its constant rather than type it, and the shell must
-    // restate the value that derivation produces.
-    const constant = (name: string) => Number(
-      new RegExp(`${name} = (\\d+)`).exec(STATUS_STRIP_FOLD)?.[1],
-    );
-    const measured = constant('STATUS_STRIP_WIDE_MEASURED_PX');
-    const slack = constant('STATUS_STRIP_FOLD_SLACK_PX');
-    expect([measured, slack], 'the fold constants moved or were renamed')
-      .toEqual([expect.any(Number), expect.any(Number)]);
-    expect(
-      STATUS_STRIP_FOLD.replace(/\s+/g, ' '),
-      'the estimate is a number now, not a derivation',
-    ).toContain(
-      'STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX = STATUS_STRIP_WIDE_MEASURED_PX'
-      + ' + STATUS_STRIP_FOLD_SLACK_PX - 1',
-    );
-    expect(script).toContain(`matchMedia('(max-width: ${measured + slack - 1}px)')`);
-
-    // And the HUD's own first render runs that same query, from that same
-    // file, before any box has been laid out — which is what makes the
-    // handover a handover and not a jump.
-    expect(HUD_OVERLAY).toContain('useStatusStripFold(');
-    expect(HUD_OVERLAY).toContain('STATUS_STRIP_FOLD_ESTIMATE_QUERY');
-    // The number that used to be typed on both sides is gone from both.
-    expect(HUD_OVERLAY, 'the fixed top-bar breakpoint is back')
-      .not.toContain('max-width: 1280px');
-    expect(script, 'the shell still guesses at 1,280').not.toContain('1280');
+  it('preserves viewport, chrome, favicon, title, and share metadata', () => {
+    const meta = (selector: string) => shipped.querySelector(selector)?.getAttribute('content');
+    expect(meta('meta[name="viewport"]')).toBe('width=device-width, initial-scale=1, viewport-fit=cover');
+    expect(meta('meta[name="theme-color"]')?.toLowerCase()).toBe(token('stageGround')?.toLowerCase());
+    expect(shipped.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg');
+    expect(shipped.querySelector('link[rel="icon"]')?.getAttribute('type')).toBe('image/svg+xml');
+    expect(shipped.title).toBe('CKNERV');
+    expect(shipped.title).toBe(shipped.title.toUpperCase());
+    expect(meta('meta[name="description"]')).toContain('local-first');
+    expect(meta('meta[property="og:image"]')).toBe('https://cknerv.web5.info/social-preview.png');
+    expect(meta('meta[name="twitter:card"]')).toBe('summary_large_image');
   });
 
-  it('puts the boot faces in the head, preloaded, and nothing else', () => {
-    // Three faces and three preloads. A preload for a face the first paint
-    // does not use is a request competing with the snapshot for the same
-    // connection, which is the opposite of the fix.
+  it('uses the existing HUD palette and bundled font families', () => {
+    for (const name of ['stageGround', 'cyanWire', 'cyanInk', 'dim', 'danger']) {
+      expect(INDEX_HTML.toLowerCase()).toContain(String(token(name)).toLowerCase());
+    }
+    expect(INDEX_HTML).toContain("font-family:'Saira'");
+    expect(INDEX_HTML).toContain("font-family:'Share Tech Mono'");
+    expect(INDEX_HTML).not.toContain('#d9fbff');
+    expect(INDEX_HTML).not.toContain('#ff5b5b');
+  });
+
+  it('owns pre-bundle slow/error/reload paths and preserves the current URL', () => {
+    expect(INDEX_HTML).toContain('setTimeout(waiting,8000)');
+    expect(INDEX_HTML).toContain('setTimeout(reloadable,30000)');
+    expect(INDEX_HTML).toContain("location.reload()");
+    expect(INDEX_HTML).toContain('__cknervBootFault');
+    expect(INDEX_HTML).toContain("tagName==='SCRIPT'");
+  });
+
+  it('has reduced-motion and narrow/landscape layouts', () => {
+    expect(INDEX_HTML).toContain('prefers-reduced-motion:reduce');
+    expect(INDEX_HTML).toContain('max-width:390px');
+    expect(INDEX_HTML).toContain('orientation:landscape');
+    expect(INDEX_HTML).toContain('.cknerv-startup-aura { color:#FF3030; animation:none; }');
+  });
+
+  it('preloads exactly the faces used by the shell', () => {
     const tags = bootFaceTags(BOOT_FACES.map((face) => `/assets/${face.file}`));
     const preloads = tags.filter((tag) => tag.tag === 'link');
     expect(preloads).toHaveLength(BOOT_FACES.length);
     for (const preload of preloads) {
       expect(preload.attrs).toMatchObject({ rel: 'preload', as: 'font', type: 'font/woff2' });
       expect(preload.attrs).toHaveProperty('crossorigin');
-      // Appended, so `<meta charset>` keeps the first 1,024 bytes.
       expect(preload.injectTo).toBe('head');
     }
-
-    const style = tags.find((tag) => tag.tag === 'style');
-    const css = String(style?.children ?? '');
+    const css = String(tags.find((tag) => tag.tag === 'style')?.children);
+    expect(css.match(/font-display:optional/g)).toHaveLength(BOOT_FACES.length);
     for (const face of BOOT_FACES) {
       expect(css).toContain(`font-family:'${face.family}'`);
       expect(css).toContain(`url("/assets/${face.file}")`);
-      // The theme registers the same family at the same weight. Two faces for
-      // one family under two weight descriptors is a face the browser has to
-      // choose between.
-      expect(HUD_THEME, `${face.family} is not the theme's face any more`)
-        .toContain(`@font-face{font-family:'${face.family}';font-weight:${face.weight};`);
-    }
-    // …and the shell's own display value, which is the whole argument: a face
-    // arriving after a one-second line has been read is a flicker, not a fix.
-    expect(css.match(/font-display:optional/g)).toHaveLength(BOOT_FACES.length);
-    expect(HUD_THEME, 'the HUD stopped swapping').toContain('font-display:swap');
-  });
-
-  it('names only faces the theme actually ships', () => {
-    for (const face of BOOT_FACES) {
-      expect(HUD_THEME, `${face.file} is no longer imported by the theme`)
-        .toContain(face.file.replace('.woff2', ''));
+      expect(HUD_THEME).toContain(face.file.replace('.woff2', ''));
     }
   });
-});
 
-describe('bootShellReadout', () => {
-  it('shows the running phase', () => {
-    const readout = bootShellReadout(sequence([
-      { id: 'instrument', state: 'done' },
-      { id: 'snapshot', state: 'active' },
-      { id: 'decode', state: 'pending' },
-    ]));
-    expect(readout).toEqual({ label: 'SNAPSHOT', detail: '', failed: false });
-  });
-
-  it('holds the last finished phase across a gap', () => {
-    const readout = bootShellReadout(sequence([
-      { id: 'instrument', state: 'done' },
-      { id: 'snapshot', state: 'done' },
-      { id: 'decode', state: 'pending' },
-    ]));
-    expect(readout.label).toBe('SNAPSHOT');
-  });
-
-  it('carries a fault ahead of anything else on the line', () => {
-    const readout = bootShellReadout(sequence([
-      { id: 'instrument', state: 'done' },
-      { id: 'snapshot', state: 'failed', detail: 'cells snapshot: 503' },
-      { id: 'decode', state: 'pending' },
-    ]));
-    expect(readout).toEqual({
-      label: 'SNAPSHOT FAULT',
-      detail: 'cells snapshot: 503',
-      failed: true,
-    });
-  });
-
-  it('names every phase the record can hold', () => {
-    const labels = (['gl', 'first_light', 'fabric', 'data_plane', 'seeding'] as const)
-      .map((id) => bootShellReadout(sequence([{ id, state: 'active' }])).label);
-    expect(labels).toEqual(['GL', 'FIRST LIGHT', 'FABRIC', 'DATA PLANE', 'SEEDING']);
-  });
-
-  it('is blank before anything has happened', () => {
-    expect(bootShellReadout(sequence([{ id: 'snapshot', state: 'pending' }])))
-      .toEqual({ label: '', detail: '', failed: false });
-    expect(activeBootShellPhase(sequence([]))).toBeNull();
-  });
-});
-
-describe('bootShellReadout snapshot detail', () => {
-  function detailFor(receivedBytes: number, totalBytes: number | null): string {
-    return bootShellReadout(sequence([
-      { id: 'snapshot', state: 'active', receivedBytes, totalBytes },
-    ])).detail;
-  }
-
-  it('is a percentage when the response declared its length', () => {
-    expect(detailFor(0, 1000)).toBe('0%');
-    expect(detailFor(620, 1000)).toBe('62%');
-    // Never over 100: a body longer than its header still reads as arrived.
-    expect(detailFor(1200, 1000)).toBe('100%');
-  });
-
-  it('falls back to measured size when the length is unknown', () => {
-    expect(detailFor(3_240_000, null)).toBe('3.2 MB');
-    // No denominator and no bytes yet is nothing to say — not "0 %".
-    expect(detailFor(0, null)).toBe('');
-    // A zero length is not a denominator either.
-    expect(detailFor(512, 0)).toBe('0.0 MB');
-  });
-
-  it('belongs to the download alone', () => {
-    expect(bootShellReadout(sequence([
-      { id: 'decode', state: 'active', receivedBytes: 500, totalBytes: 1000 },
-    ])).detail).toBe('');
-  });
-});
-
-describe('installBootShellReadout', () => {
-  beforeEach(() => {
-    resetBootSequenceForTest();
-    document.body.innerHTML = `
-      <div id="root">
-        <div id="cknerv-boot-shell">
-          <span id="${BOOT_SHELL_PHASE_ID}">INSTRUMENT</span>
-          <span id="${BOOT_SHELL_DETAIL_ID}"></span>
-        </div>
-      </div>`;
-  });
-
-  const phaseNode = () => document.getElementById(BOOT_SHELL_PHASE_ID)!;
-  const detailNode = () => document.getElementById(BOOT_SHELL_DETAIL_ID)!;
-
-  it('follows the record until React takes #root', () => {
-    const stop = installBootShellReadout();
-    completeBootPhase('instrument');
-    reportBootSnapshotProgress(500, 1000);
-    expect(phaseNode().textContent).toBe('SNAPSHOT');
-    expect(detailNode().textContent).toBe('50%');
-
-    completeBootPhase('snapshot');
-    beginBootPhase('decode');
-    expect(phaseNode().textContent).toBe('DECODE');
-    expect(detailNode().textContent).toBe('');
-
-    // React mounting replaces the children of #root in one go; the shell
-    // disappearing is the whole handover protocol.
-    document.getElementById('root')!.replaceChildren();
-    completeBootPhase('decode');
-    expect(document.getElementById(BOOT_SHELL_PHASE_ID)).toBeNull();
-    stop();
-  });
-
-  it('stops writing once the shell is gone', () => {
-    installBootShellReadout();
-    document.getElementById('root')!.replaceChildren();
-    // The first notify after the handover unsubscribes; a later one must not
-    // resurrect anything into a document React now owns.
-    completeBootPhase('instrument');
-    document.body.innerHTML = `<span id="${BOOT_SHELL_PHASE_ID}">BANNER</span>`;
-    reportBootSnapshotProgress(1, 2);
-    expect(phaseNode().textContent).toBe('BANNER');
-  });
-
-  it('paints a fault in danger', () => {
-    const stop = installBootShellReadout();
-    failBootPhase('snapshot', 'cells snapshot: 503');
-    expect(phaseNode().textContent).toBe('SNAPSHOT FAULT');
-    expect(detailNode().textContent).toBe('cells snapshot: 503');
-    expect(phaseNode().style.color).toBe('rgb(255, 48, 48)');
-    expect(getBootSequence().complete).toBe(false);
-    stop();
-  });
-});
-
-// ——— A bootstrap failure keeps the shell and the band ————————————————————
-//
-// The `<pre>` in `#f88` that used to replace `#root` was the whole error UI
-// (report E, E-7): a colour outside the palette, the browser's own monospace,
-// and it deleted the designed band in the same tick the record had told that
-// band which phase died. Two halves replace it — the record is charged, so the
-// band says `SNAPSHOT FAULT — …`, and the shell's own script draws the full
-// message under it.
-
-describe('a bootstrap failure keeps the shell standing', () => {
-  /** With its comments taken out: this file argues its decisions in prose, and
-   *  the prose names the `<pre>` in `#f88` it replaced. A source oracle that
-   *  read the argument as if it were the code would forbid the argument. */
-  const MAIN = readFileSync(resolve(process.cwd(), 'src/main.tsx'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-
-  beforeEach(() => {
-    resetBootSequenceForTest();
-    delete (window as { __cknervBootFault?: unknown }).__cknervBootFault;
-  });
-
-  it('draws no error UI of its own', () => {
-    // The three the ruling names, each as it was written. A revert that kept
-    // one of them is a revert.
-    for (const relic of ['<pre', "createElement('pre')", '#f88', 'replaceChildren']) {
-      expect(MAIN, `the entry point still builds its own error UI: ${relic}`)
-        .not.toContain(relic);
-    }
-    expect(MAIN).toContain('chargeBootFault(message)');
-    expect(MAIN).toContain('showBootShellFault(message)');
-  });
-
-  it('charges the fault to the line the boot got to', () => {
-    completeBootPhase('instrument');
-    beginBootPhase('snapshot');
-    expect(chargeBootFault('cells snapshot: 503')).toBe('snapshot');
-    const failed = getBootSequence().phases.find((phase) => phase.state === 'failed');
-    expect(failed?.id).toBe('snapshot');
-    expect(failed?.detail).toBe('cells snapshot: 503');
-    // …and the band the shell paints says so, which is the point of charging it.
-    expect(bootShellReadout(getBootSequence())).toEqual({
-      label: 'SNAPSHOT FAULT',
-      detail: 'cells snapshot: 503',
-      failed: true,
-    });
-  });
-
-  it('charges a fault between phases to the next line, not the last done one', () => {
-    // The chain snapshot and the lazy Lab import both throw with nothing
-    // active; blaming the phase that SUCCEEDED would be the record lying.
-    completeBootPhase('instrument');
-    expect(chargeBootFault('Failed to fetch')).toBe('snapshot');
-  });
-
-  it('never re-describes a fault its own writer already reported', () => {
-    completeBootPhase('instrument');
-    beginBootPhase('snapshot');
-    failBootPhase('snapshot', 'cells snapshot: 503');
-    chargeBootFault('Error: cells snapshot: 503');
-    const failed = getBootSequence().phases.find((phase) => phase.state === 'failed');
-    expect(failed?.detail).toBe('cells snapshot: 503');
-  });
-
-  it('hands the whole message to the shell, and says when the shell has gone', () => {
-    expect(showBootShellFault('anything'), 'a fault line with no shell to draw on')
-      .toBe(false);
-    const seen: string[] = [];
-    window.__cknervBootFault = (text: string) => { seen.push(text); return true; };
-    expect(showBootShellFault('cells snapshot: 503')).toBe(true);
-    expect(seen).toEqual(['cells snapshot: 503']);
-  });
-
-  it('is the shell\'s own script that draws the line, in the shell\'s faces', () => {
-    // The presentation lives in `index.html` for the same reason the markup
-    // does: the shell's colours and stacks cannot be imported.
-    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
-    expect(script, 'the shell no longer draws a fault').toContain('__cknervBootFault');
-    expect(script, 'the fault line is not in the palette\'s danger')
-      .toContain(`color:#${/danger: '#(\w{6})'/.exec(HUD_THEME)?.[1]}`);
-    expect(stack(script), 'the fault line is not in the band\'s face')
-      .toContain(stack("'Share Tech Mono'"));
-    // `textContent`, so a fault message cannot smuggle markup into the one
-    // surface a broken page still renders.
-    expect(script).toContain('line.textContent = text');
-    expect(script, 'the fault line would draw over a HUD that already mounted')
-      .toContain('shell.isConnected');
-  });
-
-  it('really draws it, on the document the shell ships', () => {
-    document.documentElement.innerHTML = new DOMParser()
-      .parseFromString(INDEX_HTML, 'text/html').documentElement.innerHTML;
-    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
-    // eslint-disable-next-line no-new-func
-    new Function(script)();
-
-    expect(showBootShellFault('cells snapshot: 503')).toBe(true);
-    const line = document.getElementById('cknerv-boot-shell-fault');
-    expect(line?.textContent).toBe('cells snapshot: 503');
-    expect(line?.getAttribute('role')).toBe('alert');
-    // The band it belongs to is still there — the whole ruling in one line.
-    expect(document.getElementById('cknerv-boot-shell')).not.toBeNull();
-    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('INSTRUMENT');
-
-    // A second fault replaces the text rather than stacking a second line.
-    showBootShellFault('and then this');
-    expect(document.querySelectorAll('#cknerv-boot-shell-fault')).toHaveLength(1);
-    expect(document.getElementById('cknerv-boot-shell-fault')?.textContent)
-      .toBe('and then this');
-  });
-});
-
-// ——— The browser shell ————————————————————————————————————————————————
-//
-// Everything outside the canvas that the page still owns: the tab, the mark in
-// it, the colour the OS paints around it and the layout a phone is allowed to
-// choose. `index.html` had none of it (report E, E-13) — no viewport meta, so
-// the three-row mobile strip and every `≤560px` rule in the HUD were
-// unreachable code; a 404 favicon on every load; a lowercase `cknerv` title
-// nothing ever updated; and Tailwind slate-300 as the body ink, from the family
-// the 08-24 review purged out of the overlay.
-
-describe('the browser shell', () => {
-  const shipped = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
-  const meta = (name: string) =>
-    shipped.querySelector(`meta[name="${name}"]`)?.getAttribute('content');
-  const token = (name: string) =>
-    new RegExp(`${name}: '(#[0-9A-Fa-f]{6})'`).exec(HUD_THEME)?.[1]?.toLowerCase();
-
-  it('lets a phone lay the page out at its own width', () => {
-    // Without this the page is laid out at ~980px and zoomed out, so
-    // `STATUS_STRIP_HEIGHTS.mobile`, the ≤560/≤380 label-shedding rules and
-    // the Jukebox's safe-area insets can never engage.
-    expect(meta('viewport')).toBe('width=device-width, initial-scale=1, viewport-fit=cover');
-    // `viewport-fit=cover` is what makes an inset non-zero, and something asks.
+  it('keeps the favicon in the HUD palette and the mobile safe-area contract', () => {
+    const favicon = readFileSync(resolve(process.cwd(), 'public/favicon.svg'), 'utf8');
+    expect(favicon.toLowerCase()).toContain(String(token('stageGround')).toLowerCase());
+    expect(favicon.toLowerCase()).toContain(String(token('cyanWire')).toLowerCase());
+    expect(favicon).not.toMatch(/<text\b/);
     expect(readFileSync(resolve(process.cwd(), 'src/Jukebox.tsx'), 'utf8'))
       .toContain('env(safe-area-inset-');
   });
 
-  it('paints the chrome around the page in the page\'s own ground', () => {
-    expect(meta('theme-color')).toBe(token('stageGround'));
+  it('reserves one readout footprint for waiting, details, and reload', () => {
+    expect(INDEX_HTML).toContain('.cknerv-startup-readout { height:180px; }');
+    expect(INDEX_HTML).toContain('#cknerv-startup-detail { height:30px;');
+  });
+});
+
+describe('observed presentation', () => {
+  it('tracks each cells attempt instead of retaining the failed binary count', () => {
+    const binary = beginBootRequest('cells', 'cells-binary', 0);
+    reportBootRequestResponse('cells', binary, 2, 1_000);
+    reportBootRequestProgress('cells', binary, 3, 1_000);
+    // A JSON fallback is a fresh request, so its zero is the honest display.
+    const json = beginBootRequest('cells', 'cells-json', 4);
+    reportBootRequestResponse('cells', json, 5, null);
+    const state = bootPresentation(getBootSequence(), 5);
+    expect(state.heading).toBe('RECEIVING CHAIN DATA');
+    expect(state.detail).toBe('WAITING FOR RESPONSE');
+    expect(state.progress).toBeNull();
   });
 
-  it('carries the HUD\'s mark and the HUD\'s name', () => {
-    const icon = shipped.querySelector('link[rel="icon"]');
-    expect(icon?.getAttribute('type')).toBe('image/svg+xml');
-    expect(icon?.getAttribute('href')).toBe('/favicon.svg');
-    expect(shipped.title).toBe('CKNERV');
-    // Uppercase, like every other word the instrument prints.
-    expect(shipped.title).toBe(shipped.title.toUpperCase());
+  it('uses activity time for waiting and withdraws the warning on progress', () => {
+    const chain = beginBootRequest('chain', 'chain-json', 100);
+    reportBootRequestResponse('chain', chain, 200, null);
+    expect(bootPresentation(getBootSequence(), 8_199).state).toBe('receiving');
+    expect(bootPresentation(getBootSequence(), 8_200).state).toBe('waiting');
+    expect(bootPresentation(getBootSequence(), 30_200).showReload).toBe(true);
+    reportBootRequestProgress('chain', chain, 30_201, 1);
+    expect(bootPresentation(getBootSequence(), 30_202).state).toBe('receiving');
   });
 
-  it('ships the mark, drawn in the palette, with no text in it', () => {
-    // Vite copies `public/` to the dist root, `RustEmbed` picks it up from
-    // there and `cache_control_for` gives an unhashed root name `no-cache`.
-    // Nothing in Rust had to move; this is the pact that says so.
-    const svg = readFileSync(resolve(process.cwd(), 'public/favicon.svg'), 'utf8');
-    expect(svg.toLowerCase()).toContain(String(token('stageGround')));
-    expect(svg.toLowerCase()).toContain(String(token('cyanWire')));
-    // A wordmark at 16px is a smudge; the ◇ is what the HUD already means by
-    // "a point on a line".
-    expect(svg).not.toMatch(/<text\b/);
+  it('names chain-only waiting after cells complete', () => {
+    const chain = beginBootRequest('chain', 'chain-json', 0);
+    const cells = beginBootRequest('cells', 'cells-binary', 0);
+    reportBootRequestResponse('cells', cells, 1, 4);
+    reportBootRequestProgress('cells', cells, 2, 4);
+    completeBootRequest('cells', cells, 3);
+    expect(bootPresentation(getBootSequence(), 4).detail).toContain('WAITING FOR CHAIN SNAPSHOT');
+    completeBootRequest('chain', chain, 5);
+    markBootViewPreparing(6);
+    expect(bootPresentation(getBootSequence(), 6).heading).toBe('PREPARING THE VIEW');
+  });
+});
+
+describe('startup shell lifecycle', () => {
+  it('survives React mounting and is removed once after an actual presentation signal', () => {
+    vi.useFakeTimers();
+    installMarkup();
+    const cleanup = vi.fn();
+    window.__cknervBootCleanup = cleanup;
+    const stop = installBootShellReadout(() => 0);
+    document.getElementById('root')!.replaceChildren(document.createElement('canvas'));
+    expect(document.getElementById(BOOT_SHELL_ID)).not.toBeNull();
+    markBootViewPresented('populated');
+    expect(document.getElementById(BOOT_SHELL_ID)?.dataset.state).toBe('leaving');
+    markBootViewPresented('populated');
+    vi.advanceTimersByTime(600);
+    expect(document.getElementById(BOOT_SHELL_ID)).toBeNull();
+    expect(document.getElementById('root')?.hasAttribute('inert')).toBe(false);
+    expect(cleanup).toHaveBeenCalledOnce();
+    stop();
   });
 
-  it('spells its two inks as tokens, and neither is Tailwind\'s', () => {
-    const body = /body \{([^}]*)\}/.exec(INDEX_HTML)?.[1] ?? '';
-    expect(body).toContain(`background: ${token('stageGround')}`);
-    expect(body).toContain(`color: ${token('dim')}`);
-    // With the comments taken out: the prose beside these two names the value
-    // it replaced, and an oracle that read the argument would forbid it.
-    const prose = INDEX_HTML
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(prose, 'slate-300 is back').not.toContain('#cbd5e1');
+  it('does not rewrite the live region on timer-only paints', () => {
+    vi.useFakeTimers();
+    installMarkup();
+    installBootShellReadout(() => 0);
+    const heading = document.getElementById(BOOT_SHELL_PHASE_ID)!;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(heading, { childList: true, characterData: true, subtree: true });
+    vi.advanceTimersByTime(1_500);
+    expect(observer.takeRecords()).toHaveLength(0);
+    observer.disconnect();
+  });
+
+  it('keeps attempt diagnostics out of the changing live status', () => {
+    installMarkup();
+    installBootShellReadout(() => 1);
+    beginBootRequest('cells', 'cells-json', 1);
+    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.textContent).toBe('RECEIVING CHAIN DATA');
+    expect(document.getElementById('cknerv-startup-diagnostics')?.textContent)
+      .toContain('CELLS #1 CELLS-JSON REQUESTING');
+  });
+
+  it('removes immediately with reduced motion', () => {
+    vi.mocked(matchMedia).mockReturnValue({ matches: true } as MediaQueryList);
+    installMarkup();
+    installBootShellReadout(() => 0);
+    markBootViewPresented('empty');
+    expect(document.getElementById(BOOT_SHELL_ID)).toBeNull();
+  });
+
+  it('charges the first unfinished diagnostic phase without overwriting an earlier fault', () => {
+    completeBootPhase('instrument');
+    beginBootPhase('snapshot');
+    expect(chargeBootFault('cells snapshot: 503')).toBe('snapshot');
+    expect(getBootSequence().phases.find((phase) => phase.id === 'snapshot'))
+      .toMatchObject({ state: 'failed', detail: 'cells snapshot: 503' });
+    failBootPhase('snapshot', 'second description');
+    expect(getBootSequence().phases.find((phase) => phase.id === 'snapshot')?.detail)
+      .toBe('cells snapshot: 503');
+  });
+
+  it('passes fault text to the static shell and reports when it is unavailable', () => {
+    expect(showBootShellFault('anything')).toBe(false);
+    const fault = vi.fn(() => true);
+    window.__cknervBootFault = fault;
+    expect(showBootShellFault('cells snapshot: 503')).toBe(true);
+    expect(fault).toHaveBeenCalledWith('cells snapshot: 503');
+  });
+
+  it('uses text-only inline failure UI and removes every early global on cleanup', () => {
+    vi.useFakeTimers();
+    const parsed = new DOMParser().parseFromString(INDEX_HTML, 'text/html');
+    document.body.innerHTML = parsed.body.innerHTML;
+    const script = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML)?.[1] ?? '';
+    // eslint-disable-next-line no-new-func
+    new Function(script)();
+    expect(showBootShellFault('<b>broken</b>')).toBe(true);
+    expect(document.getElementById(BOOT_SHELL_PHASE_ID)?.getAttribute('role')).toBe('alert');
+    expect(document.getElementById(BOOT_SHELL_DETAIL_ID)?.textContent).toBe('<b>broken</b>');
+    expect(document.querySelector('#cknerv-startup-detail b')).toBeNull();
+    window.__cknervBootCleanup?.();
+    expect(window.__cknervBootTakeover).toBeUndefined();
+    expect(window.__cknervBootFault).toBeUndefined();
+    expect(window.__cknervBootCleanup).toBeUndefined();
   });
 });

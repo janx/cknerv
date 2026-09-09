@@ -12,7 +12,10 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
 import { PERFORMANCE_PROBE_LABELS } from '../tweaks/performanceProbeStore';
 import { createGpuProbeCallbacks } from '../tweaks/gpuTimerQuery';
-import { createNonEmptyDrawGpuProbeCallbacks } from '../tweaks/nonEmptyGpuProbeCallbacks';
+import {
+  createNonEmptyDrawGpuProbeCallbacks,
+} from '../tweaks/nonEmptyGpuProbeCallbacks';
+import { recordBootCellDraw } from '../boot/BootViewSentinel';
 import {
   mergeSlotRuns,
   slotUploadPolicy,
@@ -258,6 +261,9 @@ interface CellGalaxyProps {
    *  live peer latency), so it travels by ref, never as a prop, to keep the
    *  memo. Absent reads as 0. */
   localReceiveDelaySRef?: { readonly current: number };
+  /** Set only by the real Cell body object's post-draw callback. Startup uses
+   * this to distinguish a populated cache from pixels actually submitted. */
+  contentDrawnRef?: { current: boolean };
 }
 
 // A Cell's presentation size (`cellPointSize`) lives with the other pure Cell
@@ -1864,6 +1870,7 @@ function CellGalaxy({
   populationActive = false,
   cellDetailViewFocusRef,
   localReceiveDelaySRef,
+  contentDrawnRef,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
@@ -2116,14 +2123,23 @@ function CellGalaxy({
   // probe owns a timer-query context. Disabled callbacks stop at the probe's
   // boolean gate, and a pass whose draw range is empty never enters the
   // timer stream (the flare is also hidden then — belt and braces).
-  const cellGpuProbes = useMemo(() => ({
-    body: createNonEmptyDrawGpuProbeCallbacks(
+  const cellGpuProbes = useMemo(() => {
+    const body = createNonEmptyDrawGpuProbeCallbacks(
       createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellBody),
-    ),
-    flare: createNonEmptyDrawGpuProbeCallbacks(
-      createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellFlare),
-    ),
-  }), []);
+    );
+    return {
+      body: {
+        onBeforeRender: body.onBeforeRender,
+        onAfterRender(this: THREE.Object3D, ...args: Parameters<THREE.Object3D['onAfterRender']>) {
+          body.onAfterRender.apply(this, args);
+          recordBootCellDraw(args[0], this, args[3], contentDrawnRef);
+        },
+      },
+      flare: createNonEmptyDrawGpuProbeCallbacks(
+        createGpuProbeCallbacks(PERFORMANCE_PROBE_LABELS.cellFlare),
+      ),
+    };
+  }, [contentDrawnRef]);
 
   const cellGeometry = useMemo(() => {
     const g = new THREE.BufferGeometry();

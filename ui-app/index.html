@@ -2,25 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Without this a phone lays the page out at ~980px and zooms out, so the
-         three-row mobile strip, the ≤560/≤380 label-shedding rules and the
-         Jukebox's `env(safe-area-inset-*)` were all unreachable code (report E,
-         E-13). `viewport-fit=cover` is what makes the safe-area insets non-zero
-         on a notched display, which is the only reason they are asked for. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <!-- The chrome around the page, painted in the page's own ground. -->
     <meta name="theme-color" content="#02030a" />
-    <!-- The ◇ the boot band draws, the mark every `DiamondMark` in the HUD
-         wears. Served unhashed from the dist root, so `cknerv-cli`'s
-         `cache_control_for` gives it `no-cache` with everything else that is
-         not under `assets/`. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- The name, in the HUD's one case. `HudOverlay` appends the tip to it on
-         every block, so a tab left open in a background window is still a
-         readout. It was `cknerv`, lowercase, and never updated. -->
     <title>CKNERV</title>
-    <!-- Static share metadata for the public dashboard. Preview crawlers must
-         be able to read it without executing the app. -->
     <meta name="description" content="Explore CKB as a living cell galaxy. Watch real blocks, transactions, cells, and peers in a local-first, read-only chain visualization." />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="CKNERV" />
@@ -38,130 +23,81 @@
     <meta name="twitter:image" content="https://cknerv.web5.info/social-preview.png" />
     <meta name="twitter:image:alt" content="CKNERV's cyan diamond mark on a dark background, with the words A visible body for CKB." />
     <style>
-      /* The background is HUD_COLORS.stageGround from
-         packages/ui/src/components/hud/hudTheme.ts — the same value the Canvas
-         wrapper and the scene's own clear read by name — spelled out here for
-         the same reason the boot shell below spells its three: a stylesheet in
-         the document head cannot import. It paints before any module has
-         evaluated and holds the ground until a first frame exists, so a copy
-         that drifts shows up as the page shifting at first light.
-         `ui-app/__tests__/App.sceneRoots.test.tsx` holds this literal against
-         the token. */
-      /* …and the ink beside it is `HUD_COLORS.dim`, spelled out on the same
-         terms. It was `#cbd5e1` — Tailwind slate-300, from the family the
-         08-24 review purged out of the overlay — sitting in the one stylesheet
-         no guard reads. Nothing on screen inherits it for long (every HUD
-         surface names its own ink), which is exactly why it went unnoticed and
-         exactly why it should be a token: a default nobody sees is a default
-         nobody corrects. */
-      body { margin: 0; background: #02030a; overflow: hidden; font-family: ui-monospace, monospace; color: #7c8794; }
-      #root { width: 100vw; height: 100vh; }
+      :root { color-scheme: dark; background:#02030a; }
+      body { margin:0; overflow:hidden; background:#02030a; color:#7c8794; font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace; }
+      #root { width:100vw; height:100vh; }
+      #cknerv-startup { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; box-sizing:border-box; padding:24px; overflow:hidden; background:#02030a; opacity:1; transition:opacity 400ms ease; }
+      #cknerv-startup[data-state="leaving"] { opacity:0; pointer-events:none; }
+      .cknerv-startup-aura { position:absolute; width:min(74vw,680px); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle,rgba(32,240,255,.11),rgba(32,240,255,.025) 34%,transparent 69%); animation:cknerv-breathe 4s ease-in-out infinite; }
+      .cknerv-startup-grid { position:absolute; inset:0; opacity:.13; background-image:linear-gradient(rgba(32,240,255,.16) 1px,transparent 1px),linear-gradient(90deg,rgba(32,240,255,.16) 1px,transparent 1px); background-size:48px 48px; mask-image:radial-gradient(circle at center,#000,transparent 72%); }
+      .cknerv-startup-body { position:relative; width:min(460px,calc(100vw - 40px)); text-align:center; }
+      .cknerv-startup-mark { width:104px; height:104px; margin:0 auto 25px; color:#20f0ff; filter:drop-shadow(0 0 18px rgba(32,240,255,.32)); animation:cknerv-breathe 4s ease-in-out infinite; }
+      .cknerv-startup-word { margin:0; font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif; font-size:clamp(30px,6vw,48px); font-weight:700; letter-spacing:.24em; text-indent:.24em; color:#C9F8FF; }
+      .cknerv-startup-tagline { margin:7px 0 43px; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:#70808f; }
+      .cknerv-startup-readout { height:180px; }
+      #cknerv-startup-status { min-height:18px; color:#20f0ff; font-size:11px; letter-spacing:.16em; }
+      #cknerv-startup-detail { height:30px; margin-top:8px; color:#7c8794; font-size:9px; line-height:1.55; letter-spacing:.1em; overflow:auto; overflow-wrap:anywhere; }
+      .cknerv-startup-track { position:relative; height:1px; margin:12px auto 0; width:min(330px,78vw); overflow:hidden; background:rgba(124,135,148,.22); }
+      #cknerv-startup-progress { position:absolute; inset:0; transform:scaleX(0); transform-origin:left; background:#20f0ff; transition:transform 120ms linear; }
+      .cknerv-startup-track[data-indeterminate="true"]::after { content:""; position:absolute; inset:0; width:36%; background:linear-gradient(90deg,transparent,#20f0ff,transparent); animation:cknerv-scan 1.6s linear infinite; }
+      #cknerv-startup-reload { margin-top:17px; padding:8px 18px; border:1px solid rgba(32,240,255,.55); background:rgba(2,3,10,.82); color:#C9F8FF; font:10px 'Share Tech Mono',ui-monospace,monospace; letter-spacing:.16em; cursor:pointer; }
+      .cknerv-startup-diagnostics { margin:16px auto 0; width:min(380px,82vw); color:#7C8794; font-size:8px; line-height:1.55; letter-spacing:.08em; }
+      .cknerv-startup-diagnostics summary { cursor:pointer; color:#7C8794; }
+      #cknerv-startup-diagnostics { display:block; margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere; }
+      #cknerv-startup[data-state="failed"] #cknerv-startup-status,#cknerv-startup[data-state="failed"] #cknerv-startup-detail { color:#FF3030; }
+      #cknerv-startup[data-state="failed"] .cknerv-startup-mark,#cknerv-startup[data-state="failed"] .cknerv-startup-aura { color:#FF3030; animation:none; }
+      @keyframes cknerv-breathe { 50% { opacity:.7; transform:scale(.975); } }
+      @keyframes cknerv-scan { from { transform:translateX(-110%); } to { transform:translateX(320%); } }
+      @media (prefers-reduced-motion:reduce) { .cknerv-startup-aura,.cknerv-startup-mark,.cknerv-startup-track::after { animation:none!important; } #cknerv-startup { transition:none; } }
+      @media (max-width:390px) { #cknerv-startup { padding:18px; } .cknerv-startup-mark { width:78px; height:78px; margin-bottom:18px; } .cknerv-startup-tagline { margin-bottom:32px; } }
+      @media (max-height:440px) and (orientation:landscape) { .cknerv-startup-mark { width:58px; height:58px; margin-bottom:10px; } .cknerv-startup-word { font-size:26px; } .cknerv-startup-tagline { margin:3px 0 16px; } }
     </style>
   </head>
   <body>
-    <div id="root">
-      <!-- Boot shell. The bundle is a module script and the cells snapshot is
-           several megabytes, so on an ordinary remote connection this markup is
-           the only thing on screen for the first three seconds — measured, and
-           previously three seconds of pure black. It sits INSIDE #root, so
-           `root.render` replaces it atomically and no teardown code exists.
-           Reads correctly with no JS at all: a visitor whose bundle never
-           arrives is looking at INSTRUMENT, which is exactly true.
-           Geometry and voice mirror StreamHealthBanner (edge-bound 30px band);
-           the colours are HUD_COLORS.cyanWire / dim / danger from
-           packages/ui/src/components/hud/hudTheme.ts, spelled out because
-           index.html cannot import. No animation — text state only.
-
-           THE FACES ARE THE BAND'S, and that is E2's fix. This markup drew
-           STAGE POWER-ON in the OS monospace while the React band that
-           replaces it sets the same words in Saira 700 over Share Tech Mono,
-           with the ◇ in the JetBrains subset — so one word was set in three
-           typefaces inside the first second (report E, E-2). The stacks below
-           are HUD_FONTS.mono / .display and the diamond's, and `vite-boot-
-           faces.ts` puts their `@font-face` and a preload in the head so the
-           bytes are in flight with the document rather than after a
-           `useEffect`. -->
-      <div id="cknerv-boot-shell" data-boot-shell role="status" aria-live="polite"
-           style="position:absolute;top:36px;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:center;gap:10px;box-sizing:border-box;font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace;font-size:10.5px;color:#20F0FF;background:linear-gradient(90deg,transparent,rgba(32,240,255,.13) 28%,rgba(0,0,0,.78) 50%,rgba(32,240,255,.13) 72%,transparent);border-bottom:1px solid rgba(32,240,255,.45)">
-        <span aria-hidden="true" style="font-family:'JetBrains Mono Local',ui-monospace,monospace">◇</span>
-        <span style="font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif;font-weight:700;letter-spacing:2px">STAGE POWER-ON</span>
-        <span id="cknerv-boot-shell-phase" style="font-size:9px;letter-spacing:1.2px">INSTRUMENT</span>
-        <span id="cknerv-boot-shell-detail" style="font-size:9px;letter-spacing:1.2px;color:#7C8794"></span>
+    <div id="root" inert></div>
+    <div id="cknerv-startup" data-boot-shell data-state="preparing">
+      <div class="cknerv-startup-grid" aria-hidden="true"></div>
+      <div class="cknerv-startup-aura" aria-hidden="true"></div>
+      <div class="cknerv-startup-body">
+        <svg class="cknerv-startup-mark" viewBox="0 0 120 120" aria-hidden="true">
+          <path d="M60 7 113 60 60 113 7 60Z" fill="none" stroke="currentColor" stroke-width="1.25" opacity=".72"/>
+          <path d="M60 20 100 60 60 100 20 60Z" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M60 35 85 60 60 85 35 60Z" fill="rgba(32,240,255,.035)" stroke="currentColor" stroke-width="1" opacity=".7"/>
+          <circle cx="60" cy="60" r="3" fill="currentColor"/>
+        </svg>
+        <h1 class="cknerv-startup-word">CKNERV</h1>
+        <p class="cknerv-startup-tagline">A visible body for CKB.</p>
+        <div class="cknerv-startup-readout">
+          <div id="cknerv-startup-status" role="status" aria-live="polite" aria-atomic="true">PREPARING CKNERV</div>
+          <div id="cknerv-startup-detail"></div>
+          <div class="cknerv-startup-track" aria-hidden="true"><div id="cknerv-startup-progress"></div></div>
+          <div id="cknerv-startup-error" hidden></div>
+          <button id="cknerv-startup-reload" type="button" hidden>RELOAD</button>
+          <details class="cknerv-startup-diagnostics">
+            <summary>DETAILS</summary>
+            <span id="cknerv-startup-diagnostics">BUNDLE PENDING</span>
+          </details>
+        </div>
       </div>
     </div>
-    <!-- The shell stands where the strip will, and the strip has three heights.
-         `STATUS_STRIP_HEIGHTS` in packages/ui/src/components/hud/StatusStrip.tsx
-         is the authority: 36 one row, 64 folded to two, 59 on a phone. The
-         shell hard-coded 36, so every viewport that folds watched the band
-         DROP 28px at the handover, in the same frames the band exists to hold
-         still (report E, E-2). Classic and inline, right under the element: it
-         has to run before the first paint and there is no module to wait for.
-
-         ⚠️ AND 1102 IS A GUESS, WHICH IS THE HONEST WORD FOR IT. The HUD does
-         not fold at a width any more: it renders the strip a second time,
-         hidden, measures how wide one row wants to be and folds when that will
-         not fit — `packages/ui/src/components/hud/useStatusStripFold.ts` is
-         the authority and argues the whole rule. The shell cannot do that,
-         because there is no strip yet and nothing has been laid out, so it
-         runs the same ESTIMATE the HUD's own first render runs: the row as
-         measured on a shipped build (1079) plus the slack it must keep (24),
-         minus one because `max-width` is inclusive. An inline classic
-         script cannot import, so the number is restated here and
-         `ui-app/__tests__/boot-shell.test.ts` derives it from those two
-         constants rather than from the answer — the pact is the arithmetic.
-
-         The edge that buys, stated rather than hidden: a page whose row is
-         wider or narrower than 1079 — a longer ckbadger status word, a chip in
-         the actions slot, a font that lands late — can hand over from a 64px
-         band to a 36px strip, or the reverse, once, inside a band of about
-         ±20px around 1103. Everywhere else the two agree, which is more than
-         the fixed 1280 they replaced ever managed. -->
-    <!-- …and it is the shell that shows a bootstrap fault, because a fault is
-         the one moment the page has nothing else to show. This used to replace
-         #root with a `<pre>` in `#f88` and the browser's own monospace — the
-         designed band was told the phase it died in and then deleted in the
-         same tick, so the one state a visitor with a dead server ever sees was
-         the one state nobody had drawn (report E, E-7). The band stands; the
-         line below it carries the whole message, wrapping, in the shell's own
-         faces and the palette's `danger`.
-
-         The hook lives HERE and not in `boot-shell.ts` for the reason the
-         markup above lives here: the shell's colours and stacks cannot be
-         imported, so they are spelled once, in one file. `main.tsx` calls it
-         and knows nothing about how the shell looks. -->
+    <noscript><div style="position:fixed;inset:auto 16px 18px;z-index:10001;text-align:center;color:#FF3030;font:11px ui-monospace,monospace">CKNERV REQUIRES JAVASCRIPT TO RENDER THE LIVE VIEW.</div></noscript>
     <script>
       (function () {
-        var shell = document.getElementById('cknerv-boot-shell');
-        if (!shell) return;
-        if (typeof window.matchMedia === 'function') {
-          shell.style.top = window.matchMedia('(max-width: 560px)').matches ? '59px'
-            : window.matchMedia('(max-width: 1102px)').matches ? '64px'
-            : '36px';
-        }
-        // Installed whatever the sizing above could work out: a page that
-        // cannot answer a media query still has a fault to show.
-        window.__cknervBootFault = function (text) {
-          // The band may already be gone — React took #root — in which case
-          // the HUD's own banner is holding the fault and this must not draw a
-          // second one.
-          if (!shell.isConnected) return false;
-          var line = document.getElementById('cknerv-boot-shell-fault');
-          if (!line) {
-            line = document.createElement('div');
-            line.id = 'cknerv-boot-shell-fault';
-            line.setAttribute('role', 'alert');
-            line.style.cssText = 'position:absolute;left:0;right:0;top:' +
-              (parseInt(shell.style.top, 10) + 30) + 'px;padding:9px 16px;box-sizing:border-box;' +
-              'text-align:center;font-size:9px;letter-spacing:1.2px;line-height:1.6;' +
-              'white-space:pre-wrap;overflow-wrap:anywhere;color:#FF3030;' +
-              "font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace";
-            shell.parentNode.insertBefore(line, shell.nextSibling);
-          }
-          // `textContent`, so a hostile payload in a fault message cannot
-          // smuggle markup into the one surface a broken page still renders.
-          line.textContent = text;
-          return true;
-        };
+        var shell=document.getElementById('cknerv-startup');
+        var status=document.getElementById('cknerv-startup-status');
+        var detail=document.getElementById('cknerv-startup-detail');
+        var reload=document.getElementById('cknerv-startup-reload');
+        var claimed=false;
+        function waiting(){if(claimed||!shell)return;status.textContent='STILL PREPARING CKNERV';detail.textContent='THE APPLICATION IS TAKING LONGER THAN EXPECTED.';shell.dataset.state='waiting';}
+        function reloadable(){if(claimed||!shell)return;waiting();reload.hidden=false;}
+        var slow=setTimeout(waiting,8000), long=setTimeout(reloadable,30000);
+        reload.addEventListener('click',function(){location.reload();});
+        function stopEarlyWatch(){clearTimeout(slow);clearTimeout(long);window.removeEventListener('error',onScriptError,true);}
+        function onScriptError(event){var target=event.target;if(target&&target.tagName==='SCRIPT'&&target.type==='module')window.__cknervBootFault('The application script could not be loaded.');}
+        window.__cknervBootTakeover=function(){claimed=true;stopEarlyWatch();delete window.__cknervBootTakeover;};
+        window.__cknervBootFault=function(text){if(!shell||!shell.isConnected)return false;claimed=true;clearTimeout(slow);clearTimeout(long);shell.dataset.state='failed';status.setAttribute('role','alert');status.textContent='UNABLE TO LOAD CKNERV';detail.textContent=String(text);reload.hidden=false;return true;};
+        window.__cknervBootCleanup=function(){claimed=true;stopEarlyWatch();delete window.__cknervBootTakeover;delete window.__cknervBootFault;delete window.__cknervBootCleanup;};
+        window.addEventListener('error',onScriptError,true);
       })();
     </script>
     <script src="/runtime-config.js"></script>

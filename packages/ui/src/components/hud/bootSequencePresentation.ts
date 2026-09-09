@@ -1,4 +1,5 @@
 import type {
+  BootRequestSnapshot,
   BootPhaseId,
   BootPhaseSnapshot,
   BootPhaseState,
@@ -113,16 +114,20 @@ export function formatBootSeedingDetail(phase: BootPhaseSnapshot): string {
 }
 
 /**
- * The number a line carries, when it carries one. Only two phases are measured
- * — the streamed snapshot and the server's replay — everything else is a tick,
+ * The number a line carries, when it carries one. Only two observations are measured
+ * — the latest Cells request and the server's replay — everything else is a tick,
  * because a tick is all that was observed. A failed line drops its measurement
  * for the reason it failed: at that point the reason is the reading.
  */
-export function bootPhaseDetail(phase: BootPhaseSnapshot): string {
+export function bootPhaseDetail(
+  phase: BootPhaseSnapshot,
+  requests: readonly BootRequestSnapshot[] = [],
+): string {
   if (phase.state === 'failed') return phase.detail ?? '';
   if (phase.state !== 'active') return '';
   if (phase.id === 'snapshot') {
-    return formatBootSnapshotDetail(phase.receivedBytes, phase.totalBytes);
+    const attempt = [...requests].reverse().find((request) => request.kind === 'cells');
+    return attempt ? formatBootSnapshotDetail(attempt.receivedBytes, attempt.totalBytes) : '';
   }
   if (phase.id === 'seeding') return formatBootSeedingDetail(phase);
   return '';
@@ -138,9 +143,12 @@ export interface BootPhaseLine {
   text: string;
 }
 
-export function bootPhaseLine(phase: BootPhaseSnapshot): BootPhaseLine {
+export function bootPhaseLine(
+  phase: BootPhaseSnapshot,
+  requests: readonly BootRequestSnapshot[] = [],
+): BootPhaseLine {
   const label = BOOT_PHASE_LABELS[phase.id];
-  const detail = bootPhaseDetail(phase);
+  const detail = bootPhaseDetail(phase, requests);
   const head = phase.state === 'failed' ? `${label} FAULT` : label;
   const separator = phase.state === 'failed' ? ' — ' : ' ';
   return {

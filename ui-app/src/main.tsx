@@ -9,6 +9,8 @@ import type { CellGalaxySnapshot } from '@cknerv/types';
 import {
   QUALITY_PRESETS,
   completeBootPhase,
+  markBootModuleStarted,
+  markBootViewPreparing,
   setAdaptiveQuality,
   setQualityMode,
 } from '@cknerv/ui';
@@ -52,6 +54,7 @@ async function bootstrap() {
   // This line running is the proof the bundle arrived and evaluates; the boot
   // record starts `instrument` active on module load and closes it here.
   completeBootPhase('instrument');
+  markBootModuleStarted(performance.now());
   const reviewRoute = resolveVisualReviewRoute(window.location.search);
   const qualityOverride = resolveQualityOverride(window.location.search);
   if (qualityOverride) {
@@ -80,22 +83,43 @@ async function bootstrap() {
     reviewRoute ? loadVisualReviewLab(reviewRoute) : Promise.resolve(null),
   ]);
   const root = ReactDOM.createRoot(document.getElementById('root')!);
+  markBootViewPreparing(performance.now());
   root.render(
     <React.StrictMode>
-      {ReviewLab ? (
-        <ReviewLab snapshot={cellsResp.snapshot} />
-      ) : (
-        <App
-          initialChain={chainResp.chain}
-          initialChainNodes={chainResp.chain_nodes ?? []}
-          initialPeers={chainResp.peers ?? []}
-          initialChainRevision={chainResp.revision}
-          initialCells={cellsResp.snapshot}
-          initialCellsRevision={cellsResp.revision}
-        />
-      )}
+      <StartupErrorBoundary>
+        {ReviewLab ? (
+          <ReviewLab snapshot={cellsResp.snapshot} />
+        ) : (
+          <App
+            initialChain={chainResp.chain}
+            initialChainNodes={chainResp.chain_nodes ?? []}
+            initialPeers={chainResp.peers ?? []}
+            initialChainRevision={chainResp.revision}
+            initialCells={cellsResp.snapshot}
+            initialCellsRevision={cellsResp.revision}
+          />
+        )}
+      </StartupErrorBoundary>
     </React.StrictMode>,
   );
+}
+
+class StartupErrorBoundary extends React.Component<React.PropsWithChildren, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error): void {
+    const message = error.message || 'The initial view could not be rendered.';
+    chargeBootFault(message);
+    showBootShellFault(message);
+  }
+
+  render(): React.ReactNode {
+    return this.state.failed ? null : this.props.children;
+  }
 }
 
 // Dev affordance — attach window.__pulseStats() / __pulseStatsReset() for
@@ -114,7 +138,7 @@ installCellFieldHook();
 // phase it died in, and now keeps saying it — nothing replaces the shell.
 installBootShellReadout();
 
-// THE SHELL AND THE BAND ARE THE WHOLE ERROR UI.
+// THE STATIC STARTUP LAYER IS THE WHOLE INITIAL ERROR UI.
 //
 // This used to build a plain block element in `#f88` — a colour outside the
 // palette, in the browser's own monospace, at 20px of padding — and hand it to
@@ -122,12 +146,9 @@ installBootShellReadout();
 // had just been told which phase died (report E, E-7). The one state a visitor
 // with a dead server ever sees was the one state nobody had drawn.
 //
-// So: charge the fault to the line the boot got to, which makes the band say
-// `SNAPSHOT FAULT — cells snapshot: 503` through the readout already installed
-// above, and hand the full message to the shell's own fault line, which is
-// drawn by `index.html`'s own script in the shell's own faces. Nothing is
-// replaced, and a boot that gets far enough for React to mount hands the same
-// record to the HUD's banner instead.
+// So: charge the fault to the diagnostic line the boot reached, then hand the
+// full message to the startup layer's own fault surface. Nothing replaces the
+// shell, and the same request and phase record remains available under DETAILS.
 bootstrap().catch((e: unknown) => {
   const message = e instanceof Error ? e.message : String(e);
   chargeBootFault(message);

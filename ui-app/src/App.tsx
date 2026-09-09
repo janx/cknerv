@@ -23,6 +23,7 @@ import {
   AdaptiveQualityController,
   beginBootPhase,
   BootFrameSentinel,
+  BootViewSentinel,
   BootNerveRestSentinel,
   completeBootPhase,
   completeBootSeeding,
@@ -370,6 +371,7 @@ export default function App({
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
   const cellGalaxyCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bootCellDrawnRef = useRef(false);
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
   const [cameraFrame, setCameraFrame] = useState<HudCameraFrame | null>(null);
   const initialCamera = useInitialStageCamera(cameraFrame);
@@ -2224,6 +2226,30 @@ export default function App({
           visible through the ` panel toggle or ?render-stats=1. */}
       {forceRenderStats ? <RenderStatsPanel /> : null}
 
+      {showableCellCount === 0 ? (
+        <div
+          data-empty-stage={cellsCache.backfill ? 'populating' : 'empty'}
+          role="status"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            top: '58%',
+            zIndex: 2,
+            transform: 'translate(-50%, -50%)',
+            color: HUD_COLORS.dim,
+            fontFamily: "'Share Tech Mono', ui-monospace, monospace",
+            fontSize: 10,
+            letterSpacing: 1.4,
+            textAlign: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          {cellsCache.backfill
+            ? 'WAITING FOR THE SERVER TO POPULATE THE STAGE'
+            : 'NO CELLS ARE CURRENTLY AVAILABLE TO DISPLAY'}
+        </div>
+      ) : null}
+
       <CellGalaxyProvider value={cellsCache}>
         {/* HUD layout is available before paint, independently of boot/data
             readiness. The first Canvas frame already has its final pose. */}
@@ -2283,6 +2309,10 @@ export default function App({
               NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
+          <BootViewSentinel
+            populated={showableCellCount > 0}
+            contentDrawnRef={bootCellDrawnRef}
+          />
           {/* Watches frame deltas for first light — the loop running steadily
               with cells on the stage — and closes that line of the boot
               record. Draws nothing; same discipline as the ticker above
@@ -2342,6 +2372,7 @@ export default function App({
           {/* CellGalaxy owns exact ledger-apply feedback only. The broad
               new-block brightness shockwave now belongs to NetworkColony. */}
           <CellGalaxy
+            contentDrawnRef={bootCellDrawnRef}
             ckbNodeIds={ckbNodeIds}
             ckbNodeLabels={ckbNodeLabels}
             universeSeed={universeSeed}

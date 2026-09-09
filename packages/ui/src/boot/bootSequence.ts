@@ -11,9 +11,9 @@ import { useSyncExternalStore } from 'react';
  * in `index.html`, which subscribes imperatively during the window where
  * React does not exist yet.
  *
- * This module records STATES. Not durations — no clock is read here — and
- * not presentation: labels, colours and the compact layout belong beside
- * the banner, the way `replayPresentation` sits beside the replay HUDs.
+ * This module records observed states and caller-supplied monotonic timestamps.
+ * It does not choose labels, colours, waiting thresholds or layout; those
+ * presentation rules live beside each consumer.
  */
 
 export type BootPhaseId =
@@ -31,11 +31,6 @@ export type BootPhaseState = 'pending' | 'active' | 'done' | 'failed';
 export interface BootPhaseSnapshot {
   id: BootPhaseId;
   state: BootPhaseState;
-  /** snapshot phase only: streamed byte progress. `totalBytes: null` means
-   * the response carried no length — indeterminate, and a consumer must NOT
-   * synthesize a percentage from it. */
-  receivedBytes?: number;
-  totalBytes?: number | null;
   /** seeding phase only: mirrored server replay progress. */
   seedingDone?: number;
   seedingTotal?: number;
@@ -50,6 +45,31 @@ export interface BootSequenceSnapshot {
   complete: boolean;
   /** Display order. `seeding` appears ONLY once it has been reported. */
   phases: readonly BootPhaseSnapshot[];
+  /** Every required bootstrap request is observed per actual attempt. */
+  requests?: readonly BootRequestSnapshot[];
+  /** The module has taken ownership from index.html's pre-bundle timer. */
+  moduleStartedAtMs?: number | null;
+  /** The React tree has the snapshots and is waiting for its first real draw. */
+  viewPreparingAtMs?: number | null;
+  /** Independent of diagnostic phase completion and frame-rate quality. */
+  viewPresented?: boolean;
+  viewKind?: 'populated' | 'empty' | null;
+}
+
+export type BootRequestKind = 'chain' | 'cells';
+export type BootRequestTransport = 'chain-json' | 'cells-binary' | 'cells-json';
+export type BootRequestState = 'requesting' | 'reading' | 'done' | 'failed';
+
+export interface BootRequestSnapshot {
+  kind: BootRequestKind;
+  transport: BootRequestTransport;
+  attempt: number;
+  state: BootRequestState;
+  startedAtMs: number;
+  lastActivityAtMs: number;
+  receivedBytes: number;
+  totalBytes: number | null;
+  detail?: string;
 }
 
 /**
@@ -83,6 +103,11 @@ let snapshot: BootSequenceSnapshot = {
   active: true,
   complete: false,
   phases: initialPhases(),
+  requests: [],
+  moduleStartedAtMs: null,
+  viewPreparingAtMs: null,
+  viewPresented: false,
+  viewKind: null,
 };
 
 function isTerminal(state: BootPhaseState): boolean {
@@ -101,8 +126,139 @@ function count(value: number): number {
  * is the point: the banner stays up carrying the fault. */
 function publish(phases: readonly BootPhaseSnapshot[]): void {
   const complete = phases.every((phase) => phase.state === 'done');
-  snapshot = { active: !complete, complete, phases };
+  snapshot = { ...snapshot, active: !complete, complete, phases };
   for (const listener of listeners) listener();
+}
+
+function publishSnapshot(next: BootSequenceSnapshot): void {
+  if (next === snapshot) return;
+  snapshot = next;
+  for (const listener of listeners) listener();
+}
+
+function monotonicTime(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+export function markBootModuleStarted(atMs: number): void {
+  if (typeof snapshot.moduleStartedAtMs === 'number') return;
+  publishSnapshot({ ...snapshot, moduleStartedAtMs: monotonicTime(atMs) });
+}
+
+export function beginBootRequest(
+  kind: BootRequestKind,
+  transport: BootRequestTransport,
+  atMs: number,
+): number {
+  if (snapshot.complete || snapshot.viewPresented) return 0;
+  const requests = snapshot.requests ?? [];
+  const attempt = requests.reduce(
+    (highest, request) => request.kind === kind ? Math.max(highest, request.attempt) : highest,
+    0,
+  ) + 1;
+  const now = monotonicTime(atMs);
+  publishSnapshot({
+    ...snapshot,
+    requests: [...requests, {
+      kind,
+      transport,
+      attempt,
+      state: 'requesting',
+      startedAtMs: now,
+      lastActivityAtMs: now,
+      receivedBytes: 0,
+      totalBytes: null,
+    }],
+  });
+  return attempt;
+}
+
+function updateBootRequest(
+  kind: BootRequestKind,
+  attempt: number,
+  update: (request: BootRequestSnapshot) => BootRequestSnapshot,
+): void {
+  const currentRequests = snapshot.requests ?? [];
+  const index = currentRequests.findIndex(
+    (request) => request.kind === kind && request.attempt === attempt,
+  );
+  if (index < 0) return;
+  const current = currentRequests[index];
+  if (current.state === 'done' || current.state === 'failed') return;
+  const next = update(current);
+  if (next === current) return;
+  const requests = currentRequests.slice();
+  requests[index] = next;
+  publishSnapshot({ ...snapshot, requests });
+}
+
+export function reportBootRequestResponse(
+  kind: BootRequestKind,
+  attempt: number,
+  atMs: number,
+  totalBytes: number | null,
+): void {
+  updateBootRequest(kind, attempt, (request) => ({
+    ...request,
+    state: 'reading',
+    lastActivityAtMs: Math.max(request.lastActivityAtMs, monotonicTime(atMs)),
+    totalBytes: totalBytes !== null && Number.isFinite(totalBytes) && totalBytes > 0
+      ? count(totalBytes)
+      : null,
+  }));
+}
+
+export function reportBootRequestProgress(
+  kind: BootRequestKind,
+  attempt: number,
+  atMs: number,
+  receivedBytes: number,
+): void {
+  if (!Number.isFinite(receivedBytes) || receivedBytes < 0) return;
+  updateBootRequest(kind, attempt, (request) => {
+    const received = count(receivedBytes);
+    const now = Math.max(request.lastActivityAtMs, monotonicTime(atMs));
+    if (request.receivedBytes === received && request.lastActivityAtMs === now) return request;
+    return { ...request, state: 'reading', receivedBytes: received, lastActivityAtMs: now };
+  });
+}
+
+export function completeBootRequest(
+  kind: BootRequestKind,
+  attempt: number,
+  atMs: number,
+): void {
+  updateBootRequest(kind, attempt, (request) => ({
+    ...request,
+    state: 'done',
+    lastActivityAtMs: Math.max(request.lastActivityAtMs, monotonicTime(atMs)),
+    // A mismatched declared length is not a trustworthy denominator.
+    totalBytes: request.totalBytes === request.receivedBytes ? request.totalBytes : null,
+  }));
+}
+
+export function failBootRequest(
+  kind: BootRequestKind,
+  attempt: number,
+  atMs: number,
+  detail: string,
+): void {
+  updateBootRequest(kind, attempt, (request) => ({
+    ...request,
+    state: 'failed',
+    lastActivityAtMs: Math.max(request.lastActivityAtMs, monotonicTime(atMs)),
+    detail,
+  }));
+}
+
+export function markBootViewPreparing(atMs: number): void {
+  if (typeof snapshot.viewPreparingAtMs === 'number' || snapshot.viewPresented) return;
+  publishSnapshot({ ...snapshot, viewPreparingAtMs: monotonicTime(atMs) });
+}
+
+export function markBootViewPresented(kind: 'populated' | 'empty'): void {
+  if (snapshot.viewPresented) return;
+  publishSnapshot({ ...snapshot, viewPresented: true, viewKind: kind });
 }
 
 /**
@@ -152,35 +308,6 @@ export function failBootPhase(
   writePhase(id, (phase) => (
     isTerminal(phase.state) ? phase : { ...phase, state: 'failed', detail }
   ));
-}
-
-/**
- * Streamed snapshot bytes — the only continuous measure in the sequence, and
- * exact: the endpoint sends a real content-length and no content-encoding.
- * `totalBytes: null` keeps the phase indeterminate rather than inventing a
- * denominator. Reporting implies the phase is running.
- */
-export function reportBootSnapshotProgress(
-  receivedBytes: number,
-  totalBytes: number | null,
-): void {
-  writePhase('snapshot', (phase) => {
-    if (isTerminal(phase.state)) return phase;
-    // A retry (stream error → JSON fallback) restarts the byte count; the
-    // readout must not walk backwards, so the high-water mark stands.
-    const received = Math.max(phase.receivedBytes ?? 0, count(receivedBytes));
-    // An unusable length is indeterminate, not zero — a zero denominator is
-    // exactly the synthesized percentage this readout refuses to show.
-    const total = totalBytes !== null && Number.isFinite(totalBytes)
-      ? count(totalBytes)
-      : null;
-    if (
-      phase.state === 'active'
-      && phase.receivedBytes === received
-      && phase.totalBytes === total
-    ) return phase;
-    return { ...phase, state: 'active', receivedBytes: received, totalBytes: total };
-  });
 }
 
 /**
@@ -240,5 +367,15 @@ export function useBootSequence(): BootSequenceSnapshot {
  * that mount a booting tree twice need to. Subscribers are kept — a mounted
  * reader survives the rewind — and told. */
 export function resetBootSequenceForTest(): void {
-  publish(initialPhases());
+  snapshot = {
+    active: true,
+    complete: false,
+    phases: initialPhases(),
+    requests: [],
+    moduleStartedAtMs: null,
+    viewPreparingAtMs: null,
+    viewPresented: false,
+    viewKind: null,
+  };
+  for (const listener of listeners) listener();
 }

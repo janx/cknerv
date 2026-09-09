@@ -888,6 +888,24 @@ before mounting React. The Cell path prefers the columnar binary form and
 falls back to JSON. `App` renders only after both initial caches exist, avoiding
 an artificial empty world followed by a full-scene jump.
 
+The HTML carries a full-viewport static startup layer beside the inert React
+root, so bundle download, snapshot transfer, decoding, and Canvas preparation
+never expose an empty page. Chain and Cell requests are observed per actual
+attempt; a binary-to-JSON fallback starts a fresh byte count, and a percentage
+is shown only for an unencoded response with a usable `Content-Length`. Eight
+seconds without response or body activity changes the copy to a waiting state;
+thirty seconds exposes a manual reload of the current URL. Activity resumes the
+ordinary receiving state without cancelling or retrying the request.
+
+React mounting does not remove that layer. A sentinel attached to the current
+R3F scene reports only from Three's post-render callback, after the main scene
+has actually drawn. That one-shot signal removes the layer and releases the
+React root independently of the diagnostic `first_light`, fabric, data-plane,
+and seeding phases. A rendered empty stage is a valid handoff and carries a DOM
+empty/populating explanation; low frame rate cannot hold the startup layer.
+DOM-only empty Review Lab routes report after their empty-state commit because
+those legal branches do not create a Canvas.
+
 `App` then connects entity, Cell, and optional semantic streams independently:
 
 - URLs are same-origin, so Vite development proxying and the embedded CLI use
