@@ -10,7 +10,7 @@ import {
 import { formatCkb } from './cellFormat';
 import { HudAge, useHudClockSelector } from './hudClock';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba, STALE_OPACITY } from './hudTheme';
-import { PLATE_ROW_RAIL_ALPHA } from './primitives';
+import { ExactOnTap, PLATE_ROW_RAIL_ALPHA } from './primitives';
 
 const SHANNONS_PER_CKB = 100_000_000n;
 
@@ -87,30 +87,34 @@ function MetricLabel({ children }: { children: ReactNode }) {
   );
 }
 
-function CompactMetric({ label, children, title }: {
+function CompactMetric({ label, children, exact }: {
   label: string;
   children: ReactNode;
-  title?: string;
+  /** Full-precision reading. A tap opens it under the figure and a mouse
+   *  still gets it as a tooltip (`ExactOnTap`). */
+  exact?: string;
 }) {
+  const value = (
+    <div
+      style={{
+        marginTop: 3,
+        overflow: 'hidden',
+        color: HUD_COLORS.ink,
+        fontFamily: HUD_FONTS.mono,
+        fontSize: HUD_TYPE.value,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.15,
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
+    </div>
+  );
   return (
     <div style={{ minWidth: 0 }}>
       <MetricLabel>{label}</MetricLabel>
-      <div
-        title={title}
-        style={{
-          marginTop: 3,
-          overflow: 'hidden',
-          color: HUD_COLORS.ink,
-          fontFamily: HUD_FONTS.mono,
-          fontSize: HUD_TYPE.value,
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1.15,
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {children}
-      </div>
+      {exact ? <ExactOnTap exact={exact} label={label}>{value}</ExactOnTap> : value}
     </div>
   );
 }
@@ -197,8 +201,11 @@ export default function DaoStateReadout({ source, record, nowMs }: {
         >
           <div style={{ minWidth: 0 }}>
             <MetricLabel>Total deposited</MetricLabel>
+            <ExactOnTap
+              exact={exactCkb(visual.totalDepositedShannons)}
+              label="Total deposited"
+            >
             <div
-              title={exactCkb(visual.totalDepositedShannons)}
               style={{
                 marginTop: 2,
                 overflow: 'hidden',
@@ -220,6 +227,7 @@ export default function DaoStateReadout({ source, record, nowMs }: {
             >
               {formatCkb(visual.totalDepositedShannons)}
             </div>
+            </ExactOnTap>
             <div
               data-dao-deposit-change
               style={{
@@ -326,13 +334,13 @@ export default function DaoStateReadout({ source, record, nowMs }: {
         >
           <CompactMetric
             label="Withdrawing"
-            title={exactCkb(visual.pendingWithdrawalShannons)}
+            exact={exactCkb(visual.pendingWithdrawalShannons)}
           >
             {formatCkb(visual.pendingWithdrawalShannons)}
           </CompactMetric>
           <CompactMetric
             label="Unclaimed comp."
-            title={exactCkb(visual.unclaimedCompensationShannons)}
+            exact={exactCkb(visual.unclaimedCompensationShannons)}
           >
             {formatCkb(visual.unclaimedCompensationShannons)}
           </CompactMetric>

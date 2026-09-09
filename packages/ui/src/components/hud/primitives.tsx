@@ -495,6 +495,90 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
   );
 }
 
+/**
+ * A reading whose EXACT form is a tap away rather than a hover away.
+ *
+ * The HUD prints figures at the size a glance wants — `8.35 G·CKB` — and put
+ * the twenty significant digits behind `title`. On a desktop that is a fair
+ * trade; on a tablet it is a deletion. Measured on an 11" iPad: nineteen
+ * `title` attributes were on screen at once and the DAO's three CKB totals
+ * existed NOWHERE else, so the exact number was simply not in the
+ * application for a reader holding one.
+ *
+ * So the compact reading becomes a button and the exact one appears under it,
+ * in the mono voice a long numeral belongs in. `title` stays: a mouse already
+ * had a good way to ask and there is no reason to take it away.
+ *
+ * ⭐ IT OPENS DOWNWARD AND DOES NOT REPLACE. Swapping the hero's `8.35 G·CKB`
+ * for `8,347,536,893.24923471 CKB` in place would blow a composed column
+ * apart — the hero is set at 22 px with the HUD's only negative tracking
+ * precisely to keep twelve digits inside that measure. A second line costs
+ * the panel one rung of height while it is open and nothing when it is not.
+ */
+export function ExactOnTap({
+  exact,
+  label,
+  children,
+  style,
+}: {
+  /** The full-precision reading, and the `title` a mouse still gets. */
+  exact: string;
+  /** What the figure IS, for the reader who arrives by keyboard. */
+  label?: string;
+  children: ReactNode;
+  style?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ minWidth: 0 }}>
+      <button
+        type="button"
+        data-exact-toggle
+        title={exact}
+        aria-expanded={open}
+        aria-label={label ? `${label}, exactly ${exact}` : exact}
+        onClick={(event) => { event.stopPropagation(); setOpen((it) => !it); }}
+        onPointerDown={(event) => event.stopPropagation()}
+        style={{
+          // A button's user-agent chrome is a border, a grey ground and the
+          // OS font; the figure has to look exactly as it did.
+          appearance: 'none',
+          display: 'block',
+          width: '100%',
+          margin: 0,
+          padding: 0,
+          border: 0,
+          background: 'transparent',
+          font: 'inherit',
+          color: 'inherit',
+          textAlign: 'left',
+          cursor: 'pointer',
+          pointerEvents: 'auto',
+          ...style,
+        }}
+      >
+        {children}
+      </button>
+      {open ? (
+        <div
+          data-exact-reading
+          style={{
+            marginTop: 3,
+            color: HUD_COLORS.dim,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: HUD_TYPE.tech,
+            letterSpacing: 0.35,
+            lineHeight: 1.4,
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {exact}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ——— Spatial instrument grammar ————————————————————————————————————————
 // The scene-anchored inspection satellites speak a directional-plate dialect
 // of the floating form above: the house cut corner, plus a leading accent edge

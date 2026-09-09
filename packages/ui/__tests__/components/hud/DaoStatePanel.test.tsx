@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   DaoStateRecord,
@@ -74,6 +74,35 @@ describe('DaoStatePanel', () => {
     expect(container.querySelector('[data-dao-participation]')).not.toBeNull();
     expect(container.querySelector('[title="8,377,037,380.02110308 CKB"]')).not.toBeNull();
     expect(container.querySelector('[data-fill]')).toBeNull();
+  });
+
+  it('puts the exact figure a tap away, not only a hover away', () => {
+    // The panel prints `8.38 G·CKB` and the twenty significant digits existed
+    // NOWHERE else — a `title` is a mouse affordance, so on a tablet the
+    // exact number was not in the application at all. Three figures here are
+    // the only ones in the HUD with that property.
+    const { container } = render(<DaoStatePanel source={source} record={record} nowMs={record.updated_at_ms} />);
+    const toggles = container.querySelectorAll('[data-exact-toggle]');
+    expect(toggles.length).toBe(3);
+    expect(container.querySelector('[data-exact-reading]')).toBeNull();
+
+    const hero = container.querySelector('[data-dao-hero] [data-exact-toggle]') as HTMLElement;
+    expect(hero.tagName).toBe('BUTTON');
+    // The mouse keeps what it had.
+    expect(hero.getAttribute('title')).toBe('8,377,037,380.02110308 CKB');
+    expect(hero.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(hero);
+    const reading = container.querySelector('[data-exact-reading]') as HTMLElement;
+    expect(reading.textContent).toBe('8,377,037,380.02110308 CKB');
+    expect(hero.getAttribute('aria-expanded')).toBe('true');
+    // It opens DOWNWARD and does not replace: the hero's own compact reading
+    // is still there, which is what keeps a composed column from blowing
+    // apart when twenty digits arrive.
+    expect(container.textContent).toContain('8.38 G·CKB');
+
+    fireEvent.click(hero);
+    expect(container.querySelector('[data-exact-reading]')).toBeNull();
   });
 
   it('makes a stale DAO record explicit instead of relying on opacity alone', () => {
