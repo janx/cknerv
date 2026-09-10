@@ -87,6 +87,7 @@ import {
   STAT_ROW_HEIGHT_PX,
   STAT_ROW_LIFTED_HEIGHT_PX,
 } from '../../../src/components/hud/primitives';
+import { CKNERV_BRAND } from '../../../src/brandIdentity';
 import { CHAIN_PANEL_WIDTH_PX } from '../../../src/components/hud/BlockchainReadout';
 import { TOP_BAND_HEIGHT, TOP_BAND_RULE_CLEAR_PX } from '../../../src/components/hud/TopBand';
 import {
@@ -1099,6 +1100,79 @@ describe('hud discipline', () => {
     expect(text).toContain('stroke={rgba(HUD_COLORS.caution, 0.72)}');
     expect(text).not.toContain('stroke={rgba(HUD_COLORS.caution, 0.5)}');
     expect(text).not.toContain('fill={HUD_COLORS.caution}');
+  });
+});
+
+// ——— The mark is the instrument, at rest ————————————————————————————————
+//
+// `brandIdentity.json` is the logo, and it is read by more surfaces than
+// anything else in the repo: the boot splash's 148px mark, the favicon, the
+// home-screen icon, the share card, the install manifest and the status
+// strip's `BrandMark`. Four of them are baked at build time by
+// `scripts/generate-brand-assets.mjs`, which validates the GEOMETRY (a compact
+// path has to start with `M`) and nothing at all about the colour.
+//
+// Four of the mark's five colours are the same values the instrument paints
+// with, and that is the whole claim the mark makes: the thing in the corner is
+// this HUD's own two meshes seen at rest — a rose half drawn in curves and a
+// cold half drawn in facets, which is CELL·03 and PEER·02 — rather than a
+// badge laid on top of them.
+//
+// Nothing held the claim. The manifest is a JSON file outside this suite's
+// jurisdiction and no oracle had ever opened it, so a retune of `cellRose` or
+// of the peer plane's `scaffold` would have unstuck the mark from the
+// instrument in silence, and every asset would have kept rendering.
+describe('the mark is the instrument, at rest', () => {
+  it('every colour in the mark is a colour the instrument paints with', () => {
+    // Whole-object equality on purpose, and not five assertions: a SIXTH key
+    // appearing is the same finding as one of these five drifting — a colour
+    // in the identity that answers to nothing in the palette — and five
+    // assertions would wave it through.
+    expect(CKNERV_BRAND.colors).toEqual({
+      ground: HUD_COLORS.stageGround,
+      cell: HUD_COLORS.cellRose,
+      peer: HUD_COLORS.peerWire,
+      ink: HUD_COLORS.ink,
+      legendInk: HUD_COLORS.legendInk,
+    });
+  });
+
+  it('the mark carries the warm/cold pair the rails carry', () => {
+    // The same reading `the two mesh identities are a pair, not a shade` asks
+    // of the panels, asked of the mark: its two halves are the organism and
+    // the network, and a mark whose halves collapsed into one hue would be
+    // saying the HUD has one mesh in it.
+    expect(rgbDistance(CKNERV_BRAND.colors.cell, CKNERV_BRAND.colors.peer))
+      .toBeGreaterThan(SEPARATION_FLOOR);
+  });
+
+  it('the mark\'s cold half names the peer plane, not the frame', () => {
+    // The one place the identity and the chrome argue. `cyanWire` is the
+    // instrument's own frame ink — the top band wears it, and the band sits a
+    // few pixels from the mark in the status strip — and it lands INSIDE the
+    // separation floor of the mark's peer ink. That is a standing condition of
+    // this palette rather than a defect of the mark (`the two mesh identities
+    // are a pair, not a shade` records the same closeness and resolves it by
+    // moving the CELL surfaces to rose, not by pulling the two cyans apart),
+    // and what tells them apart is role and placement.
+    //
+    // So this does not pin the gap — a suite that failed when somebody widened
+    // it would be guarding the problem. It pins the DIRECTION: whatever either
+    // one is retuned to, the mark's cold half has to stay nearer the plane it
+    // names than the chrome it sits beside.
+    expect(rgbDistance(CKNERV_BRAND.colors.peer, HUD_COLORS.peerWire))
+      .toBeLessThan(rgbDistance(CKNERV_BRAND.colors.peer, HUD_COLORS.cyanWire));
+  });
+
+  it('the mark is strokes and one lit centre, and never a fill', () => {
+    // `hudTheme.ts`: chrome and identity only ever outline, and a filled block
+    // means something is wrong. The mark keeps that rule — `fill="none"` on
+    // the stroke group, and the only two fills in it are the ground the centre
+    // is knocked out of and the ink core inside it.
+    const mark = readFileSync(resolve(SRC_DIR, 'components/BrandMark.tsx'), 'utf8');
+    expect(mark).toContain('fill="none"');
+    expect([...code(mark).matchAll(/fill=\{colors\.(\w+)\}/g)].map((hit) => hit[1]))
+      .toEqual(['ground', 'ink']);
   });
 });
 
