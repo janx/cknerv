@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   getQualityRuntimeSnapshot,
@@ -23,6 +23,10 @@ vi.mock('leva', () => ({
 }));
 
 import StatusStrip from '../../../src/components/hud/StatusStrip';
+import {
+  getStageCellsDisclosed,
+  setStageCellsDisclosed,
+} from '../../../src/components/hud/stageCellsDisclosure';
 import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 /** jsdom hands inline colours back as `rgb()`. */
@@ -55,6 +59,12 @@ beforeEach(() => {
   setAdaptiveQuality('high');
   setCellDisplayLimit(CELL_DISPLAY_MAX);
   setCellDisplayMode('auto');
+  // The bar boots WITHOUT the cap control and the quality rail is the door to
+  // it (`stageCellsDisclosure.ts`). Everything below this line is about the
+  // row's content rather than about that door, so these tests are handed the
+  // row a reader has opened; the door itself is the block at the bottom of
+  // this file.
+  setStageCellsDisclosed(true);
   levaMocks.setQuality.mockClear();
 });
 
@@ -64,6 +74,7 @@ afterEach(() => {
   setAdaptiveQuality('high');
   setCellDisplayLimit(CELL_DISPLAY_MAX);
   setCellDisplayMode('auto');
+  setStageCellsDisclosed(false);
 });
 
 describe('StatusStrip', () => {
@@ -242,7 +253,12 @@ describe('StatusStrip', () => {
 
     expect(root.dataset.statusLayout).toBe('mobile');
     expect(root.style.height).toBe('88px');
-    expect(performance.style.overflow).toBe('hidden');
+    // The priority row reaches what it holds. It was `overflow: hidden` while
+    // `STAGE CELLS` stood first in it and pushed the quality rail's `L` off a
+    // 390 px phone; the rail is first now, at the row's own origin, and the
+    // chip a reader disclosed can be scrolled to rather than cut.
+    expect(performance.style.overflowX).toBe('auto');
+    expect(performance.style.overflowY).toBe('hidden');
     expect(performance.querySelector('[data-cell-display-control]')).not.toBeNull();
     expect(performance.querySelector('[data-render-quality-control]')).not.toBeNull();
     expect(context.style.overflowX).toBe('auto');
@@ -655,5 +671,135 @@ describe('StatusStrip as a probe', () => {
     expect(root.style.right).toBe('0px');
     expect(container.querySelector('[data-status-accent-rail]')).not.toBeNull();
     expect(screen.getByRole('navigation', { name: 'Dashboard controls' })).toBe(root);
+  });
+});
+describe('the quality rail is the door to the stage-cells cap', () => {
+  // `STAGE CELLS` is 279 px of a 1,079 px row and it is a control, not a
+  // reading — a refinement of the tier chosen one module to its right, since
+  // AUTO's cap IS that tier's. So the bar boots without it (user ruling,
+  // 2026-09-10) and this block is the whole of how it comes and goes.
+  const chip = (container: HTMLElement) => container
+    .querySelector('[data-cell-display-control]');
+
+  beforeEach(() => {
+    setStageCellsDisclosed(false);
+  });
+
+  it('boots without the cap control and no reader has to dismiss it', () => {
+    const { container } = render(<StatusStrip cellCount={5_000} />);
+
+    expect(chip(container)).toBeNull();
+    expect(container.textContent).not.toContain('STAGE CELLS');
+    // …and the rail that opens it is exactly where it was.
+    expect(screen.getByRole('group', { name: 'Render quality' })).not.toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Auto render quality' })
+        .getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('brings it up on any tier, the one already chosen included', () => {
+    const { container } = render(<StatusStrip cellCount={5_000} />);
+
+    // AUTO is the tier under the diamond on a fresh page, and pressing it used
+    // to be the one click in this rail that did nothing at all.
+    fireEvent.click(screen.getByRole('button', { name: 'Auto render quality' }));
+    expect(chip(container)).not.toBeNull();
+    expect(getStageCellsDisclosed()).toBe(true);
+    expect(
+      screen.getByRole('button', { name: 'Low render quality' })
+        .getAttribute('aria-expanded'),
+    ).toBe('true');
+
+    // A tier that is not the one standing only ever opens it — a reader
+    // walking H → M → L is choosing, not toggling a panel.
+    fireEvent.click(screen.getByRole('button', { name: 'Low render quality' }));
+    expect(chip(container)).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Med render quality' }));
+    expect(chip(container)).not.toBeNull();
+  });
+
+  it('puts it away on the tier that is already standing', () => {
+    const { container } = render(<StatusStrip cellCount={5_000} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Low render quality' }));
+    expect(chip(container)).not.toBeNull();
+    // Pressed again, and this time it IS the standing tier: the quality
+    // setting does not move and the control retires.
+    fireEvent.click(screen.getByRole('button', { name: 'Low render quality' }));
+    expect(chip(container)).toBeNull();
+    expect(getQualityRuntimeSnapshot().mode).toBe('low');
+  });
+
+  it('says what the next press does, and never promises a tidy-up it cannot make', () => {
+    render(<StatusStrip cellCount={5_000} />);
+    const auto = () => screen.getByRole('button', { name: 'Auto render quality' });
+
+    expect(auto().getAttribute('title'))
+      .toBe('Adaptive render quality — currently HIGH · and brings up STAGE CELLS');
+    fireEvent.click(auto());
+    expect(auto().getAttribute('title'))
+      .toBe('Adaptive render quality — currently HIGH · press again to put STAGE CELLS away');
+
+    // A manual cap pins the control in the bar, so the offer changes to the
+    // reason it will not go.
+    act(() => { setCellDisplayLimit(3_000); });
+    expect(auto().getAttribute('title'))
+      .toBe('Adaptive render quality — currently HIGH · STAGE CELLS stands while its cap is manual');
+  });
+
+  it('never lets a manual cap clamp the stage with nothing on screen saying so', () => {
+    const { container } = render(<StatusStrip cellCount={5_000} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Auto render quality' }));
+    act(() => { setCellDisplayLimit(3_000); });
+    // The reader asks for the bar back. The cap is not the automatic one any
+    // more, so the control that set it stays — hiding it would leave the stage
+    // drawing 3,000 of 5,000 Cells with no admission anywhere in the bar.
+    fireEvent.click(screen.getByRole('button', { name: 'Auto render quality' }));
+    expect(getStageCellsDisclosed()).toBe(false);
+    expect(chip(container)).not.toBeNull();
+    expect(chip(container)?.getAttribute('data-cell-display-mode')).toBe('manual');
+
+    // …and the way out is the control's own AUTO: the cap goes back to the
+    // number the tier beside it already names, and then it can retire.
+    fireEvent.click(screen.getByRole('button', { name: 'Automatic cell count' }));
+    expect(chip(container)).toBeNull();
+  });
+
+  it('is one answer for the strip and the probe, or the fold measures a fiction', () => {
+    // The overlay renders the bar twice and folds on the hidden copy's width
+    // (`useStatusStripFold.ts`). A disclosure only one of them could see would
+    // have the probe measuring a row nobody is looking at.
+    const closed = render(<StatusStrip probe cellCount={5_000} />);
+    expect(closed.container.querySelector('[data-cell-display-control]')).toBeNull();
+    cleanup();
+
+    setStageCellsDisclosed(true);
+    const open = render(<StatusStrip probe cellCount={5_000} />);
+    expect(open.container.querySelector('[data-cell-display-control]')).not.toBeNull();
+  });
+
+  it('takes the room the row has left, so nothing already on screen moves', () => {
+    // Wide: the cluster is right-aligned behind a `flex: 1` spacer, so the
+    // chip grows LEFTWARD into the spacer and the tier button under the
+    // reader's finger does not move.
+    setStageCellsDisclosed(true);
+    const wide = render(<StatusStrip cellCount={5_000} />);
+    const wideCells = wide.container.querySelector('[data-cell-display-control]')!;
+    const wideQuality = wide.container.querySelector('[data-render-quality-control]')!;
+    expect(wideCells.compareDocumentPosition(wideQuality))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    cleanup();
+
+    // Phone: the performance row packs from the left and does NOT scroll, so
+    // the same insertion ahead of QUALITY would push the rail off the screen.
+    // The slack is on the right, and the chip takes that instead.
+    const mobile = render(<StatusStrip cellCount={5_000} compact mobile />);
+    const row = mobile.container.querySelector('[data-status-performance]')!;
+    const mobileCells = row.querySelector('[data-cell-display-control]')!;
+    const mobileQuality = row.querySelector('[data-render-quality-control]')!;
+    expect(mobileQuality.compareDocumentPosition(mobileCells))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });

@@ -31,6 +31,11 @@ import {
   viewportMinusSafeArea,
 } from './hudTheme';
 import { DiamondMark, DirectionMark, PanelGridMark, PLATE_CUT_CLIP } from './primitives';
+import {
+  setStageCellsDisclosed,
+  stageCellsControlStands,
+  useStageCellsDisclosed,
+} from './stageCellsDisclosure';
 import { POPULATION_SCOPE } from './cellPopulation.presentation';
 
 export type BuildInfo = { version: string; href: string };
@@ -424,6 +429,22 @@ function EnrichmentChip({ source, compact = false }: {
 }
 
 const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
+
+/** What a tier button says about the cap control it is the door to
+ *  (`stageCellsDisclosure.ts`). The sentence is written from where the reader
+ *  stands: a rail with nothing disclosed offers to bring the control up, and
+ *  only the tier already chosen offers to put it away — because it is the only
+ *  click that can. A manual cap says so instead of promising a tidy-up it will
+ *  not perform. */
+function stageCellsNote(active: boolean, stands: boolean, pinned: boolean): string {
+  const cells = `${POPULATION_SCOPE.stage} CELLS`;
+  if (!stands) return ` · and brings up ${cells}`;
+  if (!active) return '';
+  return pinned
+    ? ` · ${cells} stands while its cap is manual`
+    : ` · press again to put ${cells} away`;
+}
+
 const CELL_TRACK_TICKS = [0, 50, 100] as const;
 
 function fmtCellCount(count: number): string {
@@ -455,7 +476,14 @@ function CellDisplayControl({
 }) {
   const quality = useQualityRuntime();
   const display = useCellDisplayRuntime();
+  const asked = useStageCellsDisclosed();
   const coarse = useCoarsePointer();
+  // Not in the bar until the quality rail has been used, and never out of it
+  // while the cap is manual — `stageCellsDisclosure.ts` argues both halves.
+  // Every hook stands ABOVE this line: the control keeps its subscriptions
+  // whether or not it is drawing, and one of them is how it finds out the cap
+  // has turned manual and it is wanted back.
+  if (!stageCellsControlStands(asked, display.mode)) return null;
   const serverCapacity = Number.isFinite(capacity)
     ? Math.max(0, Math.floor(capacity))
     : CELL_DISPLAY_MAX;
@@ -764,10 +792,20 @@ function CellDisplayControl({
 
 function RenderQualityControl({ compact = false }: { compact?: boolean }) {
   const quality = useQualityRuntime();
+  const cap = useCellDisplayRuntime();
+  const asked = useStageCellsDisclosed();
   const [, setLevaQuality] = useControls('Time', () => QUALITY_MODE_CONTROL, []);
   const accent = quality.mode === 'auto' ? HUD_COLORS.cyanWire : HUD_COLORS.orange;
+  const stands = stageCellsControlStands(asked, cap.mode);
 
   const selectMode = (mode: QualityMode) => {
+    // ——— THIS RAIL IS THE DOOR TO THE CAP CONTROL ———
+    //
+    // `STAGE CELLS` refines the decision made here — AUTO's cap IS this tier's
+    // — and it is not in the bar until somebody makes that decision. Any tier
+    // brings it up; the tier already under the diamond puts it away, that
+    // being the one click in the rail which otherwise changes nothing at all.
+    setStageCellsDisclosed(mode === quality.mode ? !stands : true);
     // Keep the always-visible HUD control and the hidden developer panel on
     // one setting. The direct runtime write makes the response immediate;
     // the Leva write lets AdaptiveQualityController reset its sampling state
@@ -827,6 +865,9 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
           const autoSuffix = mode === 'auto' && active
             ? `(${quality.effective.slice(0, 1).toUpperCase()})`
             : '';
+          const tierTitle = mode === 'auto'
+            ? `Adaptive render quality — currently ${quality.effective.toUpperCase()}`
+            : `Use ${mode.toUpperCase()} render quality`;
           return (
             <button
               key={mode}
@@ -834,10 +875,12 @@ function RenderQualityControl({ compact = false }: { compact?: boolean }) {
               className="cknerv-hud-control-button cknerv-quality-option cknerv-touch-target"
               aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} render quality`}
               aria-pressed={active}
+              // Every tier opens the same control, so every tier reports the
+              // same state: what `aria-expanded` names here is the disclosure,
+              // not the button.
+              aria-expanded={stands}
               data-quality-option={mode}
-              title={mode === 'auto'
-                ? `Adaptive render quality — currently ${quality.effective.toUpperCase()}`
-                : `Use ${mode.toUpperCase()} render quality`}
+              title={`${tierTitle}${stageCellsNote(active, stands, cap.mode === 'manual')}`}
               onClick={(event) => {
                 event.stopPropagation();
                 selectMode(mode);
@@ -1045,16 +1088,29 @@ function StatusStrip({
       {actions}
     </div>
   ) : null;
-  const performanceControls = (
-    <>
-      <CellDisplayControl
-        availableCells={cellCount}
-        capacity={cellCapacity}
-        compact={dense}
-      />
-      <RenderQualityControl compact={layout === 'mobile'} />
-    </>
+  const stageCells = (
+    <CellDisplayControl
+      availableCells={cellCount}
+      capacity={cellCapacity}
+      compact={dense}
+    />
   );
+  const renderQuality = <RenderQualityControl compact={layout === 'mobile'} />;
+  // The cap control comes and goes now, so it stands on the side of the
+  // quality rail where the row keeps its SLACK — and then nothing already on
+  // screen moves when it arrives, least of all the tier button the reader
+  // still has a finger on. The wide row is right-aligned behind a `flex: 1`
+  // spacer, so the chip grows leftward into the spacer; the dense rows pack
+  // from the left, so there the slack is on the right and it takes that.
+  //
+  // ⚠️ On a phone this is not a nicety. The priority row is 390 px wide and
+  // holds 404 px, so something hangs past its end: with the 233 px chip ahead
+  // of the rail that something was the rail's own `L`, and it was cut rather
+  // than scrolled (the row itself, below, says why). Behind the rail instead,
+  // what hangs off the end is a chip the reader asked for.
+  const performanceControls = layout === 'wide'
+    ? <>{stageCells}{renderQuality}</>
+    : <>{renderQuality}{stageCells}</>;
   const contextControls = (
     <>
       {enrichmentSource ? <EnrichmentChip source={enrichmentSource} compact={dense} /> : null}
@@ -1086,6 +1142,14 @@ function StatusStrip({
         }}
       >
         {primary}
+        {/* ⚠️ THIS ROW SCROLLS NOW, AND THE REASON IT DID NOT IS THE REASON IT
+            MAY. The phone's third row exists so the display and quality
+            controls never sit behind a scroll position nobody has moved — so
+            it was `overflow: hidden`, and on a 390 px phone that CUT the row:
+            `STAGE CELLS` stood first and the quality rail's `L` fell 30 px off
+            the end, unreachable. The rail is first now and starts at the
+            row's own origin, and what can hang past the edge is a chip the
+            reader disclosed on purpose and can put away with one press. */}
         <div
           className="cknerv-status-controls"
           data-status-controls
@@ -1095,7 +1159,10 @@ function StatusStrip({
             display: 'flex',
             alignItems: 'center',
             minWidth: 0,
-            overflow: 'hidden',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            overscrollBehaviorX: 'contain',
+            scrollbarWidth: 'none',
             pointerEvents: 'auto',
             borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.07)}`,
           }}

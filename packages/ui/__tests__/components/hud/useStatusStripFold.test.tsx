@@ -137,17 +137,21 @@ afterEach(() => {
 
 describe('the fold constants', () => {
   it('derives the estimate rather than typing it', () => {
-    // The one number `ui-app/index.html` restates. It is the measured row plus
-    // its slack, minus one because `max-width` is inclusive — the rails'
-    // `RAILS_COLLAPSE_MAX_WIDTH_PX` is written the same way and for the same
-    // reason. `boot-shell.test.ts` reads the derivation off this file.
-    expect(STATUS_STRIP_WIDE_MEASURED_PX).toBe(1079);
+    // The measured row plus its slack, minus one because `max-width` is
+    // inclusive — the rails' `RAILS_COLLAPSE_MAX_WIDTH_PX` is written the same
+    // way and for the same reason.
+    //
+    // 760 is the row AS IT BOOTS. `STAGE CELLS` left it for the quality rail
+    // to disclose (`stageCellsDisclosure.ts`), which is 279 px the row no
+    // longer wants at rest, and the 1,079 recorded before that also counted a
+    // session-uptime module that has since gone.
+    expect(STATUS_STRIP_WIDE_MEASURED_PX).toBe(760);
     expect(STATUS_STRIP_FOLD_SLACK_PX).toBe(24);
     expect(STATUS_STRIP_FOLD_HYSTERESIS_PX).toBe(16);
     expect(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX).toBe(
       STATUS_STRIP_WIDE_MEASURED_PX + STATUS_STRIP_FOLD_SLACK_PX - 1,
     );
-    expect(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX).toBe(1102);
+    expect(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX).toBe(783);
     expect(STATUS_STRIP_FOLD_ESTIMATE_QUERY)
       .toBe(`(max-width: ${STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX}px)`);
   });
@@ -164,25 +168,28 @@ describe('decideStatusStripFold', () => {
   });
 
   it('folds a wide row the pixel its slack runs out', () => {
-    // 1,079 + 24 = 1,103: at 1,103 the spacer is exactly the two margins and
-    // the row stands; at 1,102 it is one short and folds.
-    expect(decideStatusStripFold(false, 1079, 1103)).toBe(false);
-    expect(decideStatusStripFold(false, 1079, 1102)).toBe(true);
+    // 760 + 24 = 784: at 784 the spacer is exactly the two margins and the row
+    // stands; at 783 it is one short and folds.
+    expect(decideStatusStripFold(false, 760, 784)).toBe(false);
+    expect(decideStatusStripFold(false, 760, 783)).toBe(true);
   });
 
   it('makes a folded row find the hysteresis before it stands up again', () => {
-    // Unfolding costs 1,079 + 24 + 16 = 1,119. Between 1,103 and 1,119 the
-    // answer depends on where the strip already stands, which is what stops
+    // Unfolding costs 760 + 24 + 16 = 800. Between 784 and 800 the answer
+    // depends on where the strip already stands, which is what stops
     // `LAG 9 → LAG 10` moving every rail on the page 28 px.
-    expect(decideStatusStripFold(true, 1079, 1118)).toBe(true);
-    expect(decideStatusStripFold(true, 1079, 1119)).toBe(false);
-    expect(decideStatusStripFold(false, 1079, 1118)).toBe(false);
+    expect(decideStatusStripFold(true, 760, 799)).toBe(true);
+    expect(decideStatusStripFold(true, 760, 800)).toBe(false);
+    expect(decideStatusStripFold(false, 760, 799)).toBe(false);
   });
 
   it('folds when the content grows into the room, not only when the room shrinks', () => {
-    // The same page, a wider row: 1,100 + 24 = 1,124 does not fit 1,119.
-    // A rule that only watched the viewport could not see this at all.
-    expect(decideStatusStripFold(false, 1100, 1119)).toBe(true);
+    // The same page, a wider row — and since the cap control was put behind
+    // the quality rail this is the ordinary case rather than a hypothesis: a
+    // reader who opens `STAGE CELLS` takes the row from 760 to 1,039, and
+    // 1,039 + 24 does not fit the 1,024 that held the row a moment ago. A rule
+    // that only watched the viewport could not see this at all.
+    expect(decideStatusStripFold(false, 1039, 1024)).toBe(true);
   });
 });
 
@@ -204,14 +211,15 @@ describe('useStatusStripFold', () => {
     want = STATUS_STRIP_WIDE_MEASURED_PX;
     available = 1180;
     const wide = render(<Harness estimate />);
-    // An 11-inch iPad: the query said fold, the row says it fits with 101 px
-    // to spare. This is the whole change, in one assertion.
+    // An 11-inch iPad: the query said fold, the row says it fits and then
+    // some. This is the whole change, in one assertion.
     expect(foldedNow(wide.container)).toBe('false');
 
     cleanup();
-    available = 1024;
+    available = 768;
     const folded = render(<Harness estimate={false} />);
-    // …and a 10.2-inch one folds even where a query would not have folded it.
+    // …and an iPad in portrait folds even where a query would not have folded
+    // it.
     expect(foldedNow(folded.container)).toBe('true');
   });
 
@@ -235,7 +243,7 @@ describe('useStatusStripFold', () => {
     const { container } = render(<Harness estimate={false} />);
     expect(foldedNow(container)).toBe('false');
 
-    resizeTo(1024);
+    resizeTo(768);
     expect(foldedNow(container)).toBe('true');
 
     resizeTo(1400);
@@ -270,14 +278,14 @@ describe('useStatusStripFold', () => {
 
   it('does not flap between two layouts a digit apart', () => {
     // The walk of the plan's fit table, on today's row: down through the fold
-    // and back up through the hysteresis. 1,110 answers differently on the way
+    // and back up through the hysteresis. 791 answers differently on the way
     // down and on the way up, and that is the feature.
     withoutResizeObserver();
     want = STATUS_STRIP_WIDE_MEASURED_PX;
-    available = 1200;
+    available = 900;
     const { container } = render(<Harness estimate={false} />);
     const walk = [foldedNow(container)];
-    for (const width of [1110, 1102, 1110, 1118, 1119]) {
+    for (const width of [791, 783, 791, 799, 800]) {
       resizeTo(width);
       walk.push(foldedNow(container));
     }

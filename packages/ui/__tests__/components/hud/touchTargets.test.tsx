@@ -12,6 +12,7 @@ const levaMocks = vi.hoisted(() => ({ setQuality: vi.fn() }));
 vi.mock('leva', () => ({ useControls: () => [{ quality: 'auto' }, levaMocks.setQuality] }));
 
 import StatusStrip from '../../../src/components/hud/StatusStrip';
+import { setStageCellsDisclosed } from '../../../src/components/hud/stageCellsDisclosure';
 import {
   HUD_THEME_STYLE_ID,
   TOUCH_TARGET_MIN_PX,
@@ -41,9 +42,15 @@ beforeEach(() => {
   setAdaptiveQuality('high');
   setCellDisplayMode('auto');
   setCellDisplayLimit(CELL_DISPLAY_MAX);
+  // Reach is a question about the row a hand is actually pointing at, and the
+  // cap control is in that row once the quality rail has been used
+  // (`stageCellsDisclosure.ts`). Said out loud rather than inherited from the
+  // manual cap `setCellDisplayLimit` above happens to leave behind.
+  setStageCellsDisclosed(true);
 });
 afterEach(() => {
   cleanup();
+  setStageCellsDisclosed(false);
   vi.unstubAllGlobals();
 });
 

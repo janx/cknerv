@@ -28,33 +28,43 @@ import type { RefObject } from 'react';
  *  available) at every moment, where `want` is the probe's border-box width
  *  and `available` is the width of the overlay root the strip spans.
  *
- *  ⭐ WHY AN ESTIMATE AS WELL. Two readers cannot measure: the boot band in
- *  `ui-app/index.html`, which stands where the strip will before React exists,
- *  and this HUD's own first render, which happens before any box has been
- *  laid out. Both run `STATUS_STRIP_FOLD_ESTIMATE_QUERY` — one string,
- *  computed here from the measured row, restated as a literal in `index.html`
- *  because a `<script>` in the document head cannot import, and held to this
- *  file by `ui-app/__tests__/boot-shell.test.ts`.
+ *  ⭐ WHY AN ESTIMATE AS WELL. One reader cannot measure: this HUD's own first
+ *  render, which happens before any box has been laid out. It runs
+ *  `STATUS_STRIP_FOLD_ESTIMATE_QUERY`, computed here from the measured row.
+ *  (A second reader used to — the boot band in `ui-app/index.html`, which
+ *  stood where the strip would before React existed, and restated the query as
+ *  a literal because a `<script>` in the document head cannot import. The
+ *  startup layer covers the whole page now and stands nowhere in particular,
+ *  so nothing outside this file has to agree with the number any more.)
  *
  *  ⚠️ THE ACCEPTED EDGE. The estimate is a guess about content, so inside a
- *  band of roughly ±20 px around 1,103 the guess and the measurement can
- *  disagree — a page whose row happens to be wider or narrower than the 1,079
- *  this file records will hand over from a 64 px band to a 36 px strip, or the
- *  reverse, once. That is the same class of edge a late font swap already is,
- *  and it is the price of a shell that cannot measure. Everywhere else the
- *  band and the strip agree at the handover, which is more than the fixed
- *  query ever managed. */
+ *  band of roughly ±20 px around the query the guess and the measurement can
+ *  disagree — a page whose row happens to be wider or narrower than the one
+ *  this file records commits one frame of the wrong layout. That frame is
+ *  never painted: the measurement lands in a LAYOUT effect (below), which
+ *  React flushes before the browser paints. What is left of the edge is a
+ *  render nobody sees, and a jsdom suite, which cannot lay anything out and
+ *  therefore lives on the guess. */
 
-/** The wide row, measured on the shipped build (`8512d3b`, headless Chromium
- *  at dpr 2, fonts loaded, ckbadger `READY · LAG n`, `PANELS 6/8`, `NOMINAL`):
- *  primary 268 · STAGE CELLS 275 · QUALITY 180 · CKBADGER 142 · health 170,
- *  five 4 px gaps and 24 px of padding. At boot, before ckbadger answers, it
- *  is 1,063.
+/** The wide row AS IT BOOTS, measured on this build (headless Chromium at
+ *  1,440 px, dpr 1, fonts loaded, ckbadger `READY · LAG 0`, `PANELS 6/8`,
+ *  `WEB5.INFO`): primary 331.68 · QUALITY 179.87 · CKBADGER 142 · actions
+ *  65.71, four 4 px gaps and 24 px of padding — 759.26, rounded UP so the
+ *  guess and the measurement cannot disagree at the one pixel they meet.
+ *
+ *  ⚠️ `AS IT BOOTS` is the whole qualification, and it is why this number
+ *  moved. `STAGE CELLS` is not in the row at rest any more — the quality rail
+ *  discloses it (`stageCellsDisclosure.ts`) — and a reader who opens it adds
+ *  279.46 px, so the same page then wants 1,038.72 and may well fold. Nothing
+ *  here has to know that: the probe grows, the observer fires, the row folds.
+ *  This number is for the one frame nobody can measure, and in that frame the
+ *  chip is away. (The 1,079 that stood here was the row with the chip in it,
+ *  and with a session-uptime module that left in `4ed5f318`.)
  *
  *  ⚠️ It is the ESTIMATE's input and never the decision's: nothing in this
  *  file compares a live width against it. A decision that read this number
  *  would be the fixed breakpoint again, wearing a measurement's name. */
-export const STATUS_STRIP_WIDE_MEASURED_PX = 1079;
+export const STATUS_STRIP_WIDE_MEASURED_PX = 760;
 
 /** How much clear space the row must have left over to stay one row: twice
  *  its own 12 px side padding. The row folds before its spacer — the `flex: 1`
@@ -72,14 +82,13 @@ export const STATUS_STRIP_FOLD_HYSTERESIS_PX = 16;
 
 /** The widest page the ESTIMATE folds: the measured row plus its slack, minus
  *  one because `max-width` is inclusive — a page one pixel wider is the first
- *  one the row fits. Computed, never typed; `index.html` restates the value
- *  and `boot-shell.test.ts` derives it from the two constants above rather
- *  than from the answer, so the pact is the derivation and not the number. */
+ *  one the row fits. Computed, never typed, so what any test can hold it to is
+ *  the derivation rather than the answer. */
 export const STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX = STATUS_STRIP_WIDE_MEASURED_PX
   + STATUS_STRIP_FOLD_SLACK_PX
   - 1;
 
-/** The one query the boot band and the HUD's first render both run. */
+/** The query the HUD's first render stands on until a box has been laid out. */
 export const STATUS_STRIP_FOLD_ESTIMATE_QUERY = `(max-width: ${STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX}px)`;
 
 /** Should the strip stand folded, given where it stands now and what the last

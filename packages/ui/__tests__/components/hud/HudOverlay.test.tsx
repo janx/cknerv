@@ -876,10 +876,13 @@ describe('HudOverlay', () => {
   });
 
   it('uses a two-row top bar and offsets both panel rails on narrow screens', () => {
-    // A 10.2" iPad in landscape: under 1,100 the rails narrow, and under the
-    // strip's estimate the row folds — and it should, because the row wants
-    // 1,079 + 24 and this page has 1,024.
-    viewport(1024);
+    // An iPad in portrait: under 1,100 the rails narrow, and under the strip's
+    // estimate the row folds — and it should, because the row wants 760 + 24
+    // and this page has 768. (A 10.2" landscape page — 1,024 — used to stand
+    // here, and does not any more: the row lost 279 px when `STAGE CELLS` went
+    // behind the quality rail, and one row now fits a page that could not hold
+    // it before.)
+    viewport(768);
     const { container } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
@@ -958,7 +961,7 @@ describe('HudOverlay', () => {
     // The page folds, and the probe does not: it is measuring the row the
     // strip would go back to, which is the whole reason a folded bar can
     // unfold when a chip leaves.
-    viewport(1024);
+    viewport(768);
     const { container } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
@@ -980,16 +983,16 @@ describe('HudOverlay', () => {
   });
 
   it('folds on the measurement, and the estimate only until there is one', () => {
-    // D-6, both ways round. The page is 1,024 px so the estimate says fold —
-    // and on this content the row wants 900, which fits with room to spare.
+    // D-6, both ways round. The page is 768 px so the estimate says fold —
+    // and on this content the row wants 700, which fits with room to spare.
     // The measurement outranks the guess, on the first commit.
-    viewport(1024);
+    viewport(768);
     // ⚠️ `test-setup.ts` polyfills a no-op `ResizeObserver` for r3f, so the
     // hook would take its observer branch and never hear the change below.
     // Taking it away puts the hook on the window's own `resize` — the
     // fallback path, and the only one a test can fire.
     vi.stubGlobal('ResizeObserver', undefined);
-    stubStripBoxes(900, 1024);
+    stubStripBoxes(700, 768);
     const { container } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
@@ -998,9 +1001,10 @@ describe('HudOverlay', () => {
     expect(status().dataset.statusLayout).toBe('wide');
     expect(status().style.height).toBe('36px');
 
-    // …and then the row grows into the content it was measured without —
-    // 1,079 + 24 of slack is more than 1,024 — and the same page folds.
-    stripWant = 1079;
+    // …and then the row grows into the content it was measured without — a
+    // reader opening `STAGE CELLS` takes the row to 1,039, and that plus 24 of
+    // slack is more than 768 — and the same page folds.
+    stripWant = 1039;
     act(() => { window.dispatchEvent(new Event('resize')); });
 
     expect(status().dataset.statusLayout).toBe('compact');
@@ -1037,7 +1041,11 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
     expect(container.querySelector('[data-stream-chip]')).toBeNull();
     expect(container.textContent).toContain('DATA FROZEN');
-    expect(container.textContent).toContain('STAGE CELLS');
+    // The bar's controls are still up while the data plane is frozen. It used
+    // to be `STAGE CELLS` that stood for them here; the cap control is behind
+    // the quality rail now (`stageCellsDisclosure.ts`) and this page has not
+    // opened it, so the rail itself is the reading.
+    expect(container.textContent).toContain('QUALITY');
     expect(container.querySelector('[data-status-indicator]')).toBeNull();
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     // The health band is standing and the rail is exactly where it sits with a
@@ -1050,10 +1058,11 @@ describe('HudOverlay', () => {
   it('places stream interruption UI below the two-row narrow top bar', () => {
     // A page that is BOTH, which is the arrangement this test is about: the
     // banner under a folded bar, with narrowed rails under that. 1,100 is the
-    // last width the rails narrow at, and it is inside the strip's fold
-    // estimate — asserted rather than assumed, because the day those two
-    // thresholds cross is the day this test stops testing what it says.
-    const width = 1100;
+    // last width the rails narrow at, and 768 is under both that and the
+    // strip's fold estimate — asserted rather than assumed, because the day
+    // those two thresholds cross is the day this test stops testing what it
+    // says.
+    const width = 768;
     expect(width).toBeLessThanOrEqual(STATUS_STRIP_FOLD_ESTIMATE_MAX_WIDTH_PX);
     viewport(width);
     const now = Date.now();
