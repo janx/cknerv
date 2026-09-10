@@ -209,7 +209,7 @@ const panelStyle: CSSProperties = {
   width:
     `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 36px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
   maxHeight:
-    'calc(100vh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+    'calc(100dvh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
   overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 6,

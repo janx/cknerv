@@ -469,9 +469,20 @@ export const TOUCH_TARGET_MIN_PX = 44;
  * off its anchor), but a card must still not be laid out into a band the
  * reader cannot see.
  *
- * On a desktop every inset resolves to `0px` and this is `calc(100vh - N)`
+ * On a desktop every inset resolves to `0px` and this is `calc(100dvh - N)`
  * again, character for character in effect. `Jukebox.tsx` has spelled it out
  * by hand since the safe-area work; this is that sentence, once.
+ *
+ * ⭐ THE HEIGHT UNIT IS `dvh`, AND THE INSETS ALONE WERE NEVER ENOUGH.
+ * `100vh` is the LARGE viewport: the page box as it would be with the
+ * browser's own chrome retracted. A browser toolbar is not a safe-area inset
+ * and `env()` says nothing about it — measured on an 11" iPad in landscape
+ * Safari, `100vh` is 763px, `100dvh` is 688px, and every inset but the home
+ * indicator's 25px bottom reads ZERO. So this returned 738px of room on a
+ * screen with 688, and every cap built on it was 50px too generous — a
+ * reading could be laid out into a band that does not exist. `dvh` is the
+ * unit that knows about chrome; on a desktop, and in an installed app with no
+ * toolbar, it is `vh` again to the pixel.
  */
 export function viewportMinusSafeArea(
   axis: 'width' | 'height',
@@ -480,7 +491,7 @@ export function viewportMinusSafeArea(
   const [start, end] = axis === 'height'
     ? ['top', 'bottom']
     : ['left', 'right'];
-  const unit = axis === 'height' ? '100vh' : '100vw';
+  const unit = axis === 'height' ? '100dvh' : '100vw';
   return `calc(${unit} - env(safe-area-inset-${start}, 0px) - env(safe-area-inset-${end}, 0px)${
     reservePx ? ` - ${reservePx}px` : ''
   })`;

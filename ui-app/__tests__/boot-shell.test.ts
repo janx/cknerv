@@ -107,6 +107,16 @@ describe('static startup document', () => {
     expect(INDEX_HTML).toContain("tagName==='SCRIPT'");
   });
 
+  it('sizes the stage by the viewport a browser leaves, not the one it would leave with no chrome', () => {
+    // Measured on an 11" iPad Air in landscape Safari (iPadOS 26): `100vh`
+    // 763px, `100dvh` 688px, `env(safe-area-inset-top)` 0. At `vh` the canvas
+    // is laid out 75px past the bottom of the screen. A toolbar is not an
+    // inset, so no amount of `env()` arithmetic can find those pixels — only
+    // the dynamic unit knows they are gone.
+    expect(INDEX_HTML).toContain('#root { width:100vw; height:100dvh; }');
+    expect(INDEX_HTML).not.toContain('height:100vh');
+  });
+
   it('has reduced-motion and narrow/landscape layouts', () => {
     expect(INDEX_HTML).toContain('prefers-reduced-motion:reduce');
     expect(INDEX_HTML).toContain('max-width:480px');
@@ -116,7 +126,7 @@ describe('static startup document', () => {
 
   it('keeps waiting and failure recovery readable and scrollable in short landscape viewports', () => {
     expect(INDEX_HTML).toContain('#cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout');
-    expect(INDEX_HTML).toContain('max-height:calc(100vh - 148px)');
+    expect(INDEX_HTML).toContain('max-height:calc(100dvh - 148px)');
     expect(INDEX_HTML).toContain('overflow-y:auto');
     expect(INDEX_HTML).toContain('.cknerv-startup-diagnostics summary { cursor:pointer; color:#7C8794; font-size:11px;');
     expect(INDEX_HTML).toContain('@media (pointer:coarse) { #cknerv-startup-reload { min-width:64px; min-height:44px;');

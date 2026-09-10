@@ -6,8 +6,11 @@
     <meta name="theme-color" content="#02030a" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Added to a home screen, the instrument owns the screen outright and
-         the floating browser chrome that covers the top bar is simply not
-         there. `black-translucent` puts the system status bar OVER the page,
+         the browser's own chrome is simply not there. Measured since: that
+         chrome never COVERED the top bar — Safari reports
+         `safe-area-inset-top: 0` on an iPad and takes its 75px out of the
+         viewport's height instead, which is why the stage is sized in `dvh`
+         below. `black-translucent` puts the system status bar OVER the page,
          which is only safe because the HUD frame stands inside
          `env(safe-area-inset-*)` (d5086302) and every box inside it measures
          against the same insets. Both the manifest and the Apple meta: iOS
@@ -39,7 +42,17 @@
     <style>
       :root { color-scheme: dark; background:#02030a; }
       body { margin:0; overflow:hidden; background:#02030a; color:#7c8794; font-family:'Share Tech Mono','JetBrains Mono Local',ui-monospace,monospace; }
-      #root { width:100vw; height:100vh; }
+      /* `dvh`, not `vh`. `100vh` is the LARGE viewport — the page box as it
+         would be if the browser's own chrome retracted — and a browser toolbar
+         is not a safe-area inset: on an 11" iPad in landscape Safari reports
+         `100vh` 763px, `100dvh` 688px, and `env(safe-area-inset-top)` ZERO.
+         At `vh` the canvas was laid out 75px taller than the screen, so a
+         tenth of the drawing buffer was painted where no reader could look and
+         the galaxy sat 37px below the optical centre of what they could. On a
+         desktop, and in an installed app where there is no toolbar, `dvh` and
+         `vh` are the same number. `svh == dvh` on iPad — the toolbar does not
+         retract — so nothing here resizes as the reader scrolls. */
+      #root { width:100vw; height:100dvh; }
       #cknerv-startup { position:fixed; inset:0; z-index:10000; display:flex; flex-direction:column; align-items:center; box-sizing:border-box; padding:24px; overflow:hidden; background:#02030a; opacity:1; transition:opacity 400ms ease; }
       #cknerv-startup[data-state="leaving"] { opacity:0; pointer-events:none; }
       .cknerv-startup-body { position:relative; flex:1; width:min(580px,calc(100vw - 40px)); display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; transform:translateY(-7px); }
@@ -60,7 +73,7 @@
       .cknerv-startup-tagline { margin:12px 0 0; color:var(--brand-legend); font-family:'Saira','JetBrains Mono Local',system-ui,sans-serif; font-size:15px; line-height:1.5; letter-spacing:.035em; text-wrap:balance; }
       .cknerv-startup-tagline span { display:inline-block; }
       .cknerv-startup-readout { flex:none; height:142px; text-align:center; }
-      #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:142px; max-height:calc(100vh - 190px); padding:0 8px max(12px,env(safe-area-inset-bottom)); overflow-y:auto; box-sizing:border-box; }
+      #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:142px; max-height:calc(100dvh - 190px); padding:0 8px max(12px,env(safe-area-inset-bottom)); overflow-y:auto; box-sizing:border-box; }
       #cknerv-startup-status { min-height:18px; color:#9FB0BD; font-size:11px; line-height:1.5; letter-spacing:.12em; }
       #cknerv-startup-detail { min-height:18px; max-height:38px; margin-top:8px; color:#7C8794; font-size:12px; line-height:1.5; overflow:auto; overflow-wrap:anywhere; }
       #cknerv-startup-reload { margin-top:9px; padding:5px 0; border:0; border-bottom:1px solid #5A6879; background:transparent; color:#C2CBD5; font:11px 'Share Tech Mono',ui-monospace,monospace; letter-spacing:.12em; cursor:pointer; }
@@ -75,7 +88,7 @@
       @media (prefers-reduced-motion:reduce) { .cknerv-startup-center-halo,.boot-progress { animation:none!important; transition:none!important; } #cknerv-startup { transition:none; } }
       @media (max-width:480px) { #cknerv-startup { padding:18px; } .cknerv-startup-mark { width:132px; height:132px; } .cknerv-startup-word { margin-top:23px; font-size:25px; } .cknerv-startup-tagline { font-size:14px; } .cknerv-startup-tagline span { display:block; } .cknerv-startup-readout { height:144px; } }
       @media (pointer:coarse) { #cknerv-startup-reload { min-width:64px; min-height:44px; padding:5px 10px; } }
-      @media (max-height:440px) and (orientation:landscape) { .cknerv-startup-mark { width:68px; height:68px; } .cknerv-startup-word { margin-top:8px; font-size:21px; } .cknerv-startup-tagline { margin-top:2px; font-size:12px; } .cknerv-startup-readout { height:78px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-body { flex:0 1 138px; min-height:112px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:0; max-height:calc(100vh - 148px); } .cknerv-startup-diagnostics { margin-top:4px; } }
+      @media (max-height:440px) and (orientation:landscape) { .cknerv-startup-mark { width:68px; height:68px; } .cknerv-startup-word { margin-top:8px; font-size:21px; } .cknerv-startup-tagline { margin-top:2px; font-size:12px; } .cknerv-startup-readout { height:78px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-body { flex:0 1 138px; min-height:112px; } #cknerv-startup:is([data-state="waiting"],[data-state="failed"]) .cknerv-startup-readout { height:auto; min-height:0; max-height:calc(100dvh - 148px); } .cknerv-startup-diagnostics { margin-top:4px; } }
     </style>
   </head>
   <body>
