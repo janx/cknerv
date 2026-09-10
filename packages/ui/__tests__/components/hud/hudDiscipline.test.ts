@@ -982,12 +982,15 @@ describe('hud discipline', () => {
     // readout row. The dossier's third naming of it — the STATE fact — could
     // not, because its colour is also a rail and a scene tether, and that
     // split is argued and checked in `CellInspectionOverlay.test.ts`.
-    const masthead = SOURCES.find((source) => source.name === 'CellDetailPanel.tsx');
-    expect(masthead, 'the cell dossier moved — this oracle reads files off disk')
+    // The flag lives on the chip under the reticle now (2026-09-10), which is
+    // where the dossier's naming of the specimen went when the instruments came
+    // apart. Same reading, same tone, one layer out.
+    const masthead = SOURCES.find((source) => source.name === 'CellConstellationMarks.tsx');
+    expect(masthead, 'the cell name chip moved — this oracle reads files off disk')
       .toBeDefined();
     // Read with the size beside it, because the register's STATE reading is
-    // spelled the same way one screen up and the two are on different layers:
-    // this is the flag over the specimen, at the `section` rung.
+    // spelled the same way one instrument over and the two are on different
+    // layers: this is the flag on the specimen, at the `section` rung.
     expect(code(masthead?.text ?? '')).toContain(
       'color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,'
       + ' fontSize: HUD_TYPE.section',
@@ -6226,18 +6229,28 @@ const CELL_CARD_SURFACES: ReadonlyArray<{
   /** Read as CODE: a comment is allowed to say which colour this used to be. */
   never: readonly string[];
 }> = [
+  // The masthead moved onto the cell itself (2026-09-10). It named the
+  // REGISTER while the three instruments were one card; apart, a Cell's id is a
+  // fact about the specimen and belongs on the chip under its reticle.
   {
-    surface: 'the masthead that names the specimen',
-    file: 'components/hud/CellDetailPanel.tsx',
-    within: ['data-cell-scan-identity', '<CloseButton'],
+    surface: 'the chip that names the specimen',
+    file: 'components/hud/CellConstellationMarks.tsx',
+    within: ['export function CellNameChip', 'export function CellConstellationLeaders'],
     wears: [
-      'CELL // #{cell.id}',
+      'CELL // #${id}',
       '细胞',
-      'color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.display',
-      'color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk',
+      'fontFamily: HUD_FONTS.display',
+      'fontFamily: HUD_FONTS.cjk',
       'rgba(CELL_CARD_ACCENT, 0.45)',
     ],
     never: ['HUD_COLORS.orange', 'ORANGE', 'HUD_COLORS.cyanWire', 'CYAN', 'peerWire'],
+  },
+  {
+    surface: 'the reticle that marks the selected Cell',
+    file: 'components/hud/CellConstellationMarks.tsx',
+    within: ['const BRACKET_PX', 'export function CellNameChip'],
+    wears: ['2px solid ${CELL_CARD_ACCENT}', 'rgba(CELL_CARD_ACCENT, 0.35)'],
+    never: ['HUD_COLORS.cyanWire', 'CYAN', 'peerWire', 'HUD_COLORS.memory'],
   },
   {
     surface: 'the tether back to the Cell on stage',
@@ -6260,19 +6273,15 @@ const CELL_CARD_SURFACES: ReadonlyArray<{
   // violet — and a card with four frame colours reads as three windows that
   // happen to touch (the 08-21 complaint, 割裂). Their titles keep the content
   // ink, which is the half of `hudTheme.ts`'s rule that was always right.
+  // …and both of those plates are ONE plate now. Every instrument is framed by
+  // `ConstellationPanel`, whose accent defaults to the card's own — so the four
+  // frame colours the D-8 ruling was written against cannot come back one
+  // surface at a time, because there is only one surface.
   {
-    surface: "the CKBYTES reader's plate",
-    file: 'components/hud/CellDetailPanel.tsx',
-    within: ['function CellScanReaderPlate', '/** ORIGIN:'],
-    wears: ['...spatialPlate(CELL_CARD_ACCENT),'],
-    never: ['CYAN', 'cyanWire', 'peerWire', 'HUD_COLORS.memory'],
-  },
-  {
-    surface: "the MEMORY TRACE plate",
-    file: 'components/hud/CellDetailPanel.tsx',
-    within: ['data-cell-inspection-satellite="trace"', '<SpatialPlateHeader'],
-    wears: ['...spatialPlate(CELL_CARD_ACCENT),'],
-    never: ['CYAN', 'cyanWire', 'HUD_COLORS.memory', 'VIOLET'],
+    surface: "every instrument's plate",
+    file: 'components/hud/ConstellationPanel.tsx',
+    wears: ['accent = CELL_CARD_ACCENT,', '...spatialPlate(accent),'],
+    never: ['CYAN', 'cyanWire', 'peerWire', 'HUD_COLORS.memory', 'VIOLET'],
   },
 ];
 
@@ -6316,14 +6325,18 @@ describe('the cell card wears one colour', () => {
     const panel = PACKAGE_SOURCES.find(
       (entry) => entry.name === 'components/hud/CellDetailPanel.tsx',
     );
-    const framed = [...code(panel?.text ?? '').matchAll(/spatialPlate\(([^)]*)\)/g)]
-      .map((match) => match[1]);
+    expect(code(panel?.text ?? '')).not.toContain('spatialPlate(');
 
-    expect(framed).toEqual([
-      'CELL_CARD_ACCENT',
-      'CELL_CARD_ACCENT',
-      'CELL_CARD_ACCENT',
-    ]);
+    // One plate primitive, one caller, one colour: the instruments are framed
+    // by `ConstellationPanel` and nowhere else, so a fifth instrument cannot
+    // arrive in a fifth colour without changing this line.
+    const instrument = PACKAGE_SOURCES.find(
+      (entry) => entry.name === 'components/hud/ConstellationPanel.tsx',
+    );
+    const framed = [...code(instrument?.text ?? '').matchAll(/spatialPlate\(([^)]*)\)/g)]
+      .map((match) => match[1]);
+    expect(framed).toEqual(['accent']);
+    expect(code(instrument?.text ?? '')).toContain('accent = CELL_CARD_ACCENT,');
   });
 
   it('the register and the tether read one table, in one file', () => {
@@ -6500,7 +6513,10 @@ describe('one entrance for five dialects', () => {
     // was half the per-frame blur work on a surface the canvas and the specimen
     // sweep already damage every frame. Only the silhouette shadow remains.
     const CARD_ROOTS = [
-      'components/hud/CellDetailPanel.tsx',
+      // The cell dialect's root is the INSTRUMENT now, not the card: three or
+      // four of them stand apart, and a silhouette shadow per instrument is
+      // what keeps each reading as a plate over a scene rather than a cut-out.
+      'components/hud/ConstellationPanel.tsx',
       'components/hud/PeerLinkCard.tsx',
       'components/hud/NodeSelfCard.tsx',
       'components/hud/MinerNodeCard.tsx',

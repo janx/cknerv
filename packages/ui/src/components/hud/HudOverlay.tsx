@@ -216,23 +216,31 @@ const RAILS_FULL_WIDTH_PX = RAIL_INSET_PX * 2
   + (CHAIN_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX)
   + (MESH_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX);
 
-/** The stage a card needs to stand BESIDE the thing it points at: the narrow
- *  card's own measure, the tether the placement solver leaves between a card
- *  and its entity, and a margin so the card lands on stage rather than flush
- *  against a rail. `CellDetailPanel.CARD_WIDTH_PX` and
+/** The stage an INSTRUMENT needs to stand beside the thing it points at: the
+ *  widest of them, the tether the placement leaves between an instrument and
+ *  its entity, and a margin so it lands on stage rather than flush against a
+ *  rail. `cellConstellationFrame.CONSTELLATION_WIDTH.analysis` and
  *  `sceneInspection.INSPECTOR_GAP_PX` are the two authorities; both are
  *  restated here and both are tolled by a test that imports them.
  *
  * ⚠️ Restated, not imported, and the reason is A1's: `INSPECTOR_GAP_PX` lives
  * in `sceneInspection.tsx`, which pulls in `@react-three/fiber`. The DOM-only
- * HUD root does not acquire an R3F import to say how wide a card is.
+ * HUD root does not acquire an R3F import to say how wide an instrument is.
  *
- * ⚠️ And it is the card's FULL narrow measure, not the compact floor the card
- * falls to under it (`CellDetailPanel.CARD_COMPACT_MIN_WIDTH_PX`, 640). The
- * compact card is what a stage the rails have ALREADY left answers with; a
- * rail that stayed up because 640 would have fitted would be a rail buying its
- * own room out of the register's line length. The rails give way first. */
-const RAILS_COLLAPSE_CARD_PX = 728;
+ * ⭐ IT WAS A WHOLE CARD (728) UNTIL THE INSTRUMENTS CAME APART (2026-09-10),
+ * and it is deliberately NOT the widest one of them now.
+ *
+ * The register alone is 440, and stating the requirement as 440 was the first
+ * cut of this — measured, it takes a 1,280 page's stage from 57 % to 43 %,
+ * because the rails then stay up on every page between the two thresholds and
+ * the walk has 550 px of hole to seat three panels in. What actually has to fit
+ * beside a cell is the pair that shares a side of it: the register and the
+ * specimen, `CONSTELLATION_MIN_GAP_PX` apart. The reader takes the other side.
+ *
+ * So 736, which is what that pair measures, and the number barely moved —
+ * which is the honest answer, because the constellation covers about as much
+ * of a narrow stage as the card did. It is spread differently, not smaller. */
+const RAILS_COLLAPSE_CARD_PX = 440 + 16 + 280;
 const RAILS_COLLAPSE_TETHER_PX = 42;
 const RAILS_COLLAPSE_MARGIN_PX = 24;
 const RAILS_COLLAPSE_HOLE_PX = RAILS_COLLAPSE_CARD_PX

@@ -136,7 +136,7 @@ export function CellNameChip({
           fontFamily: HUD_FONTS.display,
           fontWeight: 600,
           fontSize: HUD_TYPE.section,
-          letterSpacing: 1.5,
+          letterSpacing: 1.6,
           color: CELL_CARD_ACCENT,
           textShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.45)}`,
         }}
@@ -147,6 +147,7 @@ export function CellNameChip({
         style={{
           ...CJK_BASELINE_LIFT,
           fontFamily: HUD_FONTS.cjk,
+          fontWeight: 400,
           fontSize: HUD_TYPE.label,
           color: CELL_CARD_ACCENT,
           opacity: COMPANION_OPACITY,
@@ -170,9 +171,8 @@ export function CellNameChip({
           display: 'inline-flex',
           alignItems: 'center',
           gap: 5,
-          fontSize: HUD_TYPE.label,
+          color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section,
           letterSpacing: 0.9,
-          color: live ? HUD_COLORS.nominal : HUD_COLORS.ember,
         }}
       >
         <StatusLamp color={live ? HUD_COLORS.nominal : HUD_COLORS.ember} lit={live} size={5.5} />

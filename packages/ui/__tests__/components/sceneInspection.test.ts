@@ -807,11 +807,31 @@ const INSPECTION_DIALECTS = [
 const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../src/components');
 
 describe('inspection dialects read the HUD', () => {
-  it.each(INSPECTION_DIALECTS)('%s hands the anchor the occlusion rects', (dialect) => {
+  it.each(INSPECTION_DIALECTS)('%s reads the HUD before it places anything', (dialect) => {
     const source = readFileSync(join(COMPONENTS_DIR, `${dialect}.tsx`), 'utf8');
 
     expect(source).toContain('useHudOcclusionRects');
-    expect(source).toMatch(/<SceneInspectionAnchor[^>]*\n\s*obstacles=\{obstacles\}/);
+  });
+
+  // The four network dialects share the single-card chassis and hand it the
+  // reading as a prop. The cell dialect places three or four instruments in a
+  // walk of its own (2026-09-10) and hands the same reading to that instead —
+  // one anchor, one projection, four boxes — so the shape of the ask differs
+  // while the requirement does not: a dialect that forgets is a panel back
+  // under a plate with every other test in this file still green.
+  it.each(INSPECTION_DIALECTS.filter((dialect) => dialect !== 'CellInspectionOverlay'))(
+    '%s hands the shared anchor the occlusion rects',
+    (dialect) => {
+      const source = readFileSync(join(COMPONENTS_DIR, `${dialect}.tsx`), 'utf8');
+
+      expect(source).toMatch(/<SceneInspectionAnchor[^>]*\n\s*obstacles=\{obstacles\}/);
+    },
+  );
+
+  it('CellInspectionOverlay hands the occlusion rects to the constellation walk', () => {
+    const source = readFileSync(join(COMPONENTS_DIR, 'CellInspectionOverlay.tsx'), 'utf8');
+
+    expect(source).toMatch(/commitConstellationFrame\([\s\S]*?\n\s*obstacles,/);
   });
 
   it.each(INSPECTION_DIALECTS)('%s marks its layer so the card is not its own obstacle', (dialect) => {

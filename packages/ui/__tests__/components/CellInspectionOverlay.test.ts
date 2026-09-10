@@ -4,11 +4,11 @@ import type { AssetKind, Cell, CellSemanticRecord, LockKind } from '@cknerv/type
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  cellInspectorPlacement,
   createCellInspectionHandles,
   selectedCellScanAccent,
   useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
+import { CONSTELLATION_WIDTH } from '../../src/components/hud/cellConstellationFrame';
 import {
   cellScanFactAccent,
   type CellInspectionFacet,
@@ -24,6 +24,11 @@ const INSPECTION_OVERLAY_SOURCE = readFileSync(resolve(
 const DETAIL_PANEL_SOURCE = readFileSync(resolve(
   process.cwd(),
   'src/components/hud/CellDetailPanel.tsx',
+), 'utf8');
+
+const PANEL_HOST_SOURCE = readFileSync(resolve(
+  process.cwd(),
+  'src/components/hud/ConstellationPanel.tsx',
 ), 'utf8');
 
 afterEach(() => {
@@ -77,68 +82,87 @@ const selected: Cell = {
   asset_kind: 'xudt',
 };
 
-describe('cellInspectorPlacement', () => {
-  it('places by the squared cell-card box until the card is measured', () => {
-    // 728 = 440px analysis column + 8px seam + 280px specimen column; 620 is
-    // the live-measured dossier card at open, enriched, no trace.
-    expect(createCellInspectionHandles().defaultSize)
-      .toEqual({ width: 728, height: 620 });
+describe('the constellation the cell dialect places', () => {
+  it('registers a room for every instrument and a lock to hold them', () => {
+    // There is no `defaultSize` any more, and that is the point: a card had to
+    // be placed by a guess until it was measured, because the guess and the
+    // truth were one box. Each instrument is placed once its own content has
+    // been measured, and a Cell holding no bytes never registers a reader.
+    const handles = createCellInspectionHandles();
+
+    expect(Object.keys(handles.panels).sort())
+      .toEqual(['analysis', 'reader', 'specimen', 'trace']);
+    for (const slot of Object.keys(handles.panels)) {
+      expect(handles.panels[slot].present).toBe(false);
+      expect(handles.panels[slot].height).toBe(0);
+    }
+    expect(handles.lock.quadrant).toEqual({});
   });
 
-  it('opens beside the selected Cell when there is room', () => {
-    expect(cellInspectorPlacement({
-      anchorX: 300,
-      anchorY: 400,
-      panelWidth: 500,
-      panelHeight: 300,
-      viewportWidth: 1200,
-      viewportHeight: 800,
-    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -150 });
+  it('states each instrument\'s own measure, and no card width at all', () => {
+    // The three-rung width ladder went with the grid. What is left is one
+    // number per instrument, and the register's is the one the HUD's rail
+    // collapse is derived from.
+    expect(CONSTELLATION_WIDTH.analysis).toBe(440);
+    expect(CONSTELLATION_WIDTH.specimen).toBe(280);
+    expect(CONSTELLATION_WIDTH.reader).toBe(408);
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('cellCardWidth');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('cellCardStandsOnHud');
   });
 
-  it('flips to the left before the inspector crosses the viewport edge', () => {
-    expect(cellInspectorPlacement({
-      anchorX: 1000,
-      anchorY: 400,
-      panelWidth: 500,
-      panelHeight: 300,
-      viewportWidth: 1200,
-      viewportHeight: 800,
-    })).toEqual({ family: 'beside', side: 'left', x: -542, y: -150 });
+  it('tethers details without rebuilding a scanning apparatus around the Cell', () => {
+    // The reticle and the leaders are DOM marks on the layer, not geometry in
+    // the scene — the same ruling the connector has always been under.
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('CellReticle');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('CellConstellationLeaders');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('anchor-enter');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('dotEnterAnimation');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('scanPlaneRef');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<torusGeometry');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<cylinderGeometry');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<octahedronGeometry');
   });
 
-  it('respects the top HUD safe area while remaining Cell-tethered', () => {
-    expect(cellInspectorPlacement({
-      anchorX: 300,
-      anchorY: 120,
-      panelWidth: 500,
-      panelHeight: 300,
-      viewportWidth: 1200,
-      viewportHeight: 800,
-    })).toEqual({ family: 'beside', side: 'right', x: 42, y: -16 });
+  it('clears the quadrant lock whenever the inspected cell changes', () => {
+    // The hysteresis itself lives in the derive (which owns and tests it); the
+    // overlay's one duty is to forget it when a different cell is selected, so
+    // a fresh constellation chooses its rooms rather than inheriting them.
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('resetConstellationLock');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('[cell.id, handles]');
   });
 
-  it('uses an above/below tether on a narrow screen', () => {
-    const below = cellInspectorPlacement({
-      anchorX: 195,
-      anchorY: 400,
-      panelWidth: 362,
-      panelHeight: 300,
-      viewportWidth: 390,
-      viewportHeight: 800,
-    });
-    const above = cellInspectorPlacement({
-      anchorX: 195,
-      anchorY: 700,
-      panelWidth: 362,
-      panelHeight: 300,
-      viewportWidth: 390,
-      viewportHeight: 800,
-    });
-
-    expect(below).toEqual({ family: 'stacked', side: 'below', x: -181, y: 42 });
-    expect(above).toEqual({ family: 'stacked', side: 'above', x: -181, y: -342 });
+  it('projects once, and reads no layout inside the frame', () => {
+    // One anchor, one projection, four boxes — and every measurement the walk
+    // spends came from a ResizeObserver on a panel's own content, never from
+    // the frame loop.
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('commitConstellationFrame');
+    expect(INSPECTION_OVERLAY_SOURCE.match(/\.project\(camera\)/g)).toHaveLength(1);
+    // The frame loop itself reads nothing: every `getBoundingClientRect` in the
+    // file is inside the quarter-second dim sampler, which is allowed to trail
+    // the frame and may not force a layout inside one.
+    const frame = INSPECTION_OVERLAY_SOURCE.slice(
+      INSPECTION_OVERLAY_SOURCE.indexOf('useFrame(('),
+      INSPECTION_OVERLAY_SOURCE.indexOf('return <group ref={anchorRef}'),
+    );
+    expect(frame).not.toContain('getBoundingClientRect');
+    expect(PANEL_HOST_SOURCE).toContain('new ResizeObserver');
+    // …and the measurement is taken from the CONTENT, never from the host the
+    // walk sized: observing the answer to compute the question is how a layout
+    // oscillates.
+    expect(PANEL_HOST_SOURCE).toContain('observer.observe(content)');
+    expect(PANEL_HOST_SOURCE).not.toContain('observer.observe(host)');
   });
+
+  it('keeps every instrument outside the Canvas container', () => {
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('@react-three/drei');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-inspection-layer');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('createCellInspectionHandles');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('CellInspectionAnchor');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain(
+      'onClick={(event) => event.stopPropagation()}',
+    );
+  });
+});
 
   it('changes the detail connector accent with the focused Cell facet', () => {
     const resting = selectedCellScanAccent({ cell: selected }, null);
@@ -213,52 +237,6 @@ describe('cellInspectorPlacement', () => {
     ].join('\n'));
   });
 
-  it('tethers details without rebuilding a scanning apparatus around the Cell', () => {
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-connector');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-anchor');
-    // …and the dot enters with the card rather than on a keyframe of its own
-    // (C8): its 360 ms overshoot pop was the third simultaneous enter on a
-    // surface that has one.
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('anchor-enter');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('dotEnterAnimation');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('scanPlaneRef');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<torusGeometry');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<cylinderGeometry');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<octahedronGeometry');
-  });
-
-  it('clears the sticky placement lock whenever the inspected cell changes', () => {
-    // The per-selection offset itself lives in the chassis (sceneInspection
-    // owns and tests the sticky contract); the overlay's one duty is to
-    // forget it when a different cell is selected, so growth extends the
-    // open card downward while a fresh card still centres itself.
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('resetInspectionPlacementLock');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('[cell.id, handles]');
-  });
-
-  it('projects once from cached ResizeObserver measurements', () => {
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('new ResizeObserver');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain(
-      'const cardX = anchorX + placement.x',
-    );
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetWidth');
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetHeight');
-  });
-
-  it('keeps the card DOM outside the Canvas container', () => {
-    // The card is a viewport-fixed Canvas sibling driven through the handles
-    // channel — no drei Html wrapper, no in-Canvas DOM, no click shims.
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('@react-three/drei');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-inspection-layer');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('createCellInspectionHandles');
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('CellInspectionAnchor');
-    // The Escape handler still stops propagation; the card itself needs no
-    // click shim against the R3F root anymore.
-    expect(INSPECTION_OVERLAY_SOURCE).not.toContain(
-      'onClick={(event) => event.stopPropagation()}',
-    );
-  });
-});
 
 // ——— The one line that says "this card is about that Cell" ————————————————
 //

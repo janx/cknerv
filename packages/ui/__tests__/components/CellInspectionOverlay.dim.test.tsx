@@ -1,20 +1,25 @@
-// A panel under a card that cannot clear it gives way (the user's ruling of
-// 2026-09-05, extending A3 from the CELL SCAN square to the whole card).
+// A rail an instrument stands on gives way — and only that rail.
 //
-// Every box below is a live measurement (`runs/C0/measure.json`): the 1,000 px
-// stage, where the HUD leaves a 434 px hole and the card's own floor is 640, and
-// the 1,920 px stage, where the card stands clear and only its transparent
-// window can print a panel on the specimen.
+// The rule the user ruled on (2026-09-05) was written for one card, which meant
+// one box, which meant one question: does the CELL SCAN square print a panel on
+// the specimen, or is the whole card standing on the HUD? The instruments came
+// apart on 2026-09-10, so the question is per-instrument now: three or four
+// boxes scattered around a cell, each claiming what it actually covers.
 //
-// jsdom lays nothing out, so every box here is declared — the panels' before
-// the render (the hole is measured from them), the card's after it.
+// ⭐ WHY NOT A UNION. The obvious reduction — one rectangle around the lot —
+// dims rails that nothing covers, because the constellation deliberately leaves
+// the middle of itself empty for the cell. At 1920 the register sits right of
+// the cell and the reader below-left; their union spans the whole stage and
+// would take the light from both rails while standing on neither.
+//
+// jsdom lays nothing out, so every box here is declared — the panels' before the
+// render, the instruments' after it.
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import CellInspectionOverlay, {
   createCellInspectionHandles,
 } from '../../src/components/CellInspectionOverlay';
-import { cellCardStandsOnHud } from '../../src/components/hud/CellDetailPanel';
 import { HUD_DIM_SAMPLE_MS } from '../../src/components/hudOcclusion';
 
 interface Box { left: number; top: number; right: number; bottom: number }
@@ -31,18 +36,13 @@ function stubRect(element: HTMLElement, box: Box): HTMLElement {
   return element;
 }
 
-/** A HUD module, with the attribute both the hole and the dim read it by. */
+/** A HUD module, with the attribute the dim reads it by. */
 function panel(name: string, box: Box): HTMLElement {
   const element = document.createElement('div');
   element.setAttribute('data-hud-occlusion', 'true');
   element.setAttribute('data-hud-panel-name', name);
   document.body.appendChild(element);
   return stubRect(element, box);
-}
-
-function stage(width: number, height: number): void {
-  Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
-  Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
 }
 
 const cell: Cell = {
@@ -54,11 +54,14 @@ const cell: Cell = {
   lock_shape_seed: [1, 2], type_shape_seed: null, data_shape_seed: [3, 4],
 };
 
-/** Mount the card, then declare where it and its window ended up, then let the
- *  sampler run once. The first sample reads jsdom's zero box and marks
- *  nothing, which is the same thing a real card's first frame does before the
- *  solver has placed it. */
-function openCard(card: Box, square: Box): void {
+/**
+ * Open the constellation, then declare where the walk put each instrument, then
+ * let the sampler run once.
+ *
+ * The first sample reads jsdom's zero boxes and marks nothing, which is exactly
+ * what a real first frame does before the walk has placed anything.
+ */
+function openConstellation(seats: Partial<Record<string, Box>>): HTMLElement {
   const { container } = render(
     <CellInspectionOverlay
       handles={createCellInspectionHandles()}
@@ -67,15 +70,15 @@ function openCard(card: Box, square: Box): void {
       onClose={() => {}}
     />,
   );
-  stubRect(
-    container.querySelector('[data-cell-inspection-overlay]') as HTMLElement,
-    card,
-  );
-  stubRect(
-    container.querySelector('[data-cell-scan-window="true"]') as HTMLElement,
-    square,
-  );
+  for (const [slot, box] of Object.entries(seats)) {
+    const host = container.querySelector<HTMLElement>(
+      `[data-cell-constellation-panel="${slot}"]`,
+    );
+    expect(host, `no ${slot} instrument mounted`).not.toBeNull();
+    stubRect(host as HTMLElement, box as Box);
+  }
   act(() => { vi.advanceTimersByTime(HUD_DIM_SAMPLE_MS); });
+  return container as HTMLElement;
 }
 
 const dimmedNames = (): string[] => Array.from(
@@ -95,100 +98,70 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe('a panel under a card that cannot clear it', () => {
-  it('gives way for every panel a compact card stands on at a 434 hole', () => {
-    // The 1,000 x 720 stage, measured: the left rail ends at 312, the right
-    // rail begins at 746 — a 434 px hole — and the card the ladder hands back
-    // is its 640 floor, wider than the stage by 206. Note where the square is:
-    // clear of both rails, so A3's rule alone would mark nothing at all here.
-    stage(1000, 720);
-    panel('chain', { left: 14, top: 76, right: 312, bottom: 302 });
-    panel('dao', { left: 14, top: 357.96875, right: 312, bottom: 585.5 });
-    panel('pulse', { left: 14, top: 597.5, right: 312, bottom: 706 });
-    const cells = panel('cells', { left: 746, top: 76, right: 986, bottom: 187 });
-    const peers = panel('peers', { left: 746, top: 199, right: 986, bottom: 290 });
-    expect(cellCardStandsOnHud(434)).toBe(true);
+describe('a rail an instrument stands on', () => {
+  it('gives way for the rail that is covered, and no other', () => {
+    // The 1,180 × 688 stage — an 11" iPad in landscape Safari, where the walk
+    // has to stand the register on the left rail because the hole is 614 and
+    // the register is 440 plus its reach. The specimen and the reader are on
+    // the right of the cell, clear of everything.
+    panel('chain', { left: 14, top: 48, right: 312, bottom: 282 });
+    panel('dao', { left: 14, top: 306, right: 312, bottom: 517 });
+    const cells = panel('cells', { left: 926, top: 153, right: 1166, bottom: 266 });
 
-    openCard(
-      { left: 346, top: 104, right: 986, bottom: 706 },
-      { left: 346, top: 104, right: 626, bottom: 384 },
-    );
+    openConstellation({
+      analysis: { left: 14, top: 104, right: 454, bottom: 674 },
+      specimen: { left: 758, top: 300, right: 1038, bottom: 608 },
+    });
 
-    // CELL·03 and PEER·02, and only those: the card's left edge stands clear
-    // of the chain rail's right edge by 34 px, and DAO·05 and PULSE·04 are
-    // under it in neither sense.
-    expect(dimmedNames()).toEqual(['cells', 'peers']);
-    expect(cells.dataset.hudDim).toBe('true');
-    expect(peers.dataset.hudDim).toBe('true');
+    // CKB·01 and DAO·05 are under the register; CELL·03 is under nothing — the
+    // specimen sits below it, and its own box is what answers for it.
+    expect(dimmedNames()).toEqual(['chain', 'dao']);
+    expect(cells.dataset.hudDim).toBeUndefined();
   });
 
-  it('leaves a panel alone at an 802 hole, even under the card', () => {
-    // A stage that CAN hold the card (802 of hole against a 728 card), with
-    // the card overlapping the chain rail anyway — the placement lock holds a
-    // card's offset across a resize, so this is a frame the app really reaches.
-    // The assertion is which box gives the panels their orders, not whether
-    // the solver would have chosen this one.
-    stage(1440, 900);
-    const chain = panel('chain', { left: 14, top: 48, right: 384, bottom: 519 });
-    const cells = panel('cells', { left: 1186, top: 48, right: 1426, bottom: 159 });
-    expect(cellCardStandsOnHud(802)).toBe(false);
+  it('takes no light for the gap the constellation leaves around the cell', () => {
+    // The reduction this rule exists to refuse. At 1,920 the register is right
+    // of the cell and the specimen up-left of it; a union rectangle around the
+    // two spans 1,238 px and covers both rails, and neither instrument is
+    // standing on either.
+    const chain = panel('chain', { left: 14, top: 48, right: 384, bottom: 511 });
+    const cells = panel('cells', { left: 1574, top: 322, right: 1906, bottom: 522 });
 
-    openCard(
-      { left: 330, top: 104, right: 1058, bottom: 886 },
-      { left: 458, top: 104, right: 738, bottom: 384 },
-    );
+    openConstellation({
+      analysis: { left: 1110, top: 190, right: 1550, bottom: 917 },
+      specimen: { left: 596, top: 150, right: 876, bottom: 458 },
+    });
 
-    // The card covers 54 px of the rail and the rail keeps its light: an
-    // opaque card is not read through, and A3's rule reads the window alone.
     expect(dimmedNames()).toEqual([]);
     expect(chain.dataset.hudDim).toBeUndefined();
     expect(cells.dataset.hudDim).toBeUndefined();
   });
 
-  it('dims what the square stands on at a wide hole, and nothing else', () => {
-    // A3, unchanged: the 1,920 stage with the card on the left of its anchor,
-    // so the transparent window reaches the chain rail. The rail gives way;
-    // the right rail, which the card does not reach, does not.
-    stage(1920, 993);
-    const chain = panel('chain', { left: 14, top: 48, right: 384, bottom: 519.1875 });
-    const cells = panel('cells', { left: 1574, top: 48, right: 1906, bottom: 246 });
+  it('answers for the specimen through the instrument that holds it', () => {
+    // A3's own case, one layer out. The CELL SCAN window is transparent — the
+    // braid is painted in the SCENE, beneath the whole DOM HUD — so a rail
+    // between the canvas and it prints across the specimen. The window is
+    // inside the specimen's instrument, so the instrument's box is the claim.
+    const chain = panel('chain', { left: 14, top: 48, right: 384, bottom: 511 });
 
-    openCard(
-      { left: 200, top: 104, right: 1056, bottom: 979 },
-      { left: 328, top: 104, right: 608, bottom: 384 },
-    );
+    const container = openConstellation({
+      specimen: { left: 300, top: 150, right: 580, bottom: 458 },
+    });
 
+    expect(container.querySelector('[data-cell-scan-window="true"]')).not.toBeNull();
     expect(dimmedNames()).toEqual(['chain']);
     expect(chain.dataset.hudDim).toBe('true');
-    expect(cells.dataset.hudDim).toBeUndefined();
   });
 
-  it('gives the light back when the card closes', () => {
-    stage(1000, 720);
-    panel('chain', { left: 14, top: 76, right: 312, bottom: 302 });
-    const cells = panel('cells', { left: 746, top: 76, right: 986, bottom: 187 });
-    // PEER·02 is what makes the hole 434 rather than 688: the hole is measured
-    // over the stage's middle band, and CELL·03 ends 29 px above it.
-    panel('peers', { left: 746, top: 199, right: 986, bottom: 290 });
+  it('gives the light back when the constellation closes', () => {
+    const chain = panel('chain', { left: 14, top: 48, right: 384, bottom: 511 });
 
-    openCard(
-      { left: 346, top: 104, right: 986, bottom: 706 },
-      { left: 346, top: 104, right: 626, bottom: 384 },
-    );
-    expect(cells.dataset.hudDim).toBe('true');
+    openConstellation({
+      analysis: { left: 100, top: 104, right: 540, bottom: 700 },
+    });
+    expect(chain.dataset.hudDim).toBe('true');
 
     act(() => { cleanup(); });
     expect(dimmedNames()).toEqual([]);
-  });
-});
-
-describe('cellCardStandsOnHud', () => {
-  it('turns at the card\'s own floor, not at a window width', () => {
-    // 640 is the compact card's floor; a hole of exactly 640 holds it.
-    expect(cellCardStandsOnHud(639)).toBe(true);
-    expect(cellCardStandsOnHud(640)).toBe(false);
-    expect(cellCardStandsOnHud(1190)).toBe(false);
-    // A hole nobody has measured yet is not a stage that cannot hold a card.
-    expect(cellCardStandsOnHud(Number.NaN)).toBe(false);
   });
 });

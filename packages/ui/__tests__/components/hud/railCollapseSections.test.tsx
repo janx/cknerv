@@ -17,7 +17,8 @@ import {
   RAILS_COLLAPSE_MAX_WIDTH_PX,
   RAILS_FULL_WIDTH_PX,
 } from '../../../src/components/hud/HudOverlay';
-import { CARD_WIDTH_PX } from '../../../src/components/hud/CellDetailPanel';
+import { CONSTELLATION_WIDTH } from '../../../src/components/hud/cellConstellationFrame';
+import { CONSTELLATION_MIN_GAP_PX } from '../../../src/derives/cellConstellation.derive';
 import { INSPECTOR_GAP_PX } from '../../../src/components/sceneInspection';
 
 afterEach(cleanup);
@@ -164,11 +165,18 @@ describe('rail collapse · the threshold is derived, and every term is tolled', 
     expect(padX * 2).toBe(HUD_PANEL_FRAME_PX);
   });
 
-  it('needs exactly a card, its tether and a margin of stage', () => {
-    // The requirement the rule exists to protect, read from the two modules
-    // that own it rather than from the HUD's own restatement.
+  it('needs the pair that shares a side of the cell, its tether and a margin', () => {
+    // The requirement the rule exists to protect, read from the modules that
+    // own it rather than from the HUD's own restatement. Not a card any more,
+    // and not the widest single instrument either: the register and the
+    // specimen share a side of the cell and the reader takes the other, so the
+    // pair is what a hole has to hold.
     expect(RAILS_COLLAPSE_HOLE_PX).toBe(
-      CARD_WIDTH_PX + INSPECTOR_GAP_PX + RAILS_COLLAPSE_MARGIN_PX,
+      CONSTELLATION_WIDTH.analysis
+      + CONSTELLATION_MIN_GAP_PX
+      + CONSTELLATION_WIDTH.specimen
+      + INSPECTOR_GAP_PX
+      + RAILS_COLLAPSE_MARGIN_PX,
     );
   });
 
@@ -178,10 +186,14 @@ describe('rail collapse · the threshold is derived, and every term is tolled', 
       + (MESH_PANEL_WIDTH_PX + HUD_PANEL_FRAME_PX),
     );
     // One pixel of stage short is the whole rule: the widest page that
-    // collapses is the widest one whose full-railed stage cannot hold the card.
+    // collapses is the widest one whose full-railed stage cannot hold the
+    // widest instrument beside its cell.
     expect(RAILS_COLLAPSE_MAX_WIDTH_PX - RAILS_FULL_WIDTH_PX)
       .toBe(RAILS_COLLAPSE_HOLE_PX - 1);
-    // …and the 1,440 stage this task exists for is inside it.
+    // …and the 1,440 stage this rule exists for is still inside it. The
+    // constellation is spread differently from the card it replaced, not
+    // smaller: the pair that shares a side of a cell measures 736 where the
+    // card measured 728, so the threshold moved eight pixels.
     expect(RAILS_COLLAPSE_MAX_WIDTH_PX).toBeGreaterThanOrEqual(1440);
   });
 });

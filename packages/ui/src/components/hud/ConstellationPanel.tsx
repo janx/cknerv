@@ -91,7 +91,6 @@ export default function ConstellationPanel({
     <div
       ref={hostRef}
       data-cell-constellation-panel={slot}
-      data-cell-inspection-satellite={slot}
       {...attributes}
       style={{
         position: 'absolute',
@@ -129,7 +128,7 @@ export default function ConstellationPanel({
             fontFamily: HUD_FONTS.display,
             fontWeight: 600,
             fontSize: HUD_TYPE.section,
-            letterSpacing: 1.5,
+            letterSpacing: 1.6,
             color: accent,
             whiteSpace: 'nowrap',
           }}

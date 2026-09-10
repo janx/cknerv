@@ -1158,6 +1158,7 @@ function CellScanReaderPlate({ readingPx, children }: {
   return (
     <section
       aria-label="CKBytes reader"
+      data-cell-inspection-satellite="reader"
       data-cell-detail-size="content"
       data-cell-data-reader-placement="apart"
       data-cell-data-reader-reading-px={readingPx}
@@ -2029,6 +2030,7 @@ function CellDetailPanel({
       <section
         ref={analysisPlateRef}
         aria-label="CKBytes analysis"
+        data-cell-inspection-satellite="analysis"
         // data-cellular-scan-state / -progress are written by CellScanSweep
         // below, straight to this node: they change 12.5 times a second and
         // this plate holds the whole dossier.
@@ -2547,6 +2549,7 @@ function CellDetailPanel({
       >
       <section
         aria-label="Interactive Cell scan"
+        data-cell-inspection-satellite="specimen"
         // The one transparent window on this instrument, and the reason the
         // overlay has to find it from outside: `background: 'transparent'` is a
         // hole through the whole DOM HUD, so whatever the HUD has under it
@@ -2656,7 +2659,7 @@ function CellDetailPanel({
           title="CKBYTES"
           accent={CELL_CARD_ACCENT}
           status={(
-            <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.cyanInk, opacity: COMPANION_OPACITY }}>
+            <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, color: HUD_COLORS.cyanInk, opacity: COMPANION_OPACITY }}>
               字节元
             </span>
           )}
@@ -2713,6 +2716,7 @@ function CellDetailPanel({
         >
           <section
             aria-label="Consensus memory trace"
+            data-cell-inspection-satellite="trace"
             data-cell-detail-size="content"
             style={{ position: 'relative', minWidth: 0, padding: '8px 10px 10px 12px' }}
           >
