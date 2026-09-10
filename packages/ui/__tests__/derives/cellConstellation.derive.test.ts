@@ -372,6 +372,11 @@ describe('the promise the scoring cannot make', () => {
           for (let j = i + 1; j < out.length; j += 1) {
             expect(overlap(out[i], out[j]), `@${ax},${ay}`).toBe(0);
           }
+          // …without putting an instrument on the cell to get there. The prise
+          // cleared a 3.5 px sliver by moving the reader ONTO the cell in the
+          // first cut of this — nearest distance 0, reticle inside the box.
+          expect(nearestDistance(out[i], ax, ay), `@${ax},${ay} core`)
+            .toBeGreaterThan(CONSTELLATION_RETICLE_PX / 2);
           expect(out[i].x).toBeGreaterThanOrEqual(EDGE - 0.5);
           expect(out[i].y).toBeGreaterThanOrEqual(SAFE_TOP - 0.5);
           expect(out[i].x + out[i].width).toBeLessThanOrEqual(820 - EDGE + 0.5);

@@ -615,15 +615,20 @@ function prise(placed: ConstellationPlacement[], input: ConstellationInput): voi
           { x: b.x, y: clamp(a.y - b.height, minY, maxY - b.height) },
           { x: b.x, y: clamp(a.y + a.height, minY, maxY - b.height) },
         ];
+        // ⚠️ AND THE CORE IS STILL THE CORE. Measured live on an 820 px
+        // portrait stage: the prise cleared a 3.5 px sliver by moving the
+        // reader ONTO the cell — nearest distance 0, the reticle inside the
+        // box. Removing an overlap is worth more than the field, and less than
+        // the mark that says which cell this is.
+        const core = CONSTELLATION_RETICLE_PX / 2 + 8;
         let pick = options[0];
         let least = Number.POSITIVE_INFINITY;
         for (const option of options) {
-          const rest = intersectionArea(
-            { x: option.x, y: option.y, width: b.width, height: b.height },
-            a,
-          );
+          const box: Box = { x: option.x, y: option.y, width: b.width, height: b.height };
+          const rest = intersectionArea(box, a);
+          const bitten = keepoutBite(box, input.anchorX, input.anchorY, core);
           const travel = Math.abs(option.x - b.x) + Math.abs(option.y - b.y);
-          const score = rest * 1000 + travel;
+          const score = rest * 1000 + bitten * 4000 + travel;
           if (score < least) { least = score; pick = option; }
         }
         b.x = pick.x;
