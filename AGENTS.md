@@ -93,7 +93,7 @@ For any non-trivial task summary or PR description, use this shape:
 
 ## Development Status
 
-This is an actively developed project (workspace version 1.0.4). Local mode
+This is an actively developed project (workspace version 1.0.5). Local mode
 is the default; `[dashboard].hosted` explicitly enables public read-only
 viewing through an operator-managed HTTPS reverse proxy. The API has no
 authentication or tenant isolation. Derived state can be purged and rebuilt
