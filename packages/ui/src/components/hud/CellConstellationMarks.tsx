@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { type CSSProperties, useLayoutEffect, useRef } from 'react';
 import {
   CONSTELLATION_RETICLE_PX,
   type ConstellationSlot,
@@ -109,12 +109,30 @@ export function CellNameChip({
   lifetime: string;
   onClose: () => void;
 }) {
+  const chipRef = useRef<HTMLDivElement>(null);
+  // The chip is an obstacle to the walk, so its measure has to reach the walk.
+  // It is one line of text whose width is the Cell's own id and outpoint, which
+  // is to say it changes per selection and never per frame.
+  useLayoutEffect(() => {
+    const chip = chipRef.current;
+    handles.chip = chip;
+    if (!chip) return undefined;
+    const measure = () => {
+      const box = chip.getBoundingClientRect();
+      if (Math.abs(box.width - handles.chipWidth) < 0.5) return;
+      handles.chipWidth = box.width;
+      handles.chipHeight = box.height;
+      invalidateConstellationFrame(handles);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(chip);
+    return () => observer.disconnect();
+  }, [handles, id, outpoint, lifetime]);
   return (
     <div
-      ref={(node) => {
-        handles.chip = node;
-        invalidateConstellationFrame(handles);
-      }}
+      ref={chipRef}
       data-cell-name-chip="true"
       style={{
         position: 'absolute',

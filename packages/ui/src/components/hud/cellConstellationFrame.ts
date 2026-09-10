@@ -56,6 +56,12 @@ export interface CellConstellationHandles {
   leaders: { [slot: string]: ConstellationLeaderHandle };
   reticle: HTMLElement | null;
   chip: HTMLElement | null;
+  /** The chip's own box, measured. The mark on the cell is a reticle AND its
+   *  label, and an instrument that clears the reticle can still land on the
+   *  name — measured live at 1920, a 376 px chip under a cell at x=960 reached
+   *  66 px into the reader standing to its lower right. */
+  chipWidth: number;
+  chipHeight: number;
   lock: ConstellationLock;
   visible: boolean;
   leaving: boolean;
@@ -112,6 +118,8 @@ export function createCellConstellationHandles(): CellConstellationHandles {
     leaders,
     reticle: null,
     chip: null,
+    chipWidth: 0,
+    chipHeight: 0,
     lock: createConstellationLock(),
     visible: false,
     leaving: false,
@@ -132,6 +140,11 @@ const bucket = (value: number): number => Math.round(value / QUANTUM_PX);
 /** Scratch, module-scope, re-used. One selection exists at a time — the same
  *  argument the portrait channel is a singleton on. */
 const scratchPanels: ConstellationPanel[] = [];
+/** …and the obstacles the walk is given: the HUD's rails, plus the name chip,
+ *  which is not a rail and is not the reticle and would otherwise be the one
+ *  mark on the stage nothing composes around. */
+const scratchObstacles: HudOcclusionRect[] = [];
+const chipBox: HudOcclusionRect = { left: 0, top: 0, right: 0, bottom: 0 };
 
 function collectPanels(
   handles: CellConstellationHandles,
@@ -193,9 +206,22 @@ export function commitConstellationFrame(
 ): ConstellationPlacement | null {
   const panels = collectPanels(handles, stageWidth, edge);
   if (panels.length === 0) return null;
-  const key = frameSignature(anchorX, anchorY, stageWidth, stageHeight, panels);
+  const key = frameSignature(anchorX, anchorY, stageWidth, stageHeight, panels)
+    + `|c${bucket(handles.chipWidth)}`;
   if (key === handles.frameKey) return handles.lastSpecimen ?? null;
   handles.frameKey = key;
+
+  // The chip hangs under the reticle and the walk composes around it, so the
+  // name of the thing being inspected is never printed under an instrument.
+  scratchObstacles.length = 0;
+  for (const obstacle of obstacles) scratchObstacles.push(obstacle);
+  if (handles.chipWidth > 0) {
+    chipBox.left = anchorX - handles.chipWidth / 2;
+    chipBox.right = anchorX + handles.chipWidth / 2;
+    chipBox.top = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+    chipBox.bottom = chipBox.top + handles.chipHeight;
+    scratchObstacles.push(chipBox);
+  }
 
   const placements = constellationPlacement({
     anchorX,
@@ -203,7 +229,7 @@ export function commitConstellationFrame(
     stageWidth,
     stageHeight,
     panels,
-    obstacles,
+    obstacles: scratchObstacles,
     safeTop,
     edge,
     lock: handles.lock,

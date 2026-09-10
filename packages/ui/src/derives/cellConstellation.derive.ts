@@ -117,6 +117,26 @@ const CONSTELLATION_SHARE_PX = 90;
  *  two plates with a hairline between them as one plate with a rule in it. */
 export const CONSTELLATION_MIN_GAP_PX = 16;
 
+/** The least an instrument may be shrunk to before shrinking stops being an
+ *  answer. A head, a rule and a few rows: under this a capped panel is a
+ *  scrollbar with a title on it, and moving it somewhere else — even somewhere
+ *  worse — is the better trade. */
+export const CONSTELLATION_MIN_HEIGHT_PX = 168;
+
+/** …and what it may be shrunk to when it is SHARING a room, where the
+ *  alternative is not a shorter instrument but two in the same place. */
+export const CONSTELLATION_STACK_MIN_PX = 120;
+
+/** Which instruments may give height back.
+ *
+ *  The register and the reader scroll, so a short stage takes it out of them.
+ *  The specimen may not: it is a window at a fixed scale, and a capped window
+ *  is a clipped braid — the one thing 280 px of width is there to prevent. The
+ *  trace is a ledger and scrolls like the rest. */
+function cappable(slot: ConstellationSlot): boolean {
+  return slot !== 'specimen';
+}
+
 /** How far past the keep-out ring an instrument's near corner is set, before
  *  anything is clamped or settled. Enough that the leader is a line and not a
  *  join. */
@@ -322,18 +342,44 @@ function settleBox(
   // the NEXT round's clamp to bring it back. On the last round there is no next
   // round, and a 440 px register beside a cell at x=410 on an 820 px stage came
   // out at x=−150: half off the screen, which is worse than any overlap it was
-  // escaping. The scorer sees whatever bite this clamp re-introduces and can
-  // still prefer another room for it.
-  return {
-    x: clamp(px, ctx.minX, ctx.maxX - width),
-    y: clamp(py, ctx.minY, ctx.maxY - height),
-  };
+  // escaping.
+  let fx = clamp(px, ctx.minX, ctx.maxX - width);
+  let fy = clamp(py, ctx.minY, ctx.maxY - height);
+
+  // …and that clamp can put the cell back inside the box, which is the one
+  // thing this layout exists to prevent. Measured: a reader clamped to the
+  // stage edge on an iPad came to rest exactly `reach` from the cell — the
+  // signature of a box that now SPANS the anchor in one axis, so its nearest
+  // point is the anchor's own row. Try each axis's full-radius escape against
+  // the clamp and keep whichever bites least; the scorer sees what is left and
+  // can still prefer another room.
+  if (keepoutBite({ x: fx, y: fy, width, height }, ctx.anchorX, ctx.anchorY, ctx.keepout) > 0.5) {
+    const wantX = clamp(
+      left ? ctx.anchorX - ctx.keepout - width : ctx.anchorX + ctx.keepout,
+      ctx.minX,
+      ctx.maxX - width,
+    );
+    const wantY = clamp(
+      above ? ctx.anchorY - ctx.keepout - height : ctx.anchorY + ctx.keepout,
+      ctx.minY,
+      ctx.maxY - height,
+    );
+    let bestBite = keepoutBite({ x: fx, y: fy, width, height }, ctx.anchorX, ctx.anchorY, ctx.keepout);
+    for (const candidate of [{ x: wantX, y: fy }, { x: fx, y: wantY }]) {
+      const bite = keepoutBite(
+        { x: candidate.x, y: candidate.y, width, height },
+        ctx.anchorX, ctx.anchorY, ctx.keepout,
+      );
+      if (bite < bestBite - 0.01) { bestBite = bite; fx = candidate.x; fy = candidate.y; }
+    }
+  }
+  return { x: fx, y: fy };
 }
 
 /**
- * Place every instrument, and say where each one went.
+ * One pass of the walk, at one squeeze.
  *
- * The walk is greedy over `CONSTELLATION_ORDER`: each instrument scores all
+ * Greedy over `CONSTELLATION_ORDER`: each instrument scores all
  * four quadrants, takes the best one still free, and becomes an obstacle for
  * everyone after it. Greedy rather than exhaustive because there are at most
  * four panels and four rooms and it runs in a frame — and because a STABLE
@@ -350,11 +396,13 @@ function settleBox(
  *   · not fitting the room at all, the shortfall in either axis
  *   · the slot's own bias, in fractions of the panel's own measure
  */
-export function constellationPlacement(
+function walkOnce(
   input: ConstellationInput,
+  squeeze: number,
+  lock: ConstellationLock | undefined,
 ): ConstellationPlacement[] {
   const {
-    anchorX, anchorY, stageWidth, stageHeight, panels, safeTop, edge, lock,
+    anchorX, anchorY, stageWidth, stageHeight, panels, safeTop, edge,
   } = input;
   const obstacles = input.obstacles ?? [];
   const keepout = constellationKeepoutPx(stageWidth, stageHeight);
@@ -362,17 +410,19 @@ export function constellationPlacement(
   const band = Math.max(0, stageHeight - safeTop - edge);
   const placed: ConstellationPlacement[] = [];
   const occupancy: { [quadrant: string]: number } = {};
+  /** Height already spoken for in each room, so the second instrument in one
+   *  asks for what is LEFT rather than for the whole of it. Without this the
+   *  two share a quadrant, both cap to the full room, and stand on each other
+   *  — 70,278 px² of it, measured live on an 11" iPad in landscape. */
+  const spent: { [quadrant: string]: number } = {};
 
   const ordered = CONSTELLATION_ORDER
     .map((slot) => panels.find((panel) => panel.slot === slot))
     .filter((panel): panel is ConstellationPanel => panel !== undefined);
 
   for (const panel of ordered) {
-    // A panel taller than the band shows what the band holds and scrolls the
-    // rest. Only the register ever gets here, and only on a tablet.
-    const height = Math.min(panel.height, band);
-    const capped = height < panel.height - 0.5;
     const width = panel.width;
+    const mayCap = cappable(panel.slot);
     const ctx: SettleContext = {
       anchorX,
       anchorY,
@@ -392,8 +442,30 @@ export function constellationPlacement(
     for (const quadrant of ['tl', 'tr', 'bl', 'br'] as const) {
       const left = quadrant === 'tl' || quadrant === 'bl';
       const above = quadrant === 'tl' || quadrant === 'tr';
-      const roomX = left ? anchorX - reach - edge : stageWidth - edge - anchorX - reach;
-      const roomY = above ? anchorY - reach - safeTop : stageHeight - edge - anchorY - reach;
+      // ⚠️ THE ROOM IS MEASURED FROM THE FULL RADIUS, NOT FROM THE REACH.
+      //
+      // `reach` is the DIAGONAL seat — a corner set there clears the disc by
+      // reach × √2. But a panel wider than either side of the cell gets clamped
+      // horizontally until it spans the anchor, and then its nearest point is
+      // the anchor's own row: a 440 px register beside a cell at x=410 on an
+      // 820 px stage came to rest exactly `reach` from the cell, 9 px inside a
+      // 120 px field, with no horizontal escape left to take. Sizing the room
+      // by the radius is what lets the vertical clearance alone be enough.
+      const roomX = left ? anchorX - keepout - edge : stageWidth - edge - anchorX - keepout;
+      const roomY = (above ? anchorY - keepout - safeTop : stageHeight - edge - anchorY - keepout)
+        - (spent[quadrant] ?? 0);
+      // A panel that may scroll asks its room for what it can have rather than
+      // for what it wants. A panel that may not asks for what it is.
+      const floor = (spent[quadrant] ?? 0) > 0
+        ? CONSTELLATION_STACK_MIN_PX
+        : CONSTELLATION_MIN_HEIGHT_PX;
+      const asked = mayCap
+        ? Math.max(floor, panel.height * squeeze)
+        : panel.height;
+      const height = mayCap
+        ? Math.max(floor, Math.min(asked, band, Math.max(roomY, 0)))
+        : Math.min(asked, band);
+      const capped = height < panel.height - 0.5;
       const shortfall = Math.max(0, width - roomX) + Math.max(0, height - roomY);
       const seat = settleBox(
         left ? anchorX - reach - width : anchorX + reach,
@@ -404,11 +476,29 @@ export function constellationPlacement(
         ctx,
       );
       const box: Box = { x: seat.x, y: seat.y, width, height };
+      // ⭐ THE FIELD IS A PREFERENCE WITH A HARD CORE; A NEIGHBOUR IS NEVER
+      // STOOD ON.
+      //
+      // These two were the wrong way round. A 120 px bite cost 720 and a
+      // 68,544 px² overlap cost 264, so on a stage where every room was bad the
+      // walk chose to put two instruments in the same place rather than let one
+      // reach into the cell's field — and on an 820 px portrait stage with the
+      // cell high, every room IS bad: 46 px above it, and 276 either side
+      // against a 280 px specimen.
+      //
+      // The trade the design actually wants is the other one. The disc is a
+      // clear FIELD, not the cell: a bite at its edge leaves the ~2 px sprite
+      // and its reticle untouched, and a reader can still see what it selected.
+      // Two instruments in one place is unreadable at any depth. So overlap is
+      // weighed six times heavier, and the core — a bite deep enough to reach
+      // the reticle itself — is what stays effectively absolute.
+      const bite = keepoutBite(box, anchorX, anchorY, keepout);
+      const core = Math.max(0, bite - (keepout - CONSTELLATION_RETICLE_PX / 2 - 8));
       let penalty = shortfall
         + quadrantBias(panel.slot, quadrant) * (width + height) * 0.25
         + (occupancy[quadrant] ?? 0) * CONSTELLATION_SHARE_PX
-        + keepoutBite(box, anchorX, anchorY, keepout) * 6;
-      for (const other of placed) penalty += intersectionArea(box, other) / 260;
+        + bite * 6 + core * 120;
+      for (const other of placed) penalty += intersectionArea(box, other) / 40;
       for (const obstacle of obstacles) penalty += obstacleArea(box, obstacle) / 900;
       const placement: ConstellationPlacement = {
         slot: panel.slot, quadrant, x: seat.x, y: seat.y, width, height, capped,
@@ -425,14 +515,75 @@ export function constellationPlacement(
     if (!best) {
       // Unreachable: four quadrants are always scored. Belt and braces so the
       // walk cannot drop an instrument on the floor if that ever changes.
-      const seat = settleBox(anchorX + reach, anchorY + reach, width, height, 'br', ctx);
-      best = { slot: panel.slot, quadrant: 'br', ...seat, width, height, capped };
+      const fallback = Math.min(panel.height, band);
+      const seat = settleBox(anchorX + reach, anchorY + reach, width, fallback, 'br', ctx);
+      best = {
+        slot: panel.slot,
+        quadrant: 'br',
+        ...seat,
+        width,
+        height: fallback,
+        capped: fallback < panel.height - 0.5,
+      };
     }
     occupancy[best.quadrant] = (occupancy[best.quadrant] ?? 0) + 1;
-    if (lock) lock.quadrant[panel.slot] = best.quadrant;
+    spent[best.quadrant] = (spent[best.quadrant] ?? 0)
+      + best.height + CONSTELLATION_MIN_GAP_PX;
     placed.push(best);
   }
   return placed;
+}
+
+/** How much of the walk's answer is two instruments in the same place. */
+function overlapArea(placed: readonly ConstellationPlacement[]): number {
+  let total = 0;
+  for (let i = 0; i < placed.length; i += 1) {
+    for (let j = i + 1; j < placed.length; j += 1) {
+      total += intersectionArea(placed[i], placed[j]);
+    }
+  }
+  return total;
+}
+
+/**
+ * Place every instrument, and say where each one went.
+ *
+ * ⭐ THE WALK IS GREEDY, SO IT NEEDS A WAY TO TAKE BACK.
+ *
+ * Each instrument picks the best room still free and becomes an obstacle for
+ * everyone after it — stable, cheap, and unable to undo a choice that turns out
+ * to have been too generous. On an 820 px portrait stage with the cell high in
+ * it, the register takes 612 px of the only usable room and the reader, placed
+ * third with 46 px left, has nowhere to be: 48,960 px² of overlap, and no
+ * amount of scoring inside one pass can fix it, because the mistake was made
+ * before the reader was considered.
+ *
+ * So the pass is repeated with the shrinkable instruments asking for less — two
+ * retries, at 60 % and 40 % of what they wanted — and the first clean answer
+ * wins; if none is clean, the least-overlapping one does. That is the sentence
+ * this layout is built on, made operational: shrink what may shrink rather than
+ * standing on your neighbour. The specimen is never in the squeeze, because a
+ * capped window is a clipped braid.
+ */
+export function constellationPlacement(
+  input: ConstellationInput,
+): ConstellationPlacement[] {
+  let best = walkOnce(input, 1, input.lock);
+  let bestOverlap = overlapArea(best);
+  if (bestOverlap > 0) {
+    for (const squeeze of [0.6, 0.4]) {
+      const attempt = walkOnce(input, squeeze, input.lock);
+      const overlap = overlapArea(attempt);
+      if (overlap < bestOverlap) { best = attempt; bestOverlap = overlap; }
+      if (bestOverlap === 0) break;
+    }
+  }
+  // ⚠️ The lock is written from the ACCEPTED pass only: a retry that was thrown
+  // away must not tell the next frame which rooms this one chose.
+  if (input.lock) {
+    for (const placement of best) input.lock.quadrant[placement.slot] = placement.quadrant;
+  }
+  return best;
 }
 
 /**

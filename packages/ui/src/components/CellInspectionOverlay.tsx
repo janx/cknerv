@@ -251,9 +251,20 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
 
   useEffect(() => {
     handles.root = rootRef.current;
+    // ⚠️ AND THE VISIBILITY IS FORGOTTEN WITH IT.
+    //
+    // App creates the channel ONCE and re-uses it for every Cell, so
+    // `handles.visible` outlives the element it was true of. React mounts each
+    // selection's root at `opacity: 0` — the chassis's one entrance — and the
+    // frame writer only writes opacity when the answer CHANGES, so the second
+    // Cell a reader opens got a constellation that was placed correctly, sized
+    // correctly, tracking its cell correctly, and completely invisible. Caught
+    // live on the seventh selection, with the braid still drawing into a
+    // scissored box the DOM around it never showed.
+    handles.visible = false;
     invalidateConstellationFrame(handles);
     return () => { handles.root = null; };
-  }, [handles]);
+  }, [handles, cell.id]);
 
   // A different Cell opens somewhere else on screen and owes nobody the rooms
   // the last one chose.

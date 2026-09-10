@@ -54,17 +54,28 @@ export default function ConstellationPanel({
   children: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
+    const head = headRef.current;
     const content = contentRef.current;
     const handle = handles.panels[slot];
-    if (!host || !content || !handle) return undefined;
+    if (!host || !head || !content || !handle) return undefined;
     handle.host = host;
     handle.present = true;
     const measure = () => {
-      const next = content.getBoundingClientRect().height;
+      // ⚠️ THE HEAD AND THE HAIRLINES COUNT, AND THEY WERE MISSED.
+      //
+      // The walk is handed a height and writes it straight onto the host, so
+      // the number has to be what the whole instrument needs — not what its
+      // body needs. Measured live at 1920: a 664.6 px register in a 664.6 px
+      // host left its scroller 632, and the bottom 33 px of every instrument
+      // was clipped, silently, because an uncapped panel does not scroll.
+      const next = head.getBoundingClientRect().height
+        + content.getBoundingClientRect().height
+        + 2;
       if (Math.abs(next - handle.height) < 0.5) return;
       handle.height = next;
       // A panel that changed height changes everyone's placement: the walk
@@ -81,6 +92,7 @@ export default function ConstellationPanel({
     if (typeof ResizeObserver === 'undefined') return detach;
     const observer = new ResizeObserver(measure);
     observer.observe(content);
+    observer.observe(head);
     return () => {
       observer.disconnect();
       detach();
@@ -114,6 +126,8 @@ export default function ConstellationPanel({
       }}
     >
       <div
+        ref={headRef}
+        data-cell-panel-head={slot}
         style={{
           display: 'flex',
           alignItems: 'baseline',

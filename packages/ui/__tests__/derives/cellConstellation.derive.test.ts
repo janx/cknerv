@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { HudOcclusionRect } from '../../src/components/hudOcclusion';
 import {
   CONSTELLATION_HOLD_MARGIN_PX,
+  CONSTELLATION_MIN_HEIGHT_PX,
   CONSTELLATION_MIN_GAP_PX,
   CONSTELLATION_ORDER,
   CONSTELLATION_RETICLE_PX,
@@ -146,17 +147,23 @@ describe('every instrument stands inside the stage', () => {
     }
   });
 
-  it('caps the register at the band and says so, and caps nothing else', () => {
+  it('caps what may scroll, and never the window', () => {
     // 1180 × 688 is the 11" iPad in landscape Safari: a 570 px band against a
     // 727 px register. That is the case the welded card answered by squeezing
     // the specimen's grid row to 236 px and letting the square overflow it.
+    //
+    // The cap is the QUADRANT's room and not just the band — a register in the
+    // upper-left of a cell has whatever is between the safe top and the field,
+    // which is usually less — and it is always at most the band.
     const out = place(THREE, 580, 360, 1180, 688);
     const analysis = bySlot(out, 'analysis');
-    expect(analysis.height).toBe(688 - SAFE_TOP - EDGE);
     expect(analysis.capped).toBe(true);
+    expect(analysis.height).toBeLessThanOrEqual(688 - SAFE_TOP - EDGE);
+    expect(analysis.height).toBeGreaterThanOrEqual(CONSTELLATION_MIN_HEIGHT_PX);
+    // The window is a specimen at a fixed scale: a capped window is a clipped
+    // braid, so it is never in the squeeze.
     expect(bySlot(out, 'specimen').capped).toBe(false);
     expect(bySlot(out, 'specimen').height).toBe(308);
-    expect(bySlot(out, 'reader').capped).toBe(false);
   });
 });
 
@@ -222,9 +229,13 @@ describe('the leader', () => {
 
 describe('stability under the galaxy\'s own turn', () => {
   it('keeps every instrument in its quadrant while the cell drifts', () => {
+    // With the lock, which is how the frame writer always calls it: the
+    // hysteresis IS the stability, and a walk asked the same question twice
+    // with no memory is entitled to change its mind at a crossing.
+    const lock = createConstellationLock();
     let previous: string | null = null;
     for (let step = 0; step <= 40; step += 1) {
-      const out = place(THREE, 900 + step, 520 + step * 0.4, 1920, 1080, RAILS_1920);
+      const out = place(THREE, 900 + step, 520 + step * 0.4, 1920, 1080, RAILS_1920, lock);
       const signature = out.map((p) => `${p.slot}:${p.quadrant}`).join('|');
       if (previous !== null) expect(signature).toBe(previous);
       previous = signature;
@@ -233,17 +244,16 @@ describe('stability under the galaxy\'s own turn', () => {
 });
 
 describe('a cell in the corner of the stage', () => {
-  it('lets two instruments share a room rather than overlap', () => {
+  it('shares a room or shrinks, but never overlaps', () => {
     // Up and left of a cell at (400, 300) there is no room for a 408 px reader,
-    // and only two quadrants are usable at all. Sharing one is the answer; an
-    // overlap is not.
+    // and only two quadrants are usable at all. Sharing one is an answer and
+    // giving height back is an answer; an overlap is not.
     const out = place(THREE, 400, 300, 1920, 1080);
     for (let i = 0; i < out.length; i += 1) {
       for (let j = i + 1; j < out.length; j += 1) {
         expect(overlap(out[i], out[j])).toBe(0);
       }
     }
-    expect(new Set(out.map((p) => p.quadrant)).size).toBeLessThan(out.length);
   });
 
   it('still spreads across rooms wherever the stage has them', () => {
@@ -281,5 +291,62 @@ describe('the quadrant lock', () => {
 
   it('states its margin in the same currency the scorer uses', () => {
     expect(CONSTELLATION_HOLD_MARGIN_PX).toBeGreaterThan(0);
+  });
+});
+
+describe('a stage too tight for three instruments at their asked heights', () => {
+  // Both of these are live measurements from the isolated stack: the iPad's two
+  // orientations, with the panels at the heights their content actually came
+  // out at. The first cut of the walk overlapped the register and the reader by
+  // 70,278 px² in landscape and 66,341 in portrait, and sat the reader ON the
+  // cell — every quadrant was bad, so it took the least bad one and called it
+  // placed.
+  const TIGHT: ConstellationPanel[] = [
+    { slot: 'analysis', width: 440, height: 612 },
+    { slot: 'specimen', width: 280, height: 314 },
+    { slot: 'reader', width: 408, height: 331 },
+  ];
+
+  const stages: Array<[string, number, number]> = [
+    ['iPad landscape, Safari', 1180, 663],
+    ['iPad portrait', 820, 1078],
+    ['a 1280 laptop', 1280, 800],
+  ];
+
+  it.each(stages)('never overlaps or covers the cell on %s', (_name, w, h) => {
+    const keepout = constellationKeepoutPx(w, h);
+    for (const [ax, ay] of [
+      [w * 0.5, h * 0.5], [w * 0.3, h * 0.4], [w * 0.7, h * 0.6],
+      [w * 0.5, h * 0.25], [w * 0.5, h * 0.8], [w * 0.2, h * 0.7],
+    ]) {
+      const out = place(TIGHT, ax, ay, w, h);
+      for (let i = 0; i < out.length; i += 1) {
+        for (let j = i + 1; j < out.length; j += 1) {
+          expect(overlap(out[i], out[j]), `${_name} @${ax},${ay}`).toBe(0);
+        }
+        // ⚠️ THE FIELD IS A PREFERENCE HERE; THE CORE IS NOT.
+        //
+        // On a stage this tight some instrument genuinely does not fit any
+        // room: a 280 × 314 specimen beside a cell at (354, 265) on an
+        // 1180 × 663 stage has 234 px to its left and 278 below it, and the
+        // best seat available nicks 14 px of a 106 px field. What may never
+        // happen is an instrument reaching the RETICLE — the mark that says
+        // which cell this is — and that is what this asserts.
+        expect(nearestDistance(out[i], ax, ay), `${_name} core`)
+          .toBeGreaterThan(CONSTELLATION_RETICLE_PX / 2);
+        expect(keepout).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('shrinks what may shrink rather than standing on its neighbour', () => {
+    const out = place(TIGHT, 590, 331, 1180, 663);
+    // The register and the reader both scroll, so both may give height back.
+    // The specimen may not: it is a window at a fixed scale, and a capped
+    // window is a clipped braid.
+    expect(bySlot(out, 'specimen').height).toBe(314);
+    expect(bySlot(out, 'specimen').capped).toBe(false);
+    expect(bySlot(out, 'analysis').height).toBeLessThanOrEqual(612);
+    expect(bySlot(out, 'reader').height).toBeLessThanOrEqual(331);
   });
 });
