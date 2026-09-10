@@ -406,10 +406,27 @@ function settleBox(
  *   · not fitting the room at all, the shortfall in either axis
  *   · the slot's own bias, in fractions of the panel's own measure
  */
+/** The order that puts the instrument with the LEAST freedom first.
+ *
+ *  The default is widest-first, which is right when there is room: a register
+ *  that takes what three smaller panels left it ends up half off the stage. On
+ *  a stage with no room it is exactly wrong — the specimen cannot shrink and
+ *  cannot be clipped, so it is the one whose seat is hardest to find, and going
+ *  third it gets whatever is left. Measured at 1180 × 663 with the cell at
+ *  (330, 440): every clean seat for the specimen needed the register to move
+ *  too, which no local pass can do. */
+const CONSTELLATION_RIGID_FIRST: readonly ConstellationSlot[] = [
+  'specimen',
+  'analysis',
+  'reader',
+  'trace',
+];
+
 function walkOnce(
   input: ConstellationInput,
   squeeze: number,
   lock: ConstellationLock | undefined,
+  order: readonly ConstellationSlot[] = CONSTELLATION_ORDER,
 ): ConstellationPlacement[] {
   const {
     anchorX, anchorY, stageWidth, stageHeight, panels, safeTop, edge,
@@ -432,7 +449,7 @@ function walkOnce(
    *  — 70,278 px² of it, measured live on an 11" iPad in landscape. */
   const spent: { [quadrant: string]: number } = {};
 
-  const ordered = CONSTELLATION_ORDER
+  const ordered = order
     .map((slot) => panels.find((panel) => panel.slot === slot))
     .filter((panel): panel is ConstellationPanel => panel !== undefined);
 
@@ -535,7 +552,7 @@ function walkOnce(
         + Math.max(0, panel.height - height) * 0.6
         + quadrantBias(panel.slot, quadrant) * (width + height) * 0.25
         + (occupancy[quadrant] ?? 0) * CONSTELLATION_SHARE_PX
-        + bite * 6 + core * 120;
+        + bite * 6 + core * 1200;
       for (const other of placed) penalty += intersectionArea(box, other) / 40;
       for (const claim of reserved) penalty += intersectionArea(box, claim) / 40;
       for (const obstacle of obstacles) penalty += obstacleArea(box, obstacle) / 900;
@@ -593,8 +610,78 @@ function prise(placed: ConstellationPlacement[], input: ConstellationInput): voi
   const minY = input.safeTop;
   const maxX = input.stageWidth - input.edge;
   const maxY = input.stageHeight - input.edge;
-  for (let round = 0; round < 4; round += 1) {
+  const core = CONSTELLATION_RETICLE_PX / 2 + 8;
+  const cx = input.anchorX;
+  const cy = input.anchorY;
+
+  const clash = (box: Box, self: ConstellationPlacement): number => {
+    let total = 0;
+    for (const other of placed) {
+      if (other === self) continue;
+      total += intersectionArea(box, other);
+    }
+    return total;
+  };
+  /** Overlap first, the cell's mark second, distance last — the same ladder
+   *  the walk's own scorer uses, applied to the pass that has the last word. */
+  const score = (box: Box, self: ConstellationPlacement, from: Box): number => (
+    clash(box, self) * 1000
+    + keepoutBite(box, cx, cy, core) * 4000
+    + Math.abs(box.x - from.x) + Math.abs(box.y - from.y)
+  );
+  const take = (target: ConstellationPlacement, options: readonly Box[]): boolean => {
+    const from: Box = { x: target.x, y: target.y, width: target.width, height: target.height };
+    let best = from;
+    let least = score(from, target, from);
+    for (const option of options) {
+      const box: Box = {
+        x: clamp(option.x, minX, maxX - target.width),
+        y: clamp(option.y, minY, maxY - target.height),
+        width: target.width,
+        height: target.height,
+      };
+      const value = score(box, target, from);
+      if (value < least - 0.5) { least = value; best = box; }
+    }
+    if (best === from) return false;
+    target.x = best.x;
+    target.y = best.y;
+    return true;
+  };
+
+  for (let round = 0; round < 6; round += 1) {
     let moved = false;
+
+    // ⚠️ THE CELL'S MARK FIRST, AND FOR EVERY INSTRUMENT — NOT JUST THE LATER
+    // OF A PAIR. Prising apart only ever moved the second of two, so an
+    // instrument the WALK had already put on the cell could never be rescued:
+    // measured live on an 1180 × 663 stage, a specimen six pixels from the cell
+    // it was magnifying, with no overlap anywhere for the pass to notice.
+    for (const target of placed) {
+      const box: Box = { x: target.x, y: target.y, width: target.width, height: target.height };
+      if (keepoutBite(box, cx, cy, core) <= 0.5) continue;
+      // Four axis escapes and four corners. Sliding along ONE axis is how a
+      // panel escapes the mark straight into a neighbour and is pushed back;
+      // a corner is a move to somewhere genuinely clear, and on a stage where
+      // three instruments all have to live on one side of the cell it is the
+      // only escape that exists.
+      const left = cx - core - target.width;
+      const right = cx + core;
+      const above = cy - core - target.height;
+      const below = cy + core;
+      moved = take(target, [
+        { x: left, y: target.y, width: 0, height: 0 },
+        { x: right, y: target.y, width: 0, height: 0 },
+        { x: target.x, y: above, width: 0, height: 0 },
+        { x: target.x, y: below, width: 0, height: 0 },
+        { x: left, y: above, width: 0, height: 0 },
+        { x: right, y: above, width: 0, height: 0 },
+        { x: left, y: below, width: 0, height: 0 },
+        { x: right, y: below, width: 0, height: 0 },
+      ]) || moved;
+    }
+
+    // …then the pairs, moving the later one, judged by what each escape leaves.
     for (let i = 0; i < placed.length; i += 1) {
       for (let j = i + 1; j < placed.length; j += 1) {
         const a = placed[i];
@@ -602,38 +689,12 @@ function prise(placed: ConstellationPlacement[], input: ConstellationInput): voi
         const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
         const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
         if (ox <= 0 || oy <= 0) continue;
-        // ⚠️ ALL FOUR WAYS OUT, AND THE ONE THAT ACTUALLY WORKS.
-        //
-        // "Move along the axis it overlaps least, in the direction it already
-        // leans" left 14 anchors of an 820 px stage still touching: a reader
-        // already flush against the stage's left edge is asked to move further
-        // left, the clamp refuses, and the pass calls it moved. Every candidate
-        // is clamped FIRST and judged by what is left.
-        const options = [
-          { x: clamp(a.x - b.width, minX, maxX - b.width), y: b.y },
-          { x: clamp(a.x + a.width, minX, maxX - b.width), y: b.y },
-          { x: b.x, y: clamp(a.y - b.height, minY, maxY - b.height) },
-          { x: b.x, y: clamp(a.y + a.height, minY, maxY - b.height) },
-        ];
-        // ⚠️ AND THE CORE IS STILL THE CORE. Measured live on an 820 px
-        // portrait stage: the prise cleared a 3.5 px sliver by moving the
-        // reader ONTO the cell — nearest distance 0, the reticle inside the
-        // box. Removing an overlap is worth more than the field, and less than
-        // the mark that says which cell this is.
-        const core = CONSTELLATION_RETICLE_PX / 2 + 8;
-        let pick = options[0];
-        let least = Number.POSITIVE_INFINITY;
-        for (const option of options) {
-          const box: Box = { x: option.x, y: option.y, width: b.width, height: b.height };
-          const rest = intersectionArea(box, a);
-          const bitten = keepoutBite(box, input.anchorX, input.anchorY, core);
-          const travel = Math.abs(option.x - b.x) + Math.abs(option.y - b.y);
-          const score = rest * 1000 + bitten * 4000 + travel;
-          if (score < least) { least = score; pick = option; }
-        }
-        b.x = pick.x;
-        b.y = pick.y;
-        moved = true;
+        moved = take(b, [
+          { x: a.x - b.width, y: b.y, width: 0, height: 0 },
+          { x: a.x + a.width, y: b.y, width: 0, height: 0 },
+          { x: b.x, y: a.y - b.height, width: 0, height: 0 },
+          { x: b.x, y: a.y + a.height, width: 0, height: 0 },
+        ]) || moved;
       }
     }
     if (!moved) break;
@@ -674,17 +735,35 @@ function overlapArea(placed: readonly ConstellationPlacement[]): number {
 export function constellationPlacement(
   input: ConstellationInput,
 ): ConstellationPlacement[] {
-  let best = walkOnce(input, 1, input.lock);
-  let bestOverlap = overlapArea(best);
-  if (bestOverlap > 0) {
-    for (const squeeze of [0.6, 0.4]) {
-      const attempt = walkOnce(input, squeeze, input.lock);
-      const overlap = overlapArea(attempt);
-      if (overlap < bestOverlap) { best = attempt; bestOverlap = overlap; }
-      if (bestOverlap === 0) break;
+  const core = CONSTELLATION_RETICLE_PX / 2 + 8;
+  /** What is wrong with an answer, in one number: two instruments in one place
+   *  first, an instrument over the cell's mark second. */
+  const badness = (placed: readonly ConstellationPlacement[]): number => {
+    let total = overlapArea(placed) * 1000;
+    for (const panel of placed) {
+      total += keepoutBite(panel, input.anchorX, input.anchorY, core) * 4000;
     }
+    return total;
+  };
+  let best: ConstellationPlacement[] | null = null;
+  let least = Number.POSITIVE_INFINITY;
+  // Six passes at most, and the first clean one wins. Two orders because the
+  // greedy walk cannot make a joint move, three squeezes because it cannot take
+  // height back — between them they cover every stage this instrument runs on.
+  for (const squeeze of [1, 0.6, 0.4]) {
+    for (const order of [CONSTELLATION_ORDER, CONSTELLATION_RIGID_FIRST]) {
+      const attempt = walkOnce(input, squeeze, input.lock, order);
+      // ⚠️ ALWAYS, not only on an overlap. The pass answers for the cell's mark
+      // as well as for the instruments, and a walk can seat something on the
+      // cell without any two instruments touching at all.
+      prise(attempt, input);
+      const value = badness(attempt);
+      if (value < least) { least = value; best = attempt; }
+      if (least === 0) break;
+    }
+    if (least === 0) break;
   }
-  if (bestOverlap > 0) prise(best, input);
+  if (!best) best = walkOnce(input, 1, input.lock);
   // ⚠️ The lock is written from the ACCEPTED pass only: a retry that was thrown
   // away must not tell the next frame which rooms this one chose.
   if (input.lock) {

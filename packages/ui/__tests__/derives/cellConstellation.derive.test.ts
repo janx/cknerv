@@ -365,9 +365,11 @@ describe('the promise the scoring cannot make', () => {
     // still left fourteen anchors touching: a reader already flush against the
     // stage's left edge was asked to move further left, the clamp refused, and
     // the pass called it moved.
-    for (let ax = 40; ax <= 790; ax += 10) {
-      for (let ay = 140; ay <= 1040; ay += 20) {
-        const out = place(LIVE, ax, ay, 820, 1078);
+    const stages: Array<[number, number]> = [[820, 1078], [1180, 663], [1920, 1066]];
+    for (const [SW, SH] of stages) {
+    for (let ax = 40; ax <= SW - 30; ax += 10) {
+      for (let ay = 140; ay <= SH - 40; ay += 20) {
+        const out = place(LIVE, ax, ay, SW, SH);
         for (let i = 0; i < out.length; i += 1) {
           for (let j = i + 1; j < out.length; j += 1) {
             expect(overlap(out[i], out[j]), `@${ax},${ay}`).toBe(0);
@@ -379,10 +381,11 @@ describe('the promise the scoring cannot make', () => {
             .toBeGreaterThan(CONSTELLATION_RETICLE_PX / 2);
           expect(out[i].x).toBeGreaterThanOrEqual(EDGE - 0.5);
           expect(out[i].y).toBeGreaterThanOrEqual(SAFE_TOP - 0.5);
-          expect(out[i].x + out[i].width).toBeLessThanOrEqual(820 - EDGE + 0.5);
-          expect(out[i].y + out[i].height).toBeLessThanOrEqual(1078 - EDGE + 0.5);
+          expect(out[i].x + out[i].width).toBeLessThanOrEqual(SW - EDGE + 0.5);
+          expect(out[i].y + out[i].height).toBeLessThanOrEqual(SH - EDGE + 0.5);
         }
       }
+    }
     }
   });
 });
