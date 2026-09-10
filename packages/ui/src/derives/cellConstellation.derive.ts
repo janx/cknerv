@@ -452,7 +452,19 @@ function walkOnce(
       // 120 px field, with no horizontal escape left to take. Sizing the room
       // by the radius is what lets the vertical clearance alone be enough.
       const roomX = left ? anchorX - keepout - edge : stageWidth - edge - anchorX - keepout;
-      const roomY = (above ? anchorY - keepout - safeTop : stageHeight - edge - anchorY - keepout)
+      // ⭐ A ROOM THAT CLEARS SIDEWAYS MAY SPAN THE CELL'S ROW.
+      //
+      // A quadrant is a diagonal, and requiring both axes of it is stricter
+      // than the field itself is: a panel entirely to the left of the disc
+      // never touches it, whatever its height. Requiring both cost the register
+      // half the screen — with a cell at 960 × 540 on a 1920 stage, the corner
+      // rooms are 316 above and 406 below against a 962 px band, so a 660 px
+      // dossier scrolled a third of itself away with the whole band free. The
+      // BESIDE composition, which is what the old card did, recovered.
+      const spans = roomX >= width;
+      const roomY = (spans
+        ? band
+        : (above ? anchorY - keepout - safeTop : stageHeight - edge - anchorY - keepout))
         - (spent[quadrant] ?? 0);
       // A panel that may scroll asks its room for what it can have rather than
       // for what it wants. A panel that may not asks for what it is.
@@ -494,7 +506,16 @@ function walkOnce(
       // the reticle itself — is what stays effectively absolute.
       const bite = keepoutBite(box, anchorX, anchorY, keepout);
       const core = Math.max(0, bite - (keepout - CONSTELLATION_RETICLE_PX / 2 - 8));
+      // ⚠️ AND SHRINKING HAS TO COST, OR THE SCORER STOPS PREFERRING ROOM.
+      //
+      // `shortfall` is what a panel could not fit — and a capped panel always
+      // fits, by construction, so capping silently made every quadrant look
+      // perfect. Measured at 1920: a register that had 660 px of content and a
+      // 962 px band chose an upper room with 400 and scrolled a third of
+      // itself away, with a lower room standing empty. What was given up is
+      // the thing to weigh.
       let penalty = shortfall
+        + Math.max(0, panel.height - height) * 0.6
         + quadrantBias(panel.slot, quadrant) * (width + height) * 0.25
         + (occupancy[quadrant] ?? 0) * CONSTELLATION_SHARE_PX
         + bite * 6 + core * 120;
