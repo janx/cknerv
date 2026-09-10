@@ -8,7 +8,9 @@ import {
   useRef,
   useState,
 } from 'react';
-import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
+import {
+  DATA_HEX_TRUNCATION_MARKER,
+} from '@cknerv/types';
 import type {
   Cell,
   CellLink,
@@ -27,7 +29,6 @@ import {
   formatDataSize,
   formatLockKind,
   formatAssetKind,
-  formatOutpoint,
   formatScriptIdentity,
   formatWallClock,
   midTruncate,
@@ -46,12 +47,9 @@ import {
   HUD_TYPE,
   rgba,
   STALE_OPACITY,
-  viewportMinusSafeArea,
 } from './hudTheme';
 import {
-  CloseButton,
   DragAxisMark,
-  moduleTag,
   PlateReadoutCaption,
   PlateReadoutRow,
   plateStateChip,
@@ -63,20 +61,20 @@ import {
   REVEAL_GHOST_OPACITY,
   revealStageAttributes,
   revealStageStyle,
-  satelliteBase,
-  SpatialPlateHeader,
-  spatialPlate,
-  StatusLamp,
 } from './primitives';
-import { useReducedMotion } from './useReducedMotion';
-import { useHudHoleWidth } from '../hudOcclusion';
 import {
-  INSPECTOR_EDGE_PX,
-  INSPECTOR_GAP_PX,
-  INSPECTOR_SAFE_TOP_PX,
-} from '../sceneInspection';
+  useReducedMotion,
+} from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
-import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
+import ConstellationPanel from './ConstellationPanel';
+import {
+  createCellConstellationHandles,
+  type CellConstellationHandles,
+} from './cellConstellationFrame';
+import type { ConstellationSlot } from '../../derives/cellConstellation.derive';
+import {
+  ConsensusMemoryTracePlate,
+} from './ConsensusIdentityPlate';
 import CellContentMemory, { cellContentReadingLayout } from './CellContentMemory';
 import CellDataReader, {
   READER_CHROME_PX,
@@ -102,10 +100,18 @@ import {
   deriveCellConsensusIdentity,
   type CellWriteEvidence,
 } from '../../derives/cellConsensusIdentity.derive';
-import { deriveCellContentMemory } from '../../derives/cellContentMemory.derive';
-import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
-import { useCellOutputData } from '../../hooks/useCellOutputData';
-import { READER_MIN_VISIBLE_ROWS, readerRowsUnderScan } from '../../derives/cellDataReader.derive';
+import {
+  deriveCellContentMemory,
+} from '../../derives/cellContentMemory.derive';
+import {
+  validateCellSemanticRecordForMorphology,
+} from '../../derives/cellSemanticMorphology.derive';
+import {
+  useCellOutputData,
+} from '../../hooks/useCellOutputData';
+import {
+  READER_VISIBLE_ROWS,
+} from '../../derives/cellDataReader.derive';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -150,154 +156,22 @@ const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
  *  every memo it colours its bytes with. */
 const EMPTY_CONTENT_SEGMENTS: readonly SemanticContentSegment[] = [];
 const PORTRAIT_BRACKET_PX = 12;
-/** The CELL SCAN square is an independent column beside the analysis plate:
- * 440 of analysis + an 8px seam + the 280 square, one constant geometry for
- * bare and enriched Cells alike. The analysis measure is set by its widest
- * row — a label, a badge and a mid-truncated hash — and every column past
- * that was empty gutter between a left label and a right-aligned value. */
+/** The specimen's own measure, and the whole of what is left of the card's
+ *  geometry in this file.
+ *
+ * ⭐ EVERYTHING ELSE WENT WITH THE GRID (2026-09-10). The three-rung width
+ * ladder, the 120 px notch column, the 640 px compact floor, the docked height
+ * reserve, the two mirrored `gridTemplateAreas` and the `cellCardWidth` /
+ * `cellCardStandsOnHud` pair existed for one purpose — fitting three panels
+ * into one box — and there is no box. The instruments stand apart, each at its
+ * own measure, and those measures live where the placement can read them
+ * (`CONSTELLATION_WIDTH`).
+ *
+ * This one stays because it is not a layout number: 280 px of width is what
+ * sets the specimen's px-per-world-unit, and the portrait's own square is
+ * derived from it.
+ */
 const PORTRAIT_COLUMN_PX = 280;
-/** Exported so `cellDataReader.derive.ts` can be pinned against them: the
- * derive restates 728 + 8 rather than importing this module (a pure derive may
- * not drag a 2,400-line panel behind it), and `CellDetailPanel.test.tsx`
- * asserts the two statements agree. */
-export const CARD_SEAM_PX = 8;
-const ANALYSIS_COLUMN_PX = 440;
-export const CARD_WIDTH_PX = ANALYSIS_COLUMN_PX + CARD_SEAM_PX + PORTRAIT_COLUMN_PX;
-
-/** How far CKBYTES reaches PAST the CELL SCAN square it stands under, toward
- *  the Cell the card points at — the user's R2-6 ruling of 2026-09-05.
- *
- * The reader is a fixed measure (a sixteen-byte row is 73 monospace characters
- * plus its scrollbar-map, which `READER_WIDTH_PX` derives to 408) and the
- * square is 280, so the overhang is what is left after the square and the seam
- * beside it. It is SUBTRACTED rather than declared, because three constants
- * that each state a piece of the same geometry can disagree and two that state
- * it once cannot: the notch, the reader's width and the card's width are one
- * arithmetic here, and moving `READER_WIDTH_PX` moves all three together.
- *
- * The notch is a `.` cell of the grid rather than an element, so nothing paints
- * in it and the card's dismiss boundary does not reach it — a click up there is
- * a click on the scene, which is what it is. */
-const READER_NOTCH_PX = READER_WIDTH_PX - PORTRAIT_COLUMN_PX - CARD_SEAM_PX;
-
-/** The wide card: the analysis plate, the scan square, and the reader standing
- *  beside them past the notch. */
-const CARD_WIDE_WIDTH_PX = CARD_WIDTH_PX + CARD_SEAM_PX + READER_NOTCH_PX;
-
-/** The clear stage the wide card needs before it may have its reader beside
- *  the plate. Under it the reader lies under the card instead and the card
- *  goes back to its 728 measure — and, under a second rung, below even that.
- *
- * The rule is keyed to the HOLE the HUD leaves — `hudHoleFromRects`, the same
- * reading the solver places into and the camera fits to — and not to
- * `innerWidth`, which was the first cut of this and was wrong in both
- * directions: it made a 1,600 px window with both rails out (a 1,216 px hole)
- * narrow, and it called a 1,400 px window with the rails collapsed wide when
- * the hole was 830.
- *
- * The arithmetic is the placement's own. A card is tethered `INSPECTOR_GAP_PX`
- * from its entity, so a card of measure `w` beside an entity in the hole needs
- * `w + 42` of hole. That gives a ladder with three rungs:
- *
- *   hole ≥ 898  the wide card, reader beside the plate
- *   hole ≥ 770  the 728 card, reader under it — still placed beside the cell
- *   below       a COMPACT card, `clamp(hole − 28, 640, 728)`, reader under it
- *
- * A 1,920 stage leaves 1,190 and takes the first rung. A 1,440 collapses its
- * rails (`HudOverlay.RAILS_COLLAPSE_MAX_WIDTH_PX`) and is left with 874, so it
- * takes the middle one — and the only thing the wide card was buying there was
- * a taller dump. So the dump gives up its height instead: six rows under the
- * two columns, the card at the measure it has when a Cell holds nothing, and a
- * composition the stage can hold.
- *
- * This is the `readerPlacement(innerWidth) >= 1396 ? 'beside' : 'below'` rule
- * the R2 rewrite removed and never replaced, restated in the terms that
- * actually decide it: card, tether and hole. */
-const CARD_BESIDE_HOLE_PX = CARD_WIDE_WIDTH_PX + INSPECTOR_GAP_PX;
-
-/** The hole the 728 card needs to stand beside its cell — the middle rung. */
-const CARD_NARROW_HOLE_PX = CARD_WIDTH_PX + INSPECTOR_GAP_PX;
-
-/** What the compact measure gives back to the stage: the solver's own edge, on
- *  both sides. A card takes its measure from the hole, and the hole is a stage
- *  the card has to land INSIDE — with the clearance every family keeps against
- *  the viewport edge. Derived from `INSPECTOR_EDGE_PX` rather than typed,
- *  which is also what the `maxWidth` below is made of: one 28. */
-const CARD_EDGE_RESERVE_PX = INSPECTOR_EDGE_PX * 2;
-
-/** The compact card's floor — what the analysis column may not go under.
- *
- * The card's third rung is the one the 1,280 stage lands on: 714 px of hole
- * against a 728 card, short by fourteen, and A2b put that arithmetic to the
- * user as an open question. The ruling: below the middle rung the card takes
- * a COMPACT measure and gives the difference back to the stage — but only the
- * ANALYSIS column shrinks. The 280 scan square is a specimen at a fixed scale
- * and the 8 px seam is the card's own joint; a square that flexed would be a
- * second reading of the braid at a second size.
- *
- * So the floor is the analysis plate's own: the longest row it draws — a
- * label, a badge and a mid-truncated hash — measures 336 px, and 640 − 280 −
- * 8 leaves it 352. A pixel under this and the register starts wrapping rows
- * that were composed as one line; the card would rather cover a rail (and be
- * dimmed under its scan square, A3) than print a broken register. */
-const CARD_COMPACT_MIN_WIDTH_PX = 640;
-
-/**
- * The card's measure, from the hole the HUD leaves and whether the reader is
- * standing beside the plate. Pure, and stated once: the width, the grid and
- * the reader's own placement are three readings of this one ladder.
- */
-function cellCardWidth(holeWidth: number, readerBeside: boolean): number {
-  if (readerBeside) return CARD_WIDE_WIDTH_PX;
-  if (holeWidth >= CARD_NARROW_HOLE_PX) return CARD_WIDTH_PX;
-  return Math.round(Math.min(
-    CARD_WIDTH_PX,
-    Math.max(CARD_COMPACT_MIN_WIDTH_PX, holeWidth - CARD_EDGE_RESERVE_PX),
-  ));
-}
-
-/**
- * Whether the stage is narrower than the card's own floor — the one case the
- * placement solver has no answer for.
- *
- * The ladder above ends at 640 because the register stops being a register
- * under it, so below a 640 hole the card is wider than the clear stage and
- * lands ON the HUD, whatever the solver does with it. That is the state this
- * predicate names, and it is the user's ruling of 2026-09-05: where the card
- * cannot clear the panels, the panels give way for as long as it is open.
- *
- * A3 already dims what shows through the CELL SCAN square, because a chain tip
- * printed across a specimen is a false reading of the specimen. This is the
- * same argument one step out, and the reason it needs its own rung is that the
- * rest of the card is OPAQUE: a panel under it is not misread, it is CUT — a
- * summary sheared down the middle by a card's edge, its rows half-legible and
- * its rule ending in mid air. A panel at a quarter of its light reads as a
- * panel that has stood aside; a panel with a card's edge through it reads as a
- * panel that has broken. So the whole card's box is what the panels answer to
- * here, and the square's box is what they answer to everywhere else.
- *
- * Exported for `CellInspectionOverlay`, which owns the mark: the ladder is the
- * card's, the DOM write is the overlay's, and neither restates the other's
- * number.
- */
-export function cellCardStandsOnHud(holeWidth: number): boolean {
-  return Number.isFinite(holeWidth) && holeWidth < CARD_COMPACT_MIN_WIDTH_PX;
-}
-
-/** What a docked card may not have of the viewport's height: the HUD's safe
- *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
- *  a card between. The card's cap has to be the solver's band exactly — a card
- *  capped shorter would leave the docked family on the next frame and a card
- *  capped taller would still hang off the screen.
- *
- *  ⚠️ SUMMED FROM THE SOLVER'S OWN TWO NUMBERS, not typed as their total. It
- *  was `118` and correct, and the equality still broke: this side is a
- *  `viewportMinusSafeArea` calc and the solver's side was the whole viewport,
- *  so an iPad's 25px home indicator left the cap 25 short of the band and the
- *  card flickered between the two families forever. The stage is measured with
- *  this same expression now (`sceneInspection`'s stage ruler), and a literal
- *  here would have been the third place the arithmetic could drift. */
-const CARD_DOCK_RESERVE_PX = INSPECTOR_SAFE_TOP_PX + INSPECTOR_EDGE_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
@@ -542,13 +416,17 @@ export interface CellDetailPanelProps {
   semanticTransactionMessage?: string | null;
   /** Mirrors a selected readout facet into the scene-to-detail connector. */
   onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
-  /** Spatial fan direction selected by the scene-anchor placement solver. */
-  layoutSide?: CellDetailLayoutSide;
-  /** The card is taller than the band the viewport leaves it, so the solver
-   *  docked it under the strip. Its own dossier is then what has to give: the
-   *  analysis plate scrolls inside the card instead of hanging the provenance
-   *  footer off the bottom of the screen. */
-  docked?: boolean;
+  /** The channel every instrument registers its box in and the frame writer
+   *  moves them through. Optional so the review labs can render the dossier
+   *  standing still, with no anchor to place it. */
+  handles?: CellConstellationHandles;
+  /** The identity chain's colour — the register's own frame, matching the
+   *  reticle and the leaders the overlay paints from the same reading. */
+  accent?: string;
+  /** Which instruments this Cell actually opened. The leaders are drawn by the
+   *  overlay and there is one per instrument, so the overlay has to be told —
+   *  a Cell holding no bytes has no reader and must grow no line to one. */
+  onSlotsChange?: (slots: readonly ConstellationSlot[]) => void;
   /** Review labs render the portrait as a self-contained Canvas instead of
    * through the app's main-context inset pass. */
   portraitStandalone?: boolean;
@@ -1266,11 +1144,8 @@ function CellScanContentMemory(props: CellScanContentMemoryProps) {
  * hundred ticks and then `true` wakes its subscriber exactly once. The dump is
  * reconciled at the instant it lights and sleeps through every other tick.
  */
-function CellScanReaderPlate({ beside, readingPx, children }: {
-  /** The reader is a column beside the plate (wide) rather than a row under
-   *  the card (narrow) — see CARD_BESIDE_HOLE_PX. */
-  beside: boolean;
-  /** The height the card handed the dump for the reading standing over it, so
+function CellScanReaderPlate({ readingPx, children }: {
+  /** The height the panel handed the dump for the reading standing over it, so
    *  a test can read the number the row arithmetic actually spent. jsdom lays
    *  nothing out, so the band itself can never be measured there — the stamp
    *  is the only place the sum is observable. */
@@ -1283,41 +1158,15 @@ function CellScanReaderPlate({ beside, readingPx, children }: {
   return (
     <section
       aria-label="CKBytes reader"
-      data-cell-detail-module="reader"
-      data-cell-inspection-satellite="reader"
       data-cell-detail-size="content"
-      data-cell-data-reader-placement={beside ? 'beside' : 'under'}
+      data-cell-data-reader-placement="apart"
       data-cell-data-reader-reading-px={readingPx}
-      style={{
-        ...satelliteBase,
-        gridArea: 'reader',
-        // "As tall as the plate", exactly. The dump's height is a whole number
-        // of 13.5 px rows and the plate's is not, so the section takes the
-        // grid row's full height and its bottom padding absorbs the pixels
-        // that do not divide. `minHeight: 0` is what lets it: a grid item's
-        // default `min-height: auto` refuses to be shorter than its content,
-        // and the stretch would turn into a push.
-        //
-        // Lying under the card there is no plate to be as tall as: the row is
-        // its own six rows and the card's height is what it costs.
-        alignSelf: beside ? 'stretch' : 'start',
-        minHeight: 0,
-        overflow: 'hidden',
-        padding: '8px 10px 10px 12px',
-        // The card's own rose, not the reader's cyan (the user's D-8 ruling of
-        // 2026-09-05). The R2 plan wrote `spatialPlate(CYAN)` and never said
-        // why; what it produced was a card with four frame colours — rose
-        // plate, orange viewfinder, cyan reader, violet trace — reading as
-        // three windows that happen to touch, which is the 08-21 complaint
-        // (割裂) the L-notch was cut to answer.
-        //
-        // `hudTheme.ts` had the rule all along: the FRAME carries identity, the
-        // CONTENT keeps its own vocabulary. A frame is what says WHOSE surface
-        // this is, and every plate on this card belongs to one Cell. So the
-        // border goes rose and the cyan stays where it means something — the
-        // title, its 字节元 companion, and the bytes themselves.
-        ...spatialPlate(CELL_CARD_ACCENT),
-      }}
+      // No plate of its own any more, and no `alignSelf` either: the reader is
+      // an instrument standing apart, its own height is what it costs, and the
+      // frame around it belongs to `ConstellationPanel`. "As tall as the plate
+      // beside it" was the whole source of the 249 px of bordered emptiness a
+      // one-row payload used to draw under its foot line.
+      style={{ position: 'relative', minWidth: 0, padding: '8px 10px 10px 12px' }}
     >
       {children(revealed)}
     </section>
@@ -1469,8 +1318,9 @@ function CellDetailPanel({
   semanticTransactionRecord,
   semanticTransactionMessage,
   onInspectionFieldChange,
-  layoutSide = 'left',
-  docked = false,
+  handles,
+  accent = CELL_CARD_ACCENT,
+  onSlotsChange,
   portraitStandalone = false,
   onClose,
   style,
@@ -1688,18 +1538,6 @@ function CellDetailPanel({
       window.removeEventListener('resize', measure);
     };
   }, [cell.id]);
-  // `PORTRAIT_COLUMN_PX + CARD_SEAM_PX` is handed IN rather than restated in
-  // the derive: the square and the seam over the reader are the card's own
-  // geometry, and a pure derive that spelled them out would be a second place
-  // they are written down.
-  // In a hole too small for the wide card the reader is a row under the card
-  // rather than a column beside the plate, so it has no plate remainder to
-  // fill and takes the floor: six rows, 96 bytes, enough for a molecule header
-  // and the start of what follows it. See CARD_BESIDE_HOLE_PX — the measure is
-  // decided by the stage the HUD leaves, not by the window's own width.
-  const holeWidth = useHudHoleWidth();
-  const readerBeside = hasBytes && holeWidth >= CARD_BESIDE_HOLE_PX;
-  const cardWidth = cellCardWidth(holeWidth, readerBeside);
   // THE READING's height, and this is the frame it has to be known in.
   //
   // The window stands in CKBYTES now (2026-09-08), in the band between the
@@ -1739,14 +1577,24 @@ function CellDetailPanel({
       semanticSource,
     ],
   );
-  const readerRows = readerBeside
-    ? readerRowsUnderScan(
-      plateHeightPx,
-      PORTRAIT_COLUMN_PX + CARD_SEAM_PX,
-      READER_CHROME_PX + readingLayout.heightPx,
-      READER_ROW_HEIGHT_PX,
-    )
-    : READER_MIN_VISIBLE_ROWS;
+  // How much dump is worth mounting a virtualiser for, now that the reader has
+  // no plate to be as tall as.
+  //
+  // It used to be the analysis plate's own remainder — `readerRowsUnderScan`,
+  // the height the register left over after the specimen square and the reading
+  // — and that arithmetic is exactly the shared height the instruments came
+  // apart to be rid of. What replaces it is the module's own documented default,
+  // and it is self-limiting on the smallest stage this runs on: 24 rows is
+  // 324 px of dump, and 324 plus this instrument's chrome (a head, a padding, a
+  // CKBYTES header, the tallest reading the index emits and a foot line) is
+  // 570 — the band an 11" iPad in landscape Safari leaves. Past that the walk
+  // caps the panel and the panel scrolls, which is the one honest answer to a
+  // payload larger than any screen.
+  //
+  // The BOX inside it still ends at the payload (`readerBoxRows`, the user's
+  // D-7 ruling): a sixteen-byte Cell draws two rows in a two-row frame, not one
+  // row in a twenty-four-row one.
+  const readerRows = READER_VISIBLE_ROWS;
   // The record's own segments, and only a validated record's: the reader
   // colours bytes by them and names the one under the pointer, so a record
   // this card has already refused to present may not label a byte in it.
@@ -1936,70 +1784,29 @@ function CellDetailPanel({
         ? `${traceReadout.resolvedSourceCount}/${traceReadout.sourceCount} VERIFIED`
         : (traceReadout?.stage ?? 'PLANNING').toUpperCase();
 
-  const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  // The specimen column always sits on the edge nearest the inspected Cell —
-  // mirroring for a right or vertical fan swaps the two columns, never any
-  // per-satellite coordinate math. The plate can no longer paint behind the
-  // transparent scan square (the braid lives there): they are siblings now,
-  // not one plate notched around the other.
-  const portraitFirst = verticalLayout || layoutSide === 'right';
-  // The card, in one grid, and which of two grids depends on ONE fact: whether
-  // this Cell holds any bytes.
-  //
-  // Without them it is what it has always been — two columns, one row, the
-  // analysis plate beside the specimen square, at whatever measure the ladder
-  // gave the card (`cellCardWidth`): the square and the seam are fixed and the
-  // plate is the `1fr`, so a compact card is a narrower register and the same
-  // specimen.
-  //
-  // With them the square gets a companion under it. CKBYTES is 408 px wide and
-  // the square is 280, so the reader spans the square's column AND a third,
-  // narrower track — the notch — that reaches 120 px past it toward the Cell.
-  // The analysis plate spans both rows, which is what makes the reader's
-  // bottom the plate's bottom; the notch's own cell in row 1 is a `.`, so
-  // nothing paints up there and the card's silhouette is the L the reader
-  // makes with the square.
-  //
-  // Mirrored, the whole thing reflects: the specimen square keeps the edge
-  // nearest the Cell it is about, the notch stays on the far side of it, and
-  // the plate moves to the other end. That is the rule that already mirrors
-  // these columns, applied to three tracks instead of two.
-  //
-  // …and narrow, the third grid: the two columns of the bare card with the
-  // reader lying under both of them, at the card's own narrow measure — 728,
-  // or the compact width the hole leaves it under CARD_NARROW_HOLE_PX.
-  const cardColumns = readerBeside
-    ? (portraitFirst
-      ? `${READER_NOTCH_PX}px ${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
-      : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px ${READER_NOTCH_PX}px`)
-    : (portraitFirst
-      ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)`
-      : `minmax(0, 1fr) ${PORTRAIT_COLUMN_PX}px`);
-  // Row 1 is the square, exactly; row 2 is everything the plate has left, and
-  // the reader takes it. Declared only when there IS a reader — a two-column
-  // card has one implicit row and stating it would fix the plate's height to
-  // the square's.
-  // A docked card is capped at the band's height (below), so ONE of its rows
-  // has to be the one that gives — and it is always the first, the row the
-  // analysis plate lives in. Undocked and narrow the rows stay implicit: they
-  // are what their content is, and the card grows downward as it always has.
-  const cardRows = readerBeside
-    ? `${PORTRAIT_COLUMN_PX}px minmax(0, 1fr)${showTracePlate ? ' auto' : ''}`
-    : docked
-      ? `minmax(0, 1fr)${hasBytes ? ' auto' : ''}${showTracePlate ? ' auto' : ''}`
-      : undefined;
-  // Growth is strictly downward: an armed MEMORY TRACE appends a full-width
-  // row under everything, and it spans whatever the card is wide — three
-  // tracks with a reader, two without. The row exists only while the trace is
-  // armed; an always-there empty grid row trails an 8px phantom gap.
-  const cardAreas = readerBeside
-    ? `${portraitFirst
-      ? '". scan analysis" "reader reader analysis"'
-      : '"analysis scan ." "analysis reader reader"'}${
-      showTracePlate ? ' "trace trace trace"' : ''}`
-    : `${portraitFirst ? '"scan analysis"' : '"analysis scan"'}${
-      hasBytes ? ' "reader reader"' : ''}${
-      showTracePlate ? ' "trace trace"' : ''}`;
+  // A channel of its own where none was handed in. The review labs and the
+  // component tests render the dossier standing still, with no anchor to place
+  // it; a detached channel lets every instrument register itself and measure
+  // itself exactly as it does live, and simply nobody moves them.
+  const detachedHandles = useRef<CellConstellationHandles | null>(null);
+  if (detachedHandles.current === null) {
+    detachedHandles.current = createCellConstellationHandles();
+  }
+  const panelHandles = handles ?? detachedHandles.current;
+
+  // Which instruments this Cell opened, and nothing else about where they go.
+  // The walk owns the geometry; this owns the census — and it is the census the
+  // overlay needs, because there is one leader per instrument and a Cell with
+  // no bytes must grow no line to a reader that is not there.
+  const openSlots = useMemo<ConstellationSlot[]>(() => {
+    const slots: ConstellationSlot[] = ['analysis', 'specimen'];
+    if (hasBytes) slots.push('reader');
+    if (showTracePlate && traceReadout) slots.push('trace');
+    return slots;
+  }, [hasBytes, showTracePlate, traceReadout]);
+  useEffect(() => {
+    onSlotsChange?.(openSlots);
+  }, [onSlotsChange, openSlots]);
 
   // ——— Register cluster evidence ————————————————————————————————————
   const facet = presentedSemanticRecord
@@ -2182,184 +1989,64 @@ function CellDetailPanel({
   // reach this function.
   return (
     <CellScanClockContext.Provider value={scanClock}>
-    <div
-      data-cell-detail-scan-field="true"
-      data-cell-detail-enhanced={enhancedDetail ? 'true' : 'false'}
-      data-cell-detail-layout={verticalLayout ? 'vertical' : layoutSide}
-      data-cell-detail-readability="large"
-      style={{
-        position: 'relative',
-        display: 'grid',
-        // The analysis plate keeps its measure with a reader and without one:
-        // it is the `1fr` between fixed tracks, and 856 − 120 − 280 − two
-        // seams is the 440 it has always been. The square and the notch are
-        // fixed rather than shares of the card, because a dump is a fixed
-        // measure — seventy-three monospace characters — and a track that
-        // flexed would either clip a row or leave a gutter.
-        gridTemplateColumns: cardColumns,
-        // Two rows only when the reader is there to take the second one, and
-        // the trace row exists only while the armed MEMORY TRACE window is
-        // appended — an always-there empty row would trail an 8px phantom gap
-        // under the analysis plate.
-        gridTemplateRows: cardRows,
-        gridTemplateAreas: cardAreas,
-        columnGap: CARD_SEAM_PX,
-        rowGap: 8,
-        alignItems: 'start',
-        width: cardWidth,
-        // The card never outgrows the window it is drawn in, whichever of the
-        // three measures it takes. Under CARD_BESIDE_HOLE_PX the measure steps
-        // down and under CARD_NARROW_HOLE_PX it follows the hole itself, so
-        // this is the last resort it was meant to be rather than the only
-        // narrow rule the card has. It answers one case the ladder cannot: a
-        // window narrower than the card's own floor.
-        maxWidth: viewportMinusSafeArea('width', CARD_EDGE_RESERVE_PX),
-        // …and the same rule on the other axis, but only when the solver says
-        // the card is docked. The band is the viewport less the HUD's safe top
-        // and the bottom edge — the two numbers the placement solver clamps
-        // into — and capping the card AT it is what makes the docked family a
-        // fixpoint rather than a flicker. Without it the dossier simply ran off
-        // the bottom of a 800px screen with its PROOF anchor below the fold.
-        ...(docked
-          ? {
-            maxHeight: viewportMinusSafeArea('height', CARD_DOCK_RESERVE_PX),
-            overflow: 'hidden',
-          }
-          : null),
-        boxSizing: 'border-box',
-        pointerEvents: 'none',
-        color: HUD_COLORS.ink,
-        fontFamily: HUD_FONTS.mono,
-        // One composited shadow around the constellation replaces a separate
-        // filter surface for every satellite. It follows the silhouette, so
-        // the scan square and the plate beside it cast one shadow instead of
-        // two stacked ones. A second α.06 accent glow used to ride on top of
-        // it; it was dropped (D-6) — at 6 % over near-black it read as nothing
-        // while costing a second per-frame Gaussian blur on a surface the
-        // canvas beneath and the specimen sweep already repaint every frame.
-        filter: `drop-shadow(0 8px 16px ${rgba(HUD_COLORS.ground, 0.56)})`,
-        // No enter of its own. The card arrives once, on the chassis
-        // (`INSPECTION_CARD_STYLE`, `HUD_MOTION.reveal`) — this body used to
-        // slide 12 px in over 280 ms while the frame around it faded over 120
-        // and the tether dot popped over 360, three enters on two elements and
-        // no two of them the same length (report E, E-5). The four network
-        // dialects share this chassis and declared no body animation at all,
-        // so the cell card was also the only one of the five that moved.
-        ...style,
-      }}
-    >
+    <>
+      {/* CELL SCAN, SCAN·01 and SCAN·02, APART (the user's direction of
+        * 2026-09-10: 「三个panel相互分开，不挨着，分散在三个角上」).
+        *
+        * There is no card here any more, and no grid. Each instrument is a
+        * `ConstellationPanel` — an absolutely-positioned plate whose transform,
+        * width and height are written by the frame writer from the walk's
+        * answer, and whose only contribution back is how tall its own content
+        * came out. What that deletes is the entire width ladder: three rungs, a
+        * notch column, a 640 px compact floor, a docked row spec and two
+        * mirrored `gridTemplateAreas` — every one of which existed to fit three
+        * panels into one box.
+        *
+        * The masthead is gone from this plate too: the Cell's id, its outpoint
+        * and its state are on the chip under the reticle now, because they are
+        * facts about the specimen and not about the register. And the module
+        * tags are gone from the heads, because each one rides its own leader —
+        * said once, on the thing that is the relationship. */}
+      <ConstellationPanel
+        slot="analysis"
+        handles={panelHandles}
+        accent={accent}
+        title="CKBYTES ANALYSIS"
+        status={<CellScanStatusReadout landmarks={order.length} />}
+        onClose={onClose}
+        closeTitle="Close CKBYTES ANALYSIS · ESC closes the Cell"
+        attributes={{
+          'data-cell-detail-module': 'ckbytes',
+          'data-cell-detail-scan-field': 'true',
+          'data-cell-detail-enhanced': enhancedDetail ? 'true' : 'false',
+          'data-cell-detail-readability': 'large',
+          'data-memory-identity-binding': 'true',
+          'data-memory-identity-phase': selectedIdentityProofBinding?.phase ?? 'collecting',
+          'data-memory-identity-count': identityProofCount,
+          'data-memory-identity-complete': identityProofComplete ? 'true' : 'false',
+        }}
+      >
       <section
         ref={analysisPlateRef}
         aria-label="CKBytes analysis"
-        data-cell-detail-module="ckbytes"
-        data-cell-inspection-satellite="analysis"
         // data-cellular-scan-state / -progress are written by CellScanSweep
         // below, straight to this node: they change 12.5 times a second and
         // this plate holds the whole dossier.
-        data-memory-identity-binding="true"
-        data-memory-identity-phase={
-          selectedIdentityProofBinding?.phase ?? 'collecting'
-        }
-        data-memory-identity-count={identityProofCount}
-        data-memory-identity-complete={identityProofComplete ? 'true' : 'false'}
         style={{
-          ...satelliteBase,
-          gridArea: 'analysis',
-          // Docked, the plate is the card's one elastic part: it fills the row
-          // the cap left it and scrolls inside itself, so the provenance
-          // footer at the bottom of the dossier is always reachable. `minHeight
-          // 0` is what lets a grid item be shorter than its content at all.
-          //
-          // ⚠️ The two cases are ONE spread, and they have to be: the shorthand
-          // and the longhand cannot both appear in this object. A CSSOM
-          // assignment applies in insertion order, so an `overflow` written
-          // after an `overflowY` — even an `overflow` React skips as undefined,
-          // which it writes as `''` — resets both longhands and the plate goes
-          // back to `visible`. jsdom does not model that, so the unit test read
-          // `auto` off a browser that was showing `visible`; the live capture
-          // is what caught it.
-          ...(docked
-            ? {
-              alignSelf: 'stretch' as const,
-              minHeight: 0,
-              overflowX: 'hidden' as const,
-              overflowY: 'auto' as const,
-            }
-            : { overflow: 'hidden' as const }),
-          // One rectangle, one column: plate header, register clusters, bytes
-          // zone, provenance footer — the house plate's own 12px cut corner is
-          // the only shape it wears.
+          position: 'relative',
+          minWidth: 0,
+          // One rectangle, one column: register clusters, bytes zone,
+          // provenance footer. The plate's own frame and its 12px cut corner
+          // belong to the instrument around it now.
           display: 'grid',
           gridTemplateColumns: 'minmax(0, 1fr)',
           rowGap: 8,
           alignContent: 'start',
           padding: '9px 12px 10px 14px',
-          // The dossier's one frame, and the only place identity is spoken on
-          // this card: the rail, the border and the tinted tail. Everything
-          // inside keeps its own vocabulary — consensus cyan, memory violet,
-          // the value golds — because the plate says WHAT this window is about
-          // and the register says what the Cell holds.
-          ...spatialPlate(CELL_CARD_ACCENT),
+          ...style,
         }}
       >
         <CellScanSweep plateRef={analysisPlateRef} reduced={reduced} />
-
-        {/* The masthead the standalone identity plate used to be. The dossier
-          * is ONE window, so the Cell it is about titles it — a second plate
-          * above this one only repeated the subject in a taller frame. Two
-          * lines: WHO the specimen is, then WHERE it lives and how far the
-          * scan has read. The `CLOSE` affordance belongs to the titled plate,
-          * as it does in every other dialect — and, as in every other dialect,
-          * the title is spoken in the CARD's accent. It said `CELL // #id` in
-          * chrome orange for as long as the card was cyan and nobody could see
-          * the difference between a frame and a bracket; the rose rebind swept
-          * the cyan and left the orange behind, so the one line that names the
-          * creature was the only thing on the plate not painted in its blood. */}
-        <div data-cell-scan-identity style={{ minWidth: 0, display: 'grid', gap: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0, paddingRight: 20 }}>
-            <span style={{ color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 1.6, textShadow: `0 0 9px ${rgba(CELL_CARD_ACCENT, 0.45)}` }}>
-              CELL // #{cell.id}
-            </span>
-            {/* The house CJK companion, as PEER wears 对端 and NODE wears 节点.
-              * 细胞 is in the hand-subset woff2 (fonts/README.md) — deliberate
-              * presence, where SightedNodeCard documents a deliberate absence. */}
-            <span style={{ ...CJK_BASELINE_LIFT, color: CELL_CARD_ACCENT, fontFamily: HUD_FONTS.cjk, fontWeight: 400, fontSize: HUD_TYPE.label, opacity: COMPANION_OPACITY }}>
-              细胞
-            </span>
-            {/* THE LAMP AND THE AGE, AND NOT THE WORD (the user's D-6 ruling
-              * of 2026-09-05). The masthead read `● LIVE · AGE 3 D` while the
-              * register four rows below read `WHERE · LIVE` in the same green:
-              * one card, one column, the same word twice. The lamp is the
-              * status — lit or cooled, in the tone — and the register spells
-              * it, because the register is where this card states facts.
-              *
-              * A reading, not a chip: `color` and nothing else, which is the
-              * only layer `ember` is allowed on. The lamp itself used to be
-              * `caution` when cooled, so the masthead of every consumed Cell
-              * opened in the HUD's degradation yellow — a small alarm raised
-              * over the most ordinary thing a chain does.
-              *
-              * ⚠️ The lamp needs a title now: unlabelled, it is a coloured dot
-              * and the word that glossed it is gone from this line. */}
-            <span title={live ? 'LIVE' : 'SPENT'} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap', color: live ? HUD_COLORS.nominal : HUD_COLORS.ember, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
-              <StatusLamp color={live ? HUD_COLORS.nominal : HUD_COLORS.ember} lit={live} size={5.5} />
-              {lifetime}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: '2px 8px', minWidth: 0 }}>
-            {/* The outpoint, which is what a viewer can look up anywhere else —
-              * the old head of the content hash beside an output index read
-              * like an outpoint and was not one. */}
-            <span title={cell.out_point.tx_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.9 }}>
-              {formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
-            </span>
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'baseline', gap: 6, whiteSpace: 'nowrap' }}>
-              <CellScanStatusReadout landmarks={order.length} />
-              {moduleTag('SCAN·01')}
-            </span>
-          </div>
-        </div>
-        <CloseButton onClose={onClose} title="Close · ESC or click outside" />
 
         <div
           data-cell-analysis-register="true"
@@ -2832,59 +2519,61 @@ function CellDetailPanel({
           ) : null}
         </div>
       </section>
+      </ConstellationPanel>
 
+      {/* CELL SCAN — the specimen, its own instrument. The window is the whole
+        * of it: a head, then a 280 px square that is a hole through the DOM
+        * onto the scene, because the braid renders on the MAIN canvas beneath
+        * (`CellPortraitInset`). Nothing stands under it any more waiting for a
+        * column to end, so there is no leftover for it to leave. */}
+      <ConstellationPanel
+        slot="specimen"
+        handles={panelHandles}
+        title="CELL SCAN"
+        accent={CELL_CARD_ACCENT}
+        status={(
+          <span
+            data-cell-scan-drag-affordance
+            title="Drag the specimen square to orbit it"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}
+          >
+            DRAG TO ORBIT
+            <DragAxisMark />
+          </span>
+        )}
+        onClose={onClose}
+        closeTitle="Close CELL SCAN · ESC closes the Cell"
+        attributes={{ 'data-cell-detail-module': 'specimen' }}
+      >
       <section
         aria-label="Interactive Cell scan"
-        data-cell-detail-module="specimen"
-        data-cell-inspection-satellite="specimen"
-        // The one transparent window on this card, and the reason the overlay
-        // has to find it from outside: `background: 'transparent'` below is a
+        // The one transparent window on this instrument, and the reason the
+        // overlay has to find it from outside: `background: 'transparent'` is a
         // hole through the whole DOM HUD, so whatever the HUD has under it
         // prints on the specimen. `dimHudPanelsUnder` reads this box.
         data-cell-scan-window="true"
         data-cell-portrait-frame
         style={{
-          ...satelliteBase,
-          gridArea: 'scan',
-          alignSelf: 'start',
-          width: PORTRAIT_COLUMN_PX,
+          position: 'relative',
+          width: '100%',
           aspectRatio: '1 / 1',
           overflow: 'hidden',
-          border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
-          // The braid renders on the MAIN canvas beneath this card
-          // (CellPortraitInset), so the directional plate lives in that scene
-          // as its backing — a DOM background here would dim the braid. The
-          // circular idiom in this viewport still belongs to the content
-          // address halo (the one ring that reads as data).
           background: 'transparent',
-          // Viewport chrome: the inset breath is the card's identity, the
-          // outer one is house orange. The braid inside keeps the consensus
-          // cyan it is rendered in — that is content, and it is in the scene.
+          // The viewfinder idiom, kept: the brackets and the CELL SCAN word in
+          // house orange, the frame in the Cell's own rose. The border used to
+          // be orange too, which made this the one plate on the card not
+          // painted in the identity its siblings wore.
+          border: `1px solid ${rgba(CELL_CARD_ACCENT, 0.3)}`,
           boxShadow: `inset 0 0 26px ${rgba(CELL_CARD_ACCENT, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
-        <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
-          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.4, whiteSpace: 'nowrap' }}>CELL SCAN</span>
-          {/* The axis mark is drawn, not typed: `↔` is in none of the faces
-              this repo ships and in none of the upstream faces either, so the
-              one affordance telling a reader the square is draggable was set
-              in whatever their machine had.
-            *
-            * The mark is decoration and hidden, which leaves the compact copy
-            * saying only ORBIT where it used to say ORBIT and an axis. The
-            * title carries the gesture instead, in both layouts and to a
-            * reader who cannot see either — the same way the byte budget's
-            * hints are worded. */}
-          <span data-cell-scan-drag-affordance title="Drag the specimen square to orbit it" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>
-            {verticalLayout ? 'ORBIT' : 'DRAG TO ORBIT'}
-            <DragAxisMark />
-          </span>
-        </div>
         <CellNucleusPortrait
           cell={cell}
           reducedMotion={reduced}
           scanEpochMs={scanEpochMs}
-          layoutSide={layoutSide}
+          // The portrait re-measures its offset when this changes; the
+          // instruments do not mirror any more, so it is one word forever.
+          layoutSide="left"
           standalone={portraitStandalone}
           // A field can only be selected once the lattice has locked (the
           // facts are disabled until then) and the selection is cleared with
@@ -2908,6 +2597,7 @@ function CellDetailPanel({
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
+      </ConstellationPanel>
 
       {/* CKBYTES, under the CELL SCAN square, for every Cell that holds a byte
         * (the user's directions of 2026-09-05: 「hex reader 应该总是展示，可以把
@@ -2960,10 +2650,21 @@ function CellDetailPanel({
         * zone has no such unmount. Without the key, a selection made on one
         * Cell would point at a byte of the next. */}
       {hasBytes ? (
-        <CellScanReaderPlate
-          beside={readerBeside}
-          readingPx={readingLayout.heightPx}
+        <ConstellationPanel
+          slot="reader"
+          handles={panelHandles}
+          title="CKBYTES"
+          accent={CELL_CARD_ACCENT}
+          status={(
+            <span style={{ ...CJK_BASELINE_LIFT, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, color: HUD_COLORS.cyanInk, opacity: COMPANION_OPACITY }}>
+              字节元
+            </span>
+          )}
+          onClose={onClose}
+          closeTitle="Close CKBYTES · ESC closes the Cell"
+          attributes={{ 'data-cell-detail-module': 'reader' }}
         >
+        <CellScanReaderPlate readingPx={readingLayout.heightPx}>
           {(revealed) => (
             <CellDataReader
               key={cell.id}
@@ -2989,46 +2690,34 @@ function CellDetailPanel({
             />
           )}
         </CellScanReaderPlate>
+        </ConstellationPanel>
       ) : null}
 
       {/* Growth is strictly vertical: an arming trace appends a full-width
         * row below both columns instead of splitting one, and the analysis
         * plate's own geometry never moves. */}
       {showTracePlate && traceReadout ? (
+        <ConstellationPanel
+          slot="trace"
+          handles={panelHandles}
+          title="MEMORY TRACE"
+          accent={CELL_CARD_ACCENT}
+          status={(
+            <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}>
+              LIVE EVIDENCE
+            </span>
+          )}
+          onClose={onClose}
+          closeTitle="Close MEMORY TRACE · ESC closes the Cell"
+          attributes={{ 'data-cell-detail-module': 'trace' }}
+        >
           <section
             aria-label="Consensus memory trace"
-            data-cell-detail-module="trace"
-            data-cell-inspection-satellite="trace"
             data-cell-detail-size="content"
-            style={{
-              ...satelliteBase,
-              gridArea: 'trace',
-              width: 'auto',
-              overflow: 'visible',
-              padding: '8px 10px 10px 12px',
-              // Rose, for the reader plate's reason (D-8): the frame says
-              // which creature this plate is about, and the violet stays on
-              // the title and the ledger, where it names consensus memory.
-              ...spatialPlate(CELL_CARD_ACCENT),
-            }}
+            style={{ position: 'relative', minWidth: 0, padding: '8px 10px 10px 12px' }}
           >
-            <SpatialPlateHeader
-              en="MEMORY TRACE"
-              accent={HUD_COLORS.memory}
-              titleColor={HUD_COLORS.memoryInk}
-              marginBottom={0}
-              status={(
-                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.6 }}>
-                    LIVE EVIDENCE
-                  </span>
-                  {moduleTag('SCAN·03')}
-                </span>
-              )}
-            />
-            {/* The plate spans the card; the ledger rows keep a readable
-              * measure — micro-type evidence lines stretched to the full
-              * card width read as unbounded spreads. */}
+            {/* The ledger rows keep a readable measure — micro-type evidence
+              * lines stretched to the full width read as unbounded spreads. */}
             <div style={{ minWidth: 0, maxWidth: 560 }}>
               <ConsensusMemoryTracePlate
                 readout={traceReadout}
@@ -3046,9 +2735,9 @@ function CellDetailPanel({
               />
             </div>
           </section>
+        </ConstellationPanel>
       ) : null}
-
-    </div>
+    </>
     </CellScanClockContext.Provider>
   );
 }

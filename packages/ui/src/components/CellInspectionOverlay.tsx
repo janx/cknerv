@@ -2,72 +2,72 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
 import type { Cell } from '@cknerv/types';
 import CellDetailPanel, {
-  cellCardStandsOnHud,
   cellScanFactAccent,
   type CellInspectionFacet,
   type CellDetailPanelProps,
 } from './hud/CellDetailPanel';
-import { CELL_CARD_ACCENT } from './hud/hudTheme';
+import { CELL_CARD_ACCENT, HUD_COLORS, HUD_FONTS, HUD_MOTION, rgba } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
+import { formatAge, formatOutpoint } from './hud/cellFormat';
 import {
   clearCellPortraitCardOrigin,
   setCellPortraitCardOrigin,
 } from './hud/cellPortraitInsetChannel';
 import {
-  commitInspectionCardSize,
-  createSceneInspectionHandles,
-  detachInspectionCard,
-  INSPECTION_CARD_STYLE,
+  CellConstellationLeaders,
+  CellNameChip,
+  CellReticle,
+} from './hud/CellConstellationMarks';
+import {
+  commitConstellationFrame,
+  createCellConstellationHandles,
+  invalidateConstellationFrame,
+  setConstellationVisible,
+  type CellConstellationHandles,
+} from './hud/cellConstellationFrame';
+import {
+  resetConstellationLock,
+  type ConstellationSlot,
+} from '../derives/cellConstellation.derive';
+import {
   INSPECTION_LAYER_STYLE,
-  resetInspectionPlacementLock,
-  SceneInspectionAnchor,
-  SceneInspectionConnector,
+  INSPECTOR_EDGE_PX,
+  INSPECTOR_SAFE_TOP_PX,
+  inspectionStageViewport,
+  useInspectionStageBox,
   useSceneInspectionDismiss,
-  useSceneInspectionExit,
-  useSceneInspectionLayoutFamily,
-  useSceneInspectionLayoutSide,
-  type SceneInspectionHandles,
-  type SceneInspectorPlacement,
 } from './sceneInspection';
 import {
   dimHudPanelsUnder,
   HUD_DIM_SAMPLE_MS,
-  useHudHoleWidth,
   useHudOcclusionRects,
+  type HudOcclusionRect,
 } from './hudOcclusion';
 
-const DEFAULT_PANEL_WIDTH_PX = 728;
-// Estimated dossier card at open (the analysis column, masthead included,
-// before enrichment evidence fills in); the ResizeObserver corrects it on the
-// first measured frame.
-const DEFAULT_PANEL_HEIGHT_PX = 620;
+/** The dialect's channel. Named for the seam App holds it by, and nothing out
+ *  there needs to know that the one card behind it became four instruments. */
+export type CellInspectionHandles = CellConstellationHandles;
 
-export type CellInspectorPlacement = SceneInspectorPlacement;
-export type CellInspectionHandles = SceneInspectionHandles;
+export { useSceneInspectionDismiss as useCellInspectionDismiss } from './sceneInspection';
 
-export {
-  sceneInspectorPlacement as cellInspectorPlacement,
-  useSceneInspectionDismiss as useCellInspectionDismiss,
-} from './sceneInspection';
-
-/** The Cell card is the widest inspection dialect: a full specimen scan, not
- * a probe readout, so it places by a specimen-sized box until measured. */
+/**
+ * The Cell dialect's channel between its anchor and its instruments.
+ *
+ * There is no `defaultSize` any more and that is the point: a card had to be
+ * placed by a guess until it was measured, because the guess and the truth were
+ * one box. Each instrument here is placed only once its own content has been
+ * measured, and a Cell that holds no bytes simply never registers a reader.
+ */
 export function createCellInspectionHandles(): CellInspectionHandles {
-  return createSceneInspectionHandles({
-    defaultSize: {
-      width: DEFAULT_PANEL_WIDTH_PX,
-      height: DEFAULT_PANEL_HEIGHT_PX,
-    },
-    accent: CELL_CARD_ACCENT,
-    placementDataKey: 'cellInspectorPlacement',
-    connectorDataKey: 'cellInspectorConnectorDirection',
-  });
+  return createCellConstellationHandles();
 }
 
 /** The stage is black and the tether is two pixels of line drawn on it, which
@@ -90,26 +90,20 @@ function stageContrast(hex: string): number {
   return (luminance + 0.05) / 0.05;
 }
 
-/** The colour the card frame and its connector take while one fact is open.
+/**
+ * The colour the identity chain takes while one fact is open — the reticle on
+ * the cell, the leaders running from it, and the register's own frame.
  *
- *  The rule is the one `CELL_CARD_ACCENT` is documented with, and both halves
- *  of it had rotted. Nothing selected → the frame says what the thing IS, in
- *  the organism's own rose; this used to answer with the asset family instead,
- *  and since `asset_kind` is non-optional on the wire the rose branch never ran
- *  — so a plain CKB Cell, the commonest thing on the stage, tethered in the
- *  peer plane's cyan on the one line whose whole job is to say "this card is
- *  about that Cell". A fact IS selected → that fact's colour wins, and it is
- *  the SAME colour the fact's own button wears, because this asks
- *  `cellScanFactAccent` rather than keeping a second copy of that table. The
- *  copy is how COMMIT ended up orange out here and cyan in the register.
+ * The rule is the one `CELL_CARD_ACCENT` is documented with. Nothing selected →
+ * the mark says what the thing IS, in the organism's own rose. A fact IS
+ * selected → that fact's colour wins, and it is the SAME colour the fact's own
+ * button wears, because this asks `cellScanFactAccent` rather than keeping a
+ * second copy of that table.
  *
- *  `born → orange` is the declared exception and it stays: an anchor is a house
- *  fact, and chrome on chrome is the instrument's own colour rather than a
- *  borrow from anywhere. The button moved to it, not the tether away from it.
- *
- *  It reads the record the register reads, so a script the index NAMED but the
- *  local table cannot place says `ink` in both places instead of `ink` in one
- *  and a near-black swatch in the other. */
+ * `born → orange` is the declared exception and it stays: an anchor is a house
+ * fact, and chrome on chrome is the instrument's own colour rather than a
+ * borrow from anywhere.
+ */
 export function selectedCellScanAccent(
   props: Pick<CellDetailPanelProps, 'cell' | 'semanticRecord'>,
   field: CellInspectionFacet | null,
@@ -121,23 +115,15 @@ export function selectedCellScanAccent(
     : CELL_CARD_ACCENT;
 }
 
-/** The braid inset draws inside the card, so the portrait channel needs the
- * same origin the frame writer is about to commit. */
-function publishCellPortraitOrigin(
-  anchorX: number,
-  anchorY: number,
-  placement: CellInspectorPlacement,
-): void {
-  const cardX = anchorX + placement.x;
-  const cardY = anchorY + placement.y;
-  setCellPortraitCardOrigin(cardX, cardY);
-}
-
 /**
- * Scene half of the inspector: the shared anchor at the Cell's seed position,
- * rendered inside the Galaxy overlay so it inherits the Galaxy's transform.
- * The Cell dialect hangs one channel off the generic frame — the braid inset
- * draws from the card origin, and never into a card that is off screen.
+ * Scene half of the inspector: one anchor at the Cell's seed position, inside
+ * the Galaxy overlay so it inherits the Galaxy's transform.
+ *
+ * One projection drives four boxes. The alternative — an anchor per instrument
+ * — would project the same point four times a frame and could disagree with
+ * itself about where the cell is; and the placement is a WALK, in which each
+ * instrument is seated against the ones already standing, so it cannot be split
+ * across four independent solvers anyway.
  */
 export function CellInspectionAnchor({
   cell,
@@ -146,53 +132,92 @@ export function CellInspectionAnchor({
   cell: Cell;
   handles: CellInspectionHandles;
 }) {
-  // The braid inset must not draw into a hidden or unmounted card.
-  useEffect(() => () => clearCellPortraitCardOrigin(), []);
+  const anchorRef = useRef<THREE.Group>(null);
+  const projected = useRef(new THREE.Vector3());
+  const stageBox = useInspectionStageBox();
   const obstacles = useHudOcclusionRects();
 
-  return (
-    <SceneInspectionAnchor
-      position={cell.pos_seed}
-      handles={handles}
-      obstacles={obstacles}
-      onCardFrame={publishCellPortraitOrigin}
-      onCardHidden={clearCellPortraitCardOrigin}
-    />
-  );
+  // The braid inset must not draw into a hidden or unmounted panel.
+  useEffect(() => () => clearCellPortraitCardOrigin(), []);
+  useEffect(() => {
+    resetConstellationLock(handles.lock);
+    invalidateConstellationFrame(handles);
+  }, [cell.id, handles]);
+
+  useFrame(({ camera, size }) => {
+    const anchor = anchorRef.current;
+    if (!anchor || !handles.root) return;
+    anchor.updateWorldMatrix(true, false);
+    projected.current.setFromMatrixPosition(anchor.matrixWorld).project(camera);
+    // A constellation on its way out is not repositioned and not re-shown: its
+    // opacity belongs to the exit for as long as the exit lasts.
+    if (handles.leaving) return;
+    const visible = projected.current.z >= -1
+      && projected.current.z <= 1
+      && Math.abs(projected.current.x) <= 1.08
+      && Math.abs(projected.current.y) <= 1.08;
+    setConstellationVisible(handles, visible);
+    if (!visible) {
+      clearCellPortraitCardOrigin();
+      return;
+    }
+    // The anchor is projected in the Canvas's box, which is where the
+    // projection happens and where the two boxes share an origin. The STAGE the
+    // walk reasons about is the layer's, which is not always the same box — see
+    // `inspectionStageViewport`.
+    const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
+    const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
+    const stage = inspectionStageViewport(size.width, size.height, stageBox.current);
+    const specimen = commitConstellationFrame(
+      handles,
+      anchorX,
+      anchorY,
+      stage.width,
+      stage.height,
+      INSPECTOR_SAFE_TOP_PX,
+      INSPECTOR_EDGE_PX,
+      obstacles,
+    );
+    // The braid is scissored into the specimen's window, and the window's own
+    // offset is measured inside that panel — so the origin the scene needs is
+    // the panel's, every frame it moves.
+    if (specimen) setCellPortraitCardOrigin(specimen.x, specimen.y);
+    else clearCellPortraitCardOrigin();
+  });
+
+  return <group ref={anchorRef} position={cell.pos_seed} />;
 }
 
 export type CellInspectionOverlayProps = CellDetailPanelProps & {
   handles: CellInspectionHandles;
-  /** The selection has been cleared and the chassis owes the card its exit;
-   *  the dialect holds the subject for `HUD_MOTION.flip` so there is something
-   *  to fade. See `useSceneInspectionExit`. */
+  /** The selection has been cleared and the chassis owes the instruments their
+   *  exit; the dialect holds the subject for `HUD_MOTION.flip` so there is
+   *  something to fade. */
   leaving?: boolean;
 };
 
 /**
- * Cell-centred detail constellation — the DOM half. The selected scene Cell
- * remains visually intact; one screen-space connector makes it the explicit
- * source of the decoded windows and flips around viewport edges.
+ * Cell-centred detail constellation — the DOM half.
  *
- * It also keeps clear of the HUD's panels, which for a long time this comment
- * claimed and the solver had no way to do: the placement rule knew the
- * viewport edges and the safe top and nothing else, so at 1920 the card landed
- * 209 px into CKB·01 and hid its whole value column. The rails are obstacles
- * to the solver now (`useHudOcclusionRects` → `sceneInspectorPlacement`), and
- * the claim is only as true as the room allows: a card wider than the gap
- * between two panels still has to land somewhere, and where it lands on one it
- * dims it rather than printing through it.
+ * CELL SCAN, SCAN·01 and SCAN·02 stand APART, at three corners around the
+ * selected Cell (the user's direction of 2026-09-10). The Cell wears a reticle
+ * and its own name, and a labelled leader runs from it to each instrument, so
+ * what used to be implied by adjacency inside one grid is now drawn.
  *
- * Rendered as a sibling of the Canvas: pointer events inside the card can
+ * The layout consequences are the whole reason for it. Nothing shares a height
+ * with anything, so the remainders that made every void measured on the welded
+ * card — 21 % of the bare card's box as enclosed galaxy, 58 % of the reader
+ * plate as bordered emptiness, a 35.5 px collision between the specimen square
+ * and the reader on an 11" iPad — have no mechanism left. And the cell is never
+ * covered by the instruments describing it, which is a promise a card placed
+ * beside a cell it is wider than could not make.
+ *
+ * Rendered as a sibling of the Canvas: pointer events inside an instrument can
  * never reach the R3F root, so no stopPropagation shims are needed and
  * onPointerMissed only ever sees genuine scene clicks.
  */
 function CellInspectionOverlay(props: CellInspectionOverlayProps) {
-  const {
-    handles,
-    leaving = false,
-    ...panelProps
-  } = props;
+  const { handles, leaving = false, ...panelProps } = props;
   const {
     cell,
     onClose,
@@ -200,82 +225,74 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
     onScanInteractionChange,
   } = panelProps;
   const reduced = useReducedMotion();
-  const cardRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
-  // Render-time write into the mutable channel: the anchor folds the accent
-  // into its frame signature, so a focus change re-tints the connector on the
-  // next frame without any React coupling between the two trees.
-  handles.accent = selectedCellScanAccent(panelProps, focusField);
-  const layoutSide = useSceneInspectionLayoutSide(handles);
-  // A card the solver could not fit in the band is told so: its dossier plate
-  // scrolls inside a capped card instead of running off the screen.
-  const docked = useSceneInspectionLayoutFamily(handles) === 'docked';
+  const [openSlots, setOpenSlots] = useState<readonly ConstellationSlot[]>([]);
+  const accent = selectedCellScanAccent(panelProps, focusField);
+
   const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
     setFocusField(field);
     onInspectionFieldChange?.(field);
   }, [onInspectionFieldChange]);
-  useSceneInspectionDismiss(cardRef, onClose);
-  useSceneInspectionExit(handles, cardRef, leaving, reduced);
+  useSceneInspectionDismiss(rootRef, onClose);
 
-  // The sticky offset belongs to one selection: a different Cell may open
-  // anywhere on screen, so the lock clears whenever the inspected id changes
-  // — and the card it grows for centres itself once, then holds its ground.
+  // The exit. Written imperatively for the reason the dim is: the frame writer
+  // owns `opacity` on this element, so React's idea of the style is already
+  // stale and re-rendering it would not move anything.
   useEffect(() => {
-    resetInspectionPlacementLock(handles);
+    handles.leaving = leaving;
+    const root = rootRef.current;
+    if (!root || !leaving) return;
+    root.style.transition = reduced
+      ? 'none'
+      : `opacity ${HUD_MOTION.flip}ms ${HUD_MOTION.fadeEase}`;
+    root.style.opacity = '0';
+  }, [handles, leaving, reduced]);
+
+  useEffect(() => {
+    handles.root = rootRef.current;
+    invalidateConstellationFrame(handles);
+    return () => { handles.root = null; };
+  }, [handles]);
+
+  // A different Cell opens somewhere else on screen and owes nobody the rooms
+  // the last one chose.
+  useEffect(() => {
+    resetConstellationLock(handles.lock);
+    invalidateConstellationFrame(handles);
+    setFocusField(null);
   }, [cell.id, handles]);
 
-  // The fallback behind A1's placement rule, and only a fallback: the solver
-  // keeps the whole card — the transparent CELL SCAN square with it — off the
-  // HUD's panels wherever the stage has the room. A 1,000px stage has no hole
-  // between the rails at all, so where the card lands on a panel the panel
-  // gives way rather than being read through or cut in half.
+  // LAW 1's fallback, and only a fallback. The walk keeps every instrument off
+  // the HUD's rails wherever the stage has the room, and scores a rail it must
+  // stand on. Where it does stand on one, the rail gives way rather than being
+  // read through: the specimen's window is a hole in its panel — the braid is
+  // painted in the SCENE, beneath the whole DOM HUD — so any panel between the
+  // canvas and it prints across the specimen.
   //
-  // WHICH BOX gives the orders is the stage's answer, not the card's mood
-  // (`cellCardStandsOnHud`, and the user's ruling of 2026-09-05):
-  //
-  //   the stage can hold the card  → the SQUARE's box. The card is opaque
-  //     everywhere else, and an opaque card standing clear of the rails covers
-  //     nothing; only its one transparent window can print a panel on the
-  //     specimen, and only that panel owes the specimen its light (A3).
-  //   the stage cannot             → the WHOLE CARD's box. Under a 640 hole
-  //     the card is wider than the stage by construction, so it lands on the
-  //     rails whatever the solver does. Every panel it stands on is then a
-  //     panel with a card's edge through it — half a summary, its rows sheared
-  //     and its rule ending in mid air — and a panel at a quarter of its light
-  //     reads as one that stood aside, which a broken one never does.
-  //
-  // Sampled rather than solved: the box is a DOM read, the card travels with
-  // the galaxy's own slow turn, and a decision about which panel is in the way
-  // may trail a frame by a quarter second. It may not force a layout inside
-  // one.
-  const holeWidth = useHudHoleWidth();
-  const standsOnHud = cellCardStandsOnHud(holeWidth);
+  // Each instrument claims its own box. A union rectangle would dim rails that
+  // nothing covers, which is a panel standing aside for no one.
   useEffect(() => {
-    const card = cardRef.current;
-    if (!card) return undefined;
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const claims: HudOcclusionRect[] = [];
     const sample = () => {
-      const element = standsOnHud
-        ? card
-        : card.querySelector<HTMLElement>('[data-cell-scan-window="true"]');
-      if (!element) {
-        dimHudPanelsUnder(null);
-        return;
+      claims.length = 0;
+      const panels = root.querySelectorAll<HTMLElement>('[data-cell-constellation-panel]');
+      for (let index = 0; index < panels.length; index += 1) {
+        const box = panels[index].getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) continue;
+        claims.push({ left: box.left, top: box.top, right: box.right, bottom: box.bottom });
       }
-      const box = element.getBoundingClientRect();
-      dimHudPanelsUnder(
-        box.width > 0 && box.height > 0
-          ? { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
-          : null,
-      );
+      dimHudPanelsUnder(claims.length > 0 ? claims : null);
     };
     sample();
     const id = setInterval(sample, HUD_DIM_SAMPLE_MS);
-    // A closed card owes the HUD its light back.
     return () => {
       clearInterval(id);
       dimHudPanelsUnder(null);
     };
-  }, [cell.id, standsOnHud]);
+  }, [cell.id]);
 
   // The portrait owns a second pointer boundary. Reset the parent interaction
   // lock at the overlay boundary as well as inside the portrait, so a close
@@ -285,34 +302,17 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
     onScanInteractionChange?.(false);
   }, [onInspectionFieldChange, onScanInteractionChange]);
 
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    handles.card = card;
-    if (!card) return;
-    const initialRect = card.getBoundingClientRect();
-    commitInspectionCardSize(handles, initialRect.width, initialRect.height);
-    const detach = () => detachInspectionCard(handles, card);
-    if (typeof ResizeObserver === 'undefined') return detach;
-    const observer = new ResizeObserver(([entry]) => {
-      const borderBox = entry.borderBoxSize?.[0];
-      commitInspectionCardSize(
-        handles,
-        borderBox?.inlineSize ?? entry.contentRect.width,
-        borderBox?.blockSize ?? entry.contentRect.height,
-      );
-    });
-    observer.observe(card);
-    return () => {
-      observer.disconnect();
-      detach();
-    };
-  }, [cell.id, handles]);
+  // How long it has stood, which nothing in the register says — the reading the
+  // register's masthead used to carry, on the chip that carries the identity
+  // now. Composition backfill emits `born_at_ms` 0 for Cells born before the
+  // retained window; an epoch-relative age would read as decades, so those
+  // carry the lamp alone.
+  const lifetime = useMemo(
+    () => (cell.born_at_ms > 0 ? `AGE ${formatAge(cell.born_at_ms, Date.now())}` : ''),
+    [cell.born_at_ms],
+  );
+  const live = !(cell.death_at_ms && cell.death_at_ms > 0);
 
-  // Chassis seam: everything below is the Cell dialect's DOM identity — the
-  // attributes CSS, the portrait inset and the tests read the card by. The
-  // placement, projection, connector writing and measurement rules all live
-  // in sceneInspection, so a second inspected entity re-dresses this frame
-  // rather than rebuilding it.
   return (
     <div
       data-cell-inspection-layer
@@ -320,37 +320,54 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
       style={INSPECTION_LAYER_STYLE}
     >
       <div
-        ref={cardRef}
+        ref={rootRef}
         data-cell-inspection-overlay
         data-cell-inspection-dismiss-boundary="true"
         data-cell-id={cell.id}
+        data-cell-inspection-accent={accent}
         role="region"
         aria-label={`Cell ${cell.id} details`}
-        style={INSPECTION_CARD_STYLE}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          // The instruments arrive once, together, where the walk put them —
+          // the chassis's one entrance, kept. Nothing travels.
+          opacity: 0,
+          transition: `opacity ${HUD_MOTION.reveal}ms ${HUD_MOTION.enterEase}`,
+          pointerEvents: 'none',
+          color: HUD_COLORS.ink,
+          fontFamily: HUD_FONTS.mono,
+          // The identity chain's colour, in one place: the reticle, the leaders
+          // and the register's frame read it, so a focused fact re-tints all
+          // three from a single write.
+          ['--cell-accent' as string]: accent,
+          ['--cell-accent-line' as string]: rgba(accent, 0.72),
+          ['--cell-accent-chip' as string]: rgba(accent, 0.4),
+        }}
       >
-        <SceneInspectionConnector
-          handles={handles}
-          leaderAttributes={{
-            'data-cell-inspector-leader': true,
-            'data-cell-detail-connector': true,
-          }}
-          dotAttributes={{ 'data-cell-detail-anchor': true }}
-        />
+        <CellConstellationLeaders handles={handles} slots={openSlots} />
         <CellDetailPanel
           {...panelProps}
-          layoutSide={layoutSide}
-          docked={docked}
+          handles={handles}
+          accent={accent}
+          onSlotsChange={setOpenSlots}
           onInspectionFieldChange={handleInspectionFieldChange}
+        />
+        <CellReticle handles={handles} />
+        <CellNameChip
+          handles={handles}
+          id={cell.id}
+          outpoint={formatOutpoint(cell.out_point.tx_hash, cell.out_point.index)}
+          live={live}
+          lifetime={lifetime}
+          onClose={onClose}
         />
       </div>
     </div>
   );
 }
 
-// Memoized: App renders several times a second for things no card reads — a
-// mempool tick, a peer poll, a hover the scene answered — and this is the
-// 2,200-line dossier on the far side of every one of them. With App holding
-// the callbacks and the navigation readout by identity, the shallow compare
-// lets a card open for a minute skip the renders that carry nothing for it,
-// and still re-render on every cells or links batch, which do.
+// Memoized: App renders several times a second for things no instrument reads —
+// a mempool tick, a peer poll, a hover the scene answered — and this is the
+// dossier on the far side of every one of them.
 export default memo(CellInspectionOverlay);

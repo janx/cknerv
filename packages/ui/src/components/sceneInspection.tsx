@@ -1073,7 +1073,9 @@ export function inspectionStageViewport(
  *  viewport itself changes. `visualViewport` as well as `resize`: on a tablet
  *  the browser's chrome is what moves, and it does not always fire the
  *  window's own event. */
-function useInspectionStageBox(): RefObject<InspectionCardSize | null> {
+/** Exported for the cell dialect, whose constellation solves against the same
+ *  stage this reads and must not read layout in its own frame loop either. */
+export function useInspectionStageBox(): RefObject<InspectionCardSize | null> {
   const box = useRef<InspectionCardSize | null>(readInspectionStageBox());
   useEffect(() => {
     const measure = () => { box.current = readInspectionStageBox(); };

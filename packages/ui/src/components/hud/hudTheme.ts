@@ -1096,6 +1096,20 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
+    // ——— the constellation's one scroller ————————————————————————————
+    // Only the register can outgrow the band it stands in, and only on a short
+    // stage. Until it does, it may not grow a rail at all: a scrollbar on a
+    // panel showing all of itself is a claim there is more. The cap is written
+    // into the host by the frame writer, so the rules key on it and nothing
+    // re-renders to switch them.
+    + `\n.cknerv-constellation-scroller{overflow:hidden}`
+    + `\n[data-cell-panel-capped="true"] .cknerv-constellation-scroller{overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:${rgba(CELL_CARD_ACCENT, 0.35)} transparent}`
+    + `\n[data-cell-panel-capped="true"] .cknerv-constellation-scroller::-webkit-scrollbar{width:5px}`
+    + `\n[data-cell-panel-capped="true"] .cknerv-constellation-scroller::-webkit-scrollbar-thumb{background:${rgba(CELL_CARD_ACCENT, 0.35)};border-radius:3px}`
+    + `\n[data-cell-panel-capped="true"] .cknerv-constellation-scroller::-webkit-scrollbar-track{background:transparent}`
+    // …and the fade over the cut, which exists only where there is a cut.
+    + `\n[data-cell-panel-fade]{opacity:0}`
+    + `\n[data-cell-panel-capped="true"] [data-cell-panel-fade]{opacity:1}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar{height:5px}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar-track{background:transparent}`

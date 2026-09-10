@@ -118,10 +118,17 @@ function CellNucleusPortrait({
     const host = hostRef.current;
     registerCellPortraitElement(host);
     if (!host) return;
-    // The offset is measured against the card so it stays valid while the
-    // anchor translates the card around the canvas: both rects carry the
-    // same transform, so the difference cancels out.
-    const card = host.closest<HTMLElement>('[data-cell-inspection-overlay]');
+    // The offset is measured against the box the frame writer TRANSLATES, so
+    // it stays valid while the anchor moves that box around the canvas: both
+    // rects carry the same transform and the difference cancels out.
+    //
+    // ⚠️ THAT BOX IS THE SPECIMEN'S OWN PANEL NOW, not the card. The three
+    // instruments came apart (2026-09-10) and the element carrying
+    // `data-cell-inspection-overlay` is the layer they stand on — inset 0 and
+    // never transformed — so measuring against it would give a screen position
+    // that a ResizeObserver never re-reads when the panel merely moves.
+    const card = host.closest<HTMLElement>('[data-cell-constellation-panel="specimen"]')
+      ?? host.closest<HTMLElement>('[data-cell-inspection-overlay]');
     const measure = () => {
       const hostRect = host.getBoundingClientRect();
       const cardRect = card?.getBoundingClientRect();

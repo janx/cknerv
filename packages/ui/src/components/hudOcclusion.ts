@@ -289,11 +289,20 @@ const dimmed = new Set<HTMLElement>();
  *
  * `null` lifts every mark, which is what a closing card owes the HUD.
  */
-export function dimHudPanelsUnder(standing: HudOcclusionRect | null): number {
+export function dimHudPanelsUnder(
+  standing: HudOcclusionRect | readonly HudOcclusionRect[] | null,
+): number {
   if (typeof document === 'undefined') return 0;
   const stale = dimmed;
   const next = new Set<HTMLElement>();
-  if (standing) {
+  // One box or several. The cell dialect stands three or four instruments on
+  // the stage instead of one card, and a rail owes its light to whichever of
+  // them is actually on it — a union rectangle would dim rails that nothing
+  // covers, which is a panel standing aside for no one.
+  const boxes: readonly HudOcclusionRect[] = standing === null
+    ? []
+    : (Array.isArray(standing) ? standing : [standing as HudOcclusionRect]);
+  if (boxes.length > 0) {
     const elements = document.querySelectorAll<HTMLElement>(
       '[data-hud-occlusion="true"]',
     );
@@ -301,10 +310,11 @@ export function dimHudPanelsUnder(standing: HudOcclusionRect | null): number {
       const element = elements[index];
       if (element.closest('[data-scene-inspection-layer]')) continue;
       const box = element.getBoundingClientRect();
-      const overlaps = standing.left < box.right
-        && standing.right > box.left
-        && standing.top < box.bottom
-        && standing.bottom > box.top;
+      let overlaps = false;
+      for (const claim of boxes) {
+        if (claim.left < box.right && claim.right > box.left
+          && claim.top < box.bottom && claim.bottom > box.top) { overlaps = true; break; }
+      }
       if (!overlaps) continue;
       next.add(element);
       if (element.dataset.hudDim !== 'true') element.dataset.hudDim = 'true';
