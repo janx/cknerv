@@ -87,7 +87,8 @@ import {
   STAT_ROW_HEIGHT_PX,
   STAT_ROW_LIFTED_HEIGHT_PX,
 } from '../../../src/components/hud/primitives';
-import { TOP_BAND_HEIGHT } from '../../../src/components/hud/TopBand';
+import { CHAIN_PANEL_WIDTH_PX } from '../../../src/components/hud/BlockchainReadout';
+import { TOP_BAND_HEIGHT, TOP_BAND_RULE_CLEAR_PX } from '../../../src/components/hud/TopBand';
 import {
   HAZARD_BAND_PX,
   WARNING_BAR_HEIGHT,
@@ -2017,17 +2018,54 @@ describe('the edge-bound stack', () => {
     expect(band, 'the band moved — this oracle reads files off disk').toBeDefined();
 
     const formula = (text: string): string[] => {
-      const ground = /background: `linear-gradient\(90deg,transparent,\$\{rgba\([\w.]+, ([\d.]+)\)\} 28%,\$\{rgba\(HUD_COLORS\.ground, ([\d.]+)\)\} 50%,\$\{rgba\([\w.]+, ([\d.]+)\)\} 72%,transparent\)`/.exec(text);
-      const edge = /borderBottom: `1px solid \$\{rgba\([\w.]+, ([\d.]+)\)\}`/.exec(text);
+      // The band paints three surfaces and they are three claims. The GROUND is
+      // the frame's half: full bleed, cut off by the viewport, and black only.
+      // The TINT is the stage's half, on the track. The EDGE is the one hard
+      // line, on the same track and over the same ramp.
+      const ground = /background: `linear-gradient\(90deg,transparent,\$\{rgba\(HUD_COLORS\.ground, ([\d.]+)\)\} 50%,transparent\)`/.exec(text);
+      const tint = /background: `linear-gradient\(90deg,transparent,\$\{rgba\([\w.]+, ([\d.]+)\)\} \$\{RULE_RAMP_PCT\}%,transparent 50%,\$\{rgba\([\w.]+, ([\d.]+)\)\} \$\{100 - RULE_RAMP_PCT\}%,transparent\)`/.exec(text);
+      const edge = /background: `linear-gradient\(90deg,transparent,\$\{rgba\([\w.]+, ([\d.]+)\)\} \$\{RULE_RAMP_PCT\}%,\$\{rgba\([\w.]+, ([\d.]+)\)\} \$\{100 - RULE_RAMP_PCT\}%,transparent\)`/.exec(text);
       const height = /\n\s+height: TOP_BAND_HEIGHT,/.exec(text);
       return [
-        `ground ${ground?.slice(1).join('/') ?? 'none'}`,
-        `edge ${edge?.[1] ?? 'none'}`,
+        `ground ${ground?.[1] ?? 'none'}`,
+        `tint ${tint?.slice(1).join('/') ?? 'none'}`,
+        `edge ${edge?.slice(1).join('/') ?? 'none'}`,
         `height ${height ? String(TOP_BAND_HEIGHT) : 'none'}`,
       ];
     };
-    expect(formula(code(band?.text ?? '')))
-      .toEqual(['ground 0.13/0.78/0.13', 'edge 0.45', 'height 30']);
+    const bandText = code(band?.text ?? '');
+    expect(formula(bandText))
+      .toEqual(['ground 0.78', 'tint 0.13/0.13', 'edge 0.45/0.45', 'height 30']);
+
+    // …and the division those three are FOR: nothing accented leaves the track.
+    //
+    // The band is an overlay now, so its full-bleed layer passes over the top
+    // 18px of both rails — and a rail stands 14px off the viewport edge, which
+    // means any accent that reaches that edge has already crossed a panel.
+    // Measured at 1,024px, where the two rails take a third of the width: the
+    // accent shoulder that lands at 0.089 over CKB·01 on a desktop reached its
+    // full 0.13 there, +11 on green and blue over the panel's own near-black,
+    // rising to a visible teal haze at its inner corner. Black may cross a
+    // panel — a panel is 45% black itself and has nothing to show for it.
+    // Colour may not.
+    const fullBleed = /inset: 0,\n\s+background: `([^`]+)`/.exec(bandText);
+    expect(fullBleed, 'the band lost its full-bleed layer — the viewport no longer ends it')
+      .not.toBeNull();
+    expect(fullBleed?.[1], 'the frame\'s half of the band is painting a colour over a rail')
+      .not.toContain('rgba(accent');
+
+    // …and that the clearance really is the rail's own measure. `TopBand`
+    // restates it rather than importing it — the band does not acquire
+    // `BlockchainReadout` to learn how wide a panel is — and this is the toll
+    // on the restatement: an inset, a chain panel, and the frame a `HudPanel`
+    // puts around one, read out of the two files that own those numbers.
+    const overlayText = code(SOURCES.find((source) => source.name === 'HudOverlay.tsx')?.text ?? '');
+    const number = (pattern: RegExp): number => Number(pattern.exec(overlayText)?.[1] ?? NaN);
+    expect(TOP_BAND_RULE_CLEAR_PX).toBe(
+      number(/const RAIL_INSET_PX = (\d+);/)
+      + CHAIN_PANEL_WIDTH_PX
+      + number(/const HUD_PANEL_FRAME_PX = (\d+);/),
+    );
 
     // And that no tenant kept a copy: a band drawn anywhere else in the HUD is
     // a second kind of object in a one-object slot, which is the whole defect.
@@ -2036,7 +2074,7 @@ describe('the edge-bound stack', () => {
       expect(
         code(source.text),
         `${source.name} draws its own edge-bound band — the slot holds one object`,
-      ).not.toMatch(/borderBottom: `1px solid \$\{rgba\([\w.]+, 0\.45\)\}`/);
+      ).not.toMatch(/borderBottom: `1px solid \$\{rgba\([\w.]+, 0\.45\)\}`|\$\{RULE_RAMP_PCT\}%/);
     }
 
     // The tenants, named: each one hands `TopBand` an accent and a title and
@@ -2066,7 +2104,14 @@ describe('the edge-bound stack', () => {
     expect(overlay, 'the overlay moved — this oracle reads files off disk')
       .toBeDefined();
     const text = code(overlay?.text ?? '');
-    expect(text).toContain('top={topBarHeight + (topBandVisible || streamInterrupted ? 30 : 0)}');
+    expect(text).toContain('const alarmTop = topBarHeight\n    + (topBandVisible || streamInterrupted ? TOP_BAND_HEIGHT : 0);');
+    expect(text).toContain('top={alarmTop}');
+    // …and that the stack is the ALARM's alone. A band claims no room: the
+    // rails clear the bar when one is standing and the strip when none is, and
+    // `topBandVisible` appears nowhere in that arithmetic. Put it back and the
+    // whole HUD goes back to jumping 30px the moment the boot record — or the
+    // composing chapter after it, a minute in — stops speaking.
+    expect(text).toContain('const contentTop = alarmStanding\n    ? alarmTop + WARNING_BAR_HEIGHT + 12\n    : topBarHeight + 12;');
     // …while the tenants are alternatives, which is the whole reason they are
     // allowed to be one shape: the health band waits for an empty slot, and
     // the composing chapter waits for the boot chapter to finish speaking.
@@ -4330,9 +4375,11 @@ describe('one alpha for a rule', () => {
     expect(rulesIn(code(primitives?.text ?? ''))).toEqual([]);
 
     // …and a band's bottom edge is the band, not a rule between blocks. It is
-    // drawn once now, in the shape all three tenants of the top slot wear.
+    // drawn once now, in the shape all three tenants of the top slot wear —
+    // and drawn as a gradient rather than a border, because a band that passes
+    // over a rail has to be able to stop before it gets there.
     const band = SOURCES.find((source) => source.name === 'TopBand.tsx');
-    expect(code(band?.text ?? '')).toContain('borderBottom: `1px solid ${rgba(accent, 0.45)}`');
+    expect(code(band?.text ?? '')).toContain('${rgba(accent, 0.45)} ${RULE_RAMP_PCT}%');
     expect(rulesIn(code(band?.text ?? ''))).toEqual([]);
   });
 

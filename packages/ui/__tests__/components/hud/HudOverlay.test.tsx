@@ -1040,7 +1040,10 @@ describe('HudOverlay', () => {
     expect(container.textContent).toContain('STAGE CELLS');
     expect(container.querySelector('[data-status-indicator]')).toBeNull();
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
-    expect(meshRail.style.top).toBe('78px');
+    // The health band is standing and the rail is exactly where it sits with a
+    // quiet slot: a band is chrome over the stage and claims no room from an
+    // instrument. `everything below the top slot…` below is the whole rule.
+    expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
   });
 
@@ -1080,10 +1083,13 @@ describe('HudOverlay', () => {
     const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
 
+    // The banner stands on the folded bar's own bottom edge, and the rails
+    // stand 12px under that bar — not under the banner. The band overlays
+    // them; it does not push them.
     expect(banner.style.top).toBe('64px');
-    expect(leftRail.style.top).toBe('106px');
-    expect(meshRail.style.top).toBe('106px');
-    expect(meshRail.style.maxHeight).toBe(viewportMinusSafeArea('height', 120));
+    expect(leftRail.style.top).toBe('76px');
+    expect(meshRail.style.top).toBe('76px');
+    expect(meshRail.style.maxHeight).toBe(viewportMinusSafeArea('height', 90));
   });
 
   it('keeps every scene-tethered detail out of the fixed HUD', () => {
@@ -1628,6 +1634,22 @@ const slotBottom = (root: HTMLElement): number => [
   STATUS_STRIP_HEIGHTS.wide as number,
 );
 
+/** …and the bottom edge of what an INSTRUMENT clears, which is a shorter list:
+ *  the alarm, or the status strip when no alarm is standing.
+ *
+ *  The bands are deliberately not in this reduction. A band is chrome over the
+ *  stage — it paints so that it can pass over the top of a rail and land as
+ *  nothing (`TopBand.tsx`) — and a rail that moved for one would be handing a
+ *  reader's own numbers back to them 30px higher at the moment the boot record
+ *  stops speaking. The alarm is the exception and stays one, because a raised
+ *  alarm is news rather than chrome, and news is not something to look behind. */
+const claimedBottom = (root: HTMLElement): number => {
+  const alarm = alarmBand(root);
+  return alarm === null
+    ? (STATUS_STRIP_HEIGHTS.wide as number)
+    : px(alarm.style.top) + px(alarm.style.height);
+};
+
 const SLOT_LAYOUTS = [
   { name: 'a quiet slot', boot: false, streams: false, alarm: false },
   { name: 'an alarm standing alone', boot: false, streams: false, alarm: true },
@@ -1636,7 +1658,7 @@ const SLOT_LAYOUTS = [
   { name: 'a stream fault over an alarm', boot: false, streams: true, alarm: true },
 ] as const;
 
-describe('HudOverlay — everything below the top slot clears the whole stack', () => {
+describe('HudOverlay — everything below the top slot clears what claims room', () => {
   const mount = (layout: { boot: boolean; streams: boolean; alarm: boolean }) => {
     vi.useFakeTimers();
     if (layout.boot) resetBootSequenceForTest();
@@ -1663,8 +1685,43 @@ describe('HudOverlay — everything below the top slot clears the whole stack', 
 
     const left = container.querySelector('[data-hud-left-rail]') as HTMLElement;
     const mesh = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
-    expect(px(left.style.top)).toBe(slotBottom(container) + RAIL_CLEARANCE_PX);
+    expect(px(left.style.top)).toBe(claimedBottom(container) + RAIL_CLEARANCE_PX);
     expect(px(mesh.style.top)).toBe(px(left.style.top));
+  });
+
+  it('costs the rails nothing to speak, and really is over them when it does', () => {
+    // The point of the whole arrangement, in the two halves it has to have.
+    //
+    // FIRST: the rails do not move. Both sides of the handover measured off one
+    // mount each — a page with the boot record standing and a page with a quiet
+    // slot — because the jump this replaces was worth 30px of every number in
+    // the HUD, arriving at whatever second the composing chapter happened to
+    // settle on (`boot/stageCompose.ts`: a settle clock every convergence burst
+    // re-arms, so a warm start holds the band the better part of a minute).
+    const railTop = (root: HTMLElement) =>
+      px((root.querySelector('[data-hud-left-rail]') as HTMLElement).style.top);
+
+    // Quiet first and read to the end, because the boot record is a STORE:
+    // `beforeEach` leaves it finished, `mount` rewinds it for a row that asked
+    // for a record, and the rewind notifies every listener — so a quiet tree
+    // still mounted when the second mount rewinds grows a banner of its own and
+    // stops being the control.
+    const quiet = mount({ boot: false, streams: false, alarm: false });
+    expect(quiet.container.querySelector('[data-boot-banner]')).toBeNull();
+    const quietTop = railTop(quiet.container);
+    quiet.unmount();
+
+    const speaking = mount({ boot: true, streams: false, alarm: false });
+    expect(speaking.container.querySelector('[data-boot-banner]')).not.toBeNull();
+    expect(railTop(speaking.container)).toBe(quietTop);
+
+    // SECOND: and it is a real overlay rather than a band that happens to fit,
+    // which is the fact `TopBand` pays for — its rule goes out and its wash
+    // feathers before either reaches a rail. If this ever stops overlapping,
+    // that paint is a cost nobody is buying anything with.
+    const band = speaking.container.querySelector('[data-boot-banner]') as HTMLElement;
+    expect(px(band.style.top) + px(band.style.height))
+      .toBeGreaterThan(railTop(speaking.container));
   });
 
   it('budgets exactly the band it paints', () => {

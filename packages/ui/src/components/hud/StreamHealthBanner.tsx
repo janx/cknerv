@@ -98,10 +98,12 @@ export default function StreamHealthBanner({
       {/* The third form in the house shape grammar (`primitives.tsx`): an
           edge-bound bar, and this file is one tenant of the single one the HUD
           draws (`TopBand`). It is neither docked nor floating, so it takes
-          neither the panels' corner brackets nor the plates' cut corner — it
-          runs the full width and the viewport ends it. Nothing about the data
-          plane being unwell is a card you could have opened; this is the frame
-          itself raising its voice. */}
+          neither the panels' corner brackets nor the plates' cut corner — its
+          ground runs the full width and the viewport ends it. (Its bottom edge
+          does not: the band claims no layout and passes over the top of both
+          rails, so the rule goes out before it reaches one. `TopBand.tsx`.)
+          Nothing about the data plane being unwell is a card you could have
+          opened; this is the frame itself raising its voice. */}
       <TopBand
         accent={visual.color}
         title={visual.title}

@@ -26,8 +26,19 @@ import { CJK_BASELINE_LIFT, COMPANION_OPACITY, DIAMOND_ROTATION, HUD_COLORS, HUD
 //     either one into the other.
 //
 //   EDGE-BOUND BAR — no corner treatment at all, because it owns no corners to
-//     treat: it spans the viewport and is cut off by it (`StreamHealthBanner.tsx`).
-//     Neither docked nor floating; it is the frame itself raising its voice.
+//     treat: the box spans the viewport and is cut off by it. `TopBand.tsx` is
+//     the only one the HUD draws, and three readouts rent it (the boot record,
+//     the stage composing, the data plane unwell). Neither docked nor floating;
+//     it is the frame itself raising its voice.
+//
+//     ⚠️ Its own bottom EDGE stops short of both rails, and that is not a
+//     fourth corner dialect — it is what lets this form cost no layout. The
+//     band used to push both rails down by its 30px and let them spring back
+//     when it stopped speaking; now it passes OVER the top of them and the
+//     rails never move. A hairline at 0.45 crossing CKB·01's bracket is the
+//     one thing that arrangement cannot survive, so the rule goes out before
+//     it reaches one. The GROUND still runs to both viewport edges and is
+//     still cut off by them, which is where the form's claim actually lives.
 //
 // One cut, one number, written once. Every clipped corner in the HUD comes from
 // here, so a banner and a satellite plate can never disagree about the angle.

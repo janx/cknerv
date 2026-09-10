@@ -81,6 +81,31 @@ describe('BootSequenceBanner', () => {
     expect(root.style.animation).toBe('');
   });
 
+  it('stands its title on the centre line, whatever the trail is doing', () => {
+    // The trail beside the title changes length constantly — the record grows a
+    // phase at a time, the composing chapter rewrites its whole line twice — and
+    // a centred flex ROW put the title at `centre − rowWidth / 2`, so the one
+    // word a reader is holding on to slid sideways on every one of those.
+    //
+    // jsdom lays nothing out, so the oracle is the mechanism rather than a
+    // measured box: three columns with equal shoulders and an `auto` middle put
+    // the title on the centre whatever flanks it. The measured version is live
+    // — the title's midpoint read 999 of 1000 at 1,999px and 512 of 512 at
+    // 1,024, with the trail a different length at each.
+    const { container } = render(<BootSequenceBanner boot={DOWNLOADING} top={36} />);
+    const row = container.querySelector('[data-top-band-row]') as HTMLElement;
+
+    expect(row.style.display).toBe('grid');
+    expect(row.style.gridTemplateColumns).toBe('minmax(0,1fr) auto minmax(0,1fr)');
+    // …and that the middle column really is the title: the shoulders may
+    // overflow, and whichever of the three is `auto` is the one that cannot.
+    expect(Array.from(row.children).map((child) => (child as HTMLElement).dataset.topBandGlyph !== undefined
+      ? 'glyph'
+      : (child as HTMLElement).dataset.topBandTitle !== undefined ? 'title' : 'trail'))
+      .toEqual(['glyph', 'title', 'trail']);
+    expect((row.children[1] as HTMLElement).textContent).toBe('STAGE POWER-ON');
+  });
+
   it('speaks the streamed percentage while the download is the wait', () => {
     const { container } = render(<BootSequenceBanner boot={DOWNLOADING} top={36} />);
     expect(container.textContent).toContain('STAGE POWER-ON');
@@ -156,10 +181,19 @@ describe('BootSequenceBanner', () => {
     expect(line(container, 'gl').textContent).toBe('GL FAULT — context lost');
     expect(line(container, 'gl').dataset.state).toBe('failed');
     expect(line(container, 'gl').style.color).toBe(cssColor(HUD_COLORS.danger));
-    // The band itself turns over, not just the one word on it.
+    // The band itself turns over, not just the one word on it: the type, the
+    // tint it sits on, and the edge under it. (Both are boxes of their own on
+    // the band's track rather than the band's own background and border — it is
+    // an overlay now and neither may cross a rail; the band's own ground layer
+    // is not asked, because it carries no accent at all by design.
+    // `TopBand.tsx` and the `edge-bound stack` oracles carry the why.)
+    const tint = root.querySelector('[data-top-band-tint]') as HTMLElement;
+    const rule = root.querySelector('[data-top-band-rule]') as HTMLElement;
     expect(root.style.color).toBe(cssColor(HUD_COLORS.danger));
-    expect(root.style.borderBottom).toContain('255, 48, 48');
-    expect(root.style.borderBottom).not.toContain('32, 240, 255');
+    for (const surface of [tint, rule]) {
+      expect(surface.style.background).toContain('255,48,48');
+      expect(surface.style.background).not.toContain('32,240,255');
+    }
     cleanup();
 
     // …and a narrow bar shows the fault rather than the leftmost unfinished

@@ -58,6 +58,7 @@ import NetworkPanel from './NetworkPanel';
 import BackfillBar from './BackfillBar';
 import BootSequenceBanner from './BootSequenceBanner';
 import StageComposingBanner from './StageComposingBanner';
+import { TOP_BAND_HEIGHT } from './TopBand';
 import { createStageComposeWatch, sampleStageCompose } from '../../boot/stageCompose';
 import CellsPanel from './CellsPanel';
 import StageCapacityPanel from './StageCapacityPanel';
@@ -792,17 +793,25 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   // Two bands, one stack — and the geometry lives here, below the alert, because
   // it is the alert that everything under the top slot has to clear.
   //
-  // Same one-band-one-shift rule the WarningBar takes: whichever banner is
-  // standing in the slot pushes what follows clear of it. Without the boot term
-  // the rails jump up the moment `data_plane` goes live — measured seconds
-  // before `fabric` closes the sequence — and tuck their titles 18px under a
-  // band that is still very much standing.
+  // ⭐ AND THE BAND IS NOT PART OF IT. It used to be: whichever banner stood in
+  // the slot pushed both rails down by its 30px and let them spring back when
+  // it stopped speaking. On an ordinary cold start that is one 30px jump of the
+  // whole HUD somewhere around fifty seconds in — the composing chapter's
+  // settle clock re-arms on every convergence burst (`boot/stageCompose.ts`),
+  // so the band stands for the whole window and then leaves — and it moves TIP,
+  // EPOCH and every other number out from under a reader's eye at the one
+  // moment nothing at all is happening. The band is chrome over the stage now
+  // (`TopBand.tsx` draws it so it can pass over a rail and land as nothing), so
+  // the rails stand where they stand and nothing they hold ever moves for it.
   //
   // The alarm is the second band and was the half nobody carried: the bar knew
-  // to sit under a banner, and nothing knew to sit under the bar. So its height
-  // comes from the bar itself, and whether it is standing comes from the same
-  // predicate the bar uses to decide it renders at all — the layout and the
-  // band can then never disagree about whether the slot is occupied.
+  // to sit under a banner, and nothing knew to sit under the bar. It is also
+  // the ONE tenant of this corner that still moves the content, and it should:
+  // a raised alarm is the news, not chrome over it, and it is the surface a
+  // reader must not have to look behind. So its height comes from the bar
+  // itself, and whether it is standing comes from the same predicate the bar
+  // uses to decide it renders at all — the layout and the band can then never
+  // disagree about whether the slot is occupied.
   const alarmStanding = warningBarStanding(alert.level);
   const alarmBandHeight = alarmStanding ? WARNING_BAR_HEIGHT : 0;
 
@@ -816,14 +825,20 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
     && !streamInterrupted
     && !backfill
     && !alarmStanding;
-  /** Something is standing in the top slot, whichever tenant is speaking.
-   *  Everything below it clears the same 30px either way — the composing
-   *  chapter is the band, not a plate floating under it, so a layout that
-   *  cleared only the boot chapter would tuck the rails under a live band. */
+  /** Something is standing in the top slot, whichever tenant is speaking. The
+   *  rails no longer ask — but the alarm does, because it is the second band in
+   *  a stack of two and has to sit under whichever one is there. */
   const topBandVisible = bootReadoutVisible || stageComposingVisible;
-  const contentTop = topBarHeight
-    + (topBandVisible || streamInterrupted ? 42 : 12)
-    + alarmBandHeight;
+  /** Where the alarm stands: on the band's shoulders when one is speaking, on
+   *  the strip's when none is. One expression, read by the bar that draws there
+   *  and by the rails that clear it, so the two can never disagree. */
+  const alarmTop = topBarHeight
+    + (topBandVisible || streamInterrupted ? TOP_BAND_HEIGHT : 0);
+  /** …and where the instruments begin: 12px under the last thing that claims
+   *  room. A band claims none. */
+  const contentTop = alarmStanding
+    ? alarmTop + WARNING_BAR_HEIGHT + 12
+    : topBarHeight + 12;
   const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: viewportMinusSafeArea('height', contentTop + 14), overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: `${rgba(HUD_COLORS.orange, 0.35)} transparent` }
     : { ...MESH_RAIL_STYLE, top: contentTop };
@@ -966,12 +981,13 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
           top={topBarHeight}
         />
       ) : null}
-      {/* One band, one shift: whichever tenant is standing in the slot moves
-          the alert down by its 30px, and they are never two at a time.
-          The other half of that rule — this band's own 34px moving everything
-          below it — is `alarmBandHeight` above, taken from the bar rather than
-          typed again here. */}
-      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (topBandVisible || streamInterrupted ? 30 : 0)} />
+      {/* One band, one shift, and the shift is the ALARM's: whichever tenant is
+          standing in the slot moves the alert down by its 30px, and they are
+          never two at a time. The other half of that rule — this bar's own 34px
+          moving everything below it — is `contentTop` above, taken from the bar
+          rather than typed again here. Nothing in either number is the band's:
+          it is an overlay and clears nobody. */}
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={alarmTop} />
       {chainPanelVisible
       || panelVisibility.stage
       || panelVisibility.render
