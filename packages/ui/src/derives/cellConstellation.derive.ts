@@ -602,13 +602,32 @@ function prise(placed: ConstellationPlacement[], input: ConstellationInput): voi
         const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
         const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
         if (ox <= 0 || oy <= 0) continue;
-        if (ox <= oy) {
-          const right = b.x + b.width / 2 >= a.x + a.width / 2;
-          b.x = clamp(right ? b.x + ox : b.x - ox, minX, maxX - b.width);
-        } else {
-          const below = b.y + b.height / 2 >= a.y + a.height / 2;
-          b.y = clamp(below ? b.y + oy : b.y - oy, minY, maxY - b.height);
+        // ⚠️ ALL FOUR WAYS OUT, AND THE ONE THAT ACTUALLY WORKS.
+        //
+        // "Move along the axis it overlaps least, in the direction it already
+        // leans" left 14 anchors of an 820 px stage still touching: a reader
+        // already flush against the stage's left edge is asked to move further
+        // left, the clamp refuses, and the pass calls it moved. Every candidate
+        // is clamped FIRST and judged by what is left.
+        const options = [
+          { x: clamp(a.x - b.width, minX, maxX - b.width), y: b.y },
+          { x: clamp(a.x + a.width, minX, maxX - b.width), y: b.y },
+          { x: b.x, y: clamp(a.y - b.height, minY, maxY - b.height) },
+          { x: b.x, y: clamp(a.y + a.height, minY, maxY - b.height) },
+        ];
+        let pick = options[0];
+        let least = Number.POSITIVE_INFINITY;
+        for (const option of options) {
+          const rest = intersectionArea(
+            { x: option.x, y: option.y, width: b.width, height: b.height },
+            a,
+          );
+          const travel = Math.abs(option.x - b.x) + Math.abs(option.y - b.y);
+          const score = rest * 1000 + travel;
+          if (score < least) { least = score; pick = option; }
         }
+        b.x = pick.x;
+        b.y = pick.y;
         moved = true;
       }
     }

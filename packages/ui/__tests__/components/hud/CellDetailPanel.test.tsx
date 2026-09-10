@@ -903,7 +903,10 @@ describe('CellDetailPanel', () => {
     expect(readerRoot.contains(contentMemory as Node)).toBe(true);
     const band = Array.from(readerRoot.children) as HTMLElement[];
     expect(band).toHaveLength(3);
-    expect(band[0].textContent).toContain('CKBYTES');
+    // Not the reader's own title: the instrument around it carries that, and
+    // the module number rides its leader. What stands above the reading is the
+    // one command whose state lives inside the reader.
+    expect(band[0].textContent).toBe('COPY');
     expect(band[1].getAttribute('data-cell-data-reader-reading')).toBe('true');
     expect(band[1].contains(contentMemory as Node)).toBe(true);
     expect(band[2].getAttribute('data-cell-data-reader-reveal-state')).not.toBeNull();
@@ -2289,10 +2292,11 @@ describe('CellDetailPanel', () => {
     // number rides its own leader now, so the panel is found by its head.
     expect(container.querySelector('[data-cell-constellation-panel="trace"]'))
       .not.toBeNull();
-    // SCAN·02 is CKBYTES, and it stands for every Cell that holds a byte now —
-    // this one holds eleven, so it is on the card whether or not a trace is
-    // armed. The count-off is a fact about the plates, not about the recall.
-    expect(container.textContent).toContain('SCAN·02');
+    // CKBYTES stands for every Cell that holds a byte — this one holds eleven,
+    // so it is here whether or not a trace is armed. Its own instrument, not a
+    // row of somebody else's.
+    expect(container.querySelector('[data-cell-constellation-panel="reader"]'))
+      .not.toBeNull();
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);

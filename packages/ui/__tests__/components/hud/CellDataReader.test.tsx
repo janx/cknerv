@@ -738,11 +738,13 @@ describe('CellDataReader reading slot', () => {
     ) as HTMLButtonElement;
   }
 
-  function moduleTagOf(container: HTMLElement): HTMLElement {
-    const tag = (Array.from(container.querySelectorAll('span')) as HTMLElement[])
-      .find((span) => span.textContent === 'SCAN·02');
-    expect(tag, 'the zone counts itself off as SCAN·02').toBeDefined();
-    return tag as HTMLElement;
+  /** The reader's own command row, which is all its head is now: the CKBYTES
+   *  title and the SCAN·02 tag moved out on 2026-09-10 — the instrument around
+   *  this window is titled, and its module number rides its leader. */
+  function commandRowOf(container: HTMLElement): HTMLElement {
+    const row = copyOf(container).parentElement as HTMLElement;
+    expect(row, 'the reader keeps its one command').toBeDefined();
+    return row;
   }
 
   it('mounts no slot for a Cell that has no reading', () => {
@@ -763,7 +765,10 @@ describe('CellDataReader reading slot', () => {
     const { container } = reader({ reading: readingRows() });
     const children = band(container);
     expect(children).toHaveLength(3);
-    expect(children[0].textContent).toContain('CKBYTES');
+    // Not a title: the instrument around this window carries that. What stands
+    // above the reading is the one command whose state lives down here.
+    expect(children[0].textContent).toBe('COPY');
+    expect(children[0].contains(copyOf(container))).toBe(true);
     expect(children[1].getAttribute('data-cell-data-reader-reading')).toBe('true');
     expect(children[1].querySelector('[data-reading-probe]')).not.toBeNull();
     expect(children[1].style.marginBottom).toBe('6px');
@@ -787,15 +792,14 @@ describe('CellDataReader reading slot', () => {
     expect(wrapper.contains(footOf(container))).toBe(true);
 
     // …and the frame's own furniture is NOT in it. The plate draws itself from
-    // the first frame, the reading stages on its own clock inside its slot,
-    // and the module tag is how the card is counted off rather than anything
-    // it claims about this Cell.
+    // the first frame and the reading stages on its own clock inside its slot;
+    // the module tag is not here at all any more — it rides this instrument's
+    // leader, where the relationship it names actually is.
     const slot = container.querySelector(
       '[data-cell-data-reader-reading]',
     ) as HTMLElement;
-    const header = band(container)[0];
-    const tag = moduleTagOf(container);
-    for (const above of [header, slot, tag]) {
+    const header = commandRowOf(container);
+    for (const above of [header, slot]) {
       expect(wrapper.contains(above)).toBe(false);
       expect(above.style.opacity).not.toBe(String(REVEAL_GHOST_OPACITY));
     }

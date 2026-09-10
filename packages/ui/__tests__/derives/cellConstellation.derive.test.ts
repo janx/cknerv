@@ -361,8 +361,12 @@ describe('the promise the scoring cannot make', () => {
       { slot: 'specimen', width: 280, height: 314 },
       { slot: 'reader', width: 408, height: 168 },
     ];
-    for (let ax = 120; ax <= 700; ax += 20) {
-      for (let ay = 200; ay <= 900; ay += 50) {
+    // A dense sweep, because the first cut of this passed a coarse one and
+    // still left fourteen anchors touching: a reader already flush against the
+    // stage's left edge was asked to move further left, the clamp refused, and
+    // the pass called it moved.
+    for (let ax = 40; ax <= 790; ax += 10) {
+      for (let ay = 140; ay <= 1040; ay += 20) {
         const out = place(LIVE, ax, ay, 820, 1078);
         for (let i = 0; i < out.length; i += 1) {
           for (let j = i + 1; j < out.length; j += 1) {

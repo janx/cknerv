@@ -994,44 +994,29 @@ export default function CellDataReader({
         fontFamily: HUD_FONTS.mono,
       }}
     >
-      <SpatialPlateHeader
-        en="CKBYTES"
-        cjk="字节元"
-        accent={HUD_COLORS.cyanWire}
-        titleColor={HUD_COLORS.cyanInk}
-        marginBottom={6}
-        status={(
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            minWidth: 0,
-            whiteSpace: 'nowrap',
-          }}
-          >
-            {/* The only command left. What it copies follows what is selected,
-                so it needs no second button to say which.
+      {/* ⚠️ NO TITLE OF ITS OWN. The instrument around this window is titled
+          CKBYTES 字节元 (`ConstellationPanel`, 2026-09-10) and its module number
+          rides its leader — a second title here is the card's own
+          say-each-thing-once rule broken by the surface that states it.
 
-                It is also a control OVER GHOSTED CONTENT while the walk is
-                still on its way to the bytes, so it ghosts with them: a lit
-                COPY over a dark dump offers to put on the clipboard a payload
-                the card has not finished saying it holds. The module tag
-                beside it stays lit, because a plate's own number is not
-                evidence about the Cell — it is how the card is counted off. */}
-            <button
-              type="button"
-              data-cell-data-reader-copy="true"
-              disabled={!bytesLit}
-              onClick={() => void onCopy()}
-              style={{ ...commandButtonStyle(), ...revealStageStyle(bytesLit) }}
-            >
-              {copied ?? 'COPY'}
-            </button>
-            {moduleTag('SCAN·02')}
-          </span>
-        )}
-      />
-
+          The COPY command stays, because its state does: what it copies follows
+          what is SELECTED in the dump below, so lifting the button into the
+          instrument's head would mean lifting the selection with it. It is also
+          a control OVER GHOSTED CONTENT while the walk is still on its way to
+          the bytes, so it ghosts with them: a lit COPY over a dark dump offers
+          to put on the clipboard a payload the card has not finished saying it
+          holds. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button
+          type="button"
+          data-cell-data-reader-copy="true"
+          disabled={!bytesLit}
+          onClick={() => void onCopy()}
+          style={{ ...commandButtonStyle(), ...revealStageStyle(bytesLit) }}
+        >
+          {copied ?? 'COPY'}
+        </button>
+      </div>
       {/* THE READING, over the bytes it reads.
 
           Mounted only when there IS one: a Cell nobody indexed has no reading,
