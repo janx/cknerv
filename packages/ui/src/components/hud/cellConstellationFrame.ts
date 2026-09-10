@@ -213,8 +213,10 @@ export function commitConstellationFrame(
 
   // The chip hangs under the reticle and the walk composes around it, so the
   // name of the thing being inspected is never printed under an instrument.
+  // RESERVED and not an obstacle: a rail is worth a fraction of its area and
+  // never moved anything, and the first live run printed the chip across the
+  // reader's own header.
   scratchObstacles.length = 0;
-  for (const obstacle of obstacles) scratchObstacles.push(obstacle);
   if (handles.chipWidth > 0) {
     chipBox.left = anchorX - handles.chipWidth / 2;
     chipBox.right = anchorX + handles.chipWidth / 2;
@@ -229,7 +231,8 @@ export function commitConstellationFrame(
     stageWidth,
     stageHeight,
     panels,
-    obstacles: scratchObstacles,
+    obstacles,
+    reserved: scratchObstacles,
     safeTop,
     edge,
     lock: handles.lock,

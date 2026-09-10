@@ -350,3 +350,30 @@ describe('a stage too tight for three instruments at their asked heights', () =>
     expect(bySlot(out, 'reader').height).toBeLessThanOrEqual(331);
   });
 });
+
+describe('the promise the scoring cannot make', () => {
+  it('prises apart whatever a tight stage still leaves touching', () => {
+    // Live on an 820 px portrait stage: a specimen and a reader in different
+    // rooms, three and a half pixels of one under the other — 588 px². Every
+    // term in the walk is a preference; this is the one guarantee.
+    const LIVE: ConstellationPanel[] = [
+      { slot: 'analysis', width: 440, height: 341.5 },
+      { slot: 'specimen', width: 280, height: 314 },
+      { slot: 'reader', width: 408, height: 168 },
+    ];
+    for (let ax = 120; ax <= 700; ax += 20) {
+      for (let ay = 200; ay <= 900; ay += 50) {
+        const out = place(LIVE, ax, ay, 820, 1078);
+        for (let i = 0; i < out.length; i += 1) {
+          for (let j = i + 1; j < out.length; j += 1) {
+            expect(overlap(out[i], out[j]), `@${ax},${ay}`).toBe(0);
+          }
+          expect(out[i].x).toBeGreaterThanOrEqual(EDGE - 0.5);
+          expect(out[i].y).toBeGreaterThanOrEqual(SAFE_TOP - 0.5);
+          expect(out[i].x + out[i].width).toBeLessThanOrEqual(820 - EDGE + 0.5);
+          expect(out[i].y + out[i].height).toBeLessThanOrEqual(1078 - EDGE + 0.5);
+        }
+      }
+    }
+  });
+});

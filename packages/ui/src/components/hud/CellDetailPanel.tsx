@@ -2545,6 +2545,7 @@ function CellDetailPanel({
         )}
         onClose={onClose}
         closeTitle="Close CELL SCAN · ESC closes the Cell"
+        windowed
         attributes={{ 'data-cell-detail-module': 'specimen' }}
       >
       <section

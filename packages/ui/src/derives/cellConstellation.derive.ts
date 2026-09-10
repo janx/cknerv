@@ -230,6 +230,15 @@ export interface ConstellationInput {
    *  who picks first, not the caller's array. */
   panels: readonly ConstellationPanel[];
   obstacles?: readonly HudOcclusionRect[];
+  /** Boxes that are not rails and not instruments, and that nothing may stand
+   *  on: the name chip under the reticle is the whole population today.
+   *
+   *  ⚠️ NOT AN OBSTACLE. A rail is worth `area ÷ 900` — a 131 × 25 crossing
+   *  costs 3.6 px of regret, which never moved anything, and the chip carrying
+   *  the Cell's own id spent the first live run printed across the reader's
+   *  header. A reserved box is separated from exactly as another instrument is,
+   *  and scored as heavily. */
+  reserved?: readonly HudOcclusionRect[];
   /** The HUD's own two reservations, handed in rather than imported so the
    *  derive stays free of the component that owns them. */
   safeTop: number;
@@ -247,6 +256,7 @@ interface SettleContext {
   maxX: number;
   maxY: number;
   placed: readonly ConstellationPlacement[];
+  reserved: readonly Box[];
 }
 
 /**
@@ -299,7 +309,7 @@ function settleBox(
       if (takeX) { px = wantX; moved = true; } else if (fitsY) { py = wantY; moved = true; } else if (costX <= costY) { px = wantX; moved = true; } else { py = wantY; moved = true; }
     }
 
-    for (const other of ctx.placed) {
+    for (const other of [...ctx.placed, ...ctx.reserved]) {
       const gap = CONSTELLATION_MIN_GAP_PX;
       const oL = other.x - gap;
       const oT = other.y - gap;
@@ -405,6 +415,12 @@ function walkOnce(
     anchorX, anchorY, stageWidth, stageHeight, panels, safeTop, edge,
   } = input;
   const obstacles = input.obstacles ?? [];
+  const reserved: Box[] = (input.reserved ?? []).map((claim) => ({
+    x: claim.left,
+    y: claim.top,
+    width: claim.right - claim.left,
+    height: claim.bottom - claim.top,
+  }));
   const keepout = constellationKeepoutPx(stageWidth, stageHeight);
   const reach = keepout * Math.SQRT1_2 + CONSTELLATION_LEADER_PX;
   const band = Math.max(0, stageHeight - safeTop - edge);
@@ -432,6 +448,7 @@ function walkOnce(
       maxX: stageWidth - edge,
       maxY: stageHeight - edge,
       placed,
+      reserved,
     };
     let best: ConstellationPlacement | null = null;
     let bestPenalty = Number.POSITIVE_INFINITY;
@@ -520,6 +537,7 @@ function walkOnce(
         + (occupancy[quadrant] ?? 0) * CONSTELLATION_SHARE_PX
         + bite * 6 + core * 120;
       for (const other of placed) penalty += intersectionArea(box, other) / 40;
+      for (const claim of reserved) penalty += intersectionArea(box, claim) / 40;
       for (const obstacle of obstacles) penalty += obstacleArea(box, obstacle) / 900;
       const placement: ConstellationPlacement = {
         slot: panel.slot, quadrant, x: seat.x, y: seat.y, width, height, capped,
@@ -553,6 +571,49 @@ function walkOnce(
     placed.push(best);
   }
   return placed;
+}
+
+/**
+ * The last word on the one thing that may never happen.
+ *
+ * Even after the retries a stage can leave a sliver — measured live on an
+ * 820 px portrait stage, 588 px² of a specimen's right edge under a reader's
+ * left, three and a half pixels of it. Every scoring term in the walk is a
+ * preference, and a preference cannot promise. This can: each pair that still
+ * overlaps is prised apart along the axis it overlaps LEAST, moving the later
+ * instrument, clamped to the stage.
+ *
+ * It may cost a few pixels of the cell's field, and that is the trade this
+ * layout has already made everywhere else — a bite at the edge of a 120 px disc
+ * leaves the sprite and its reticle untouched; two instruments in one place are
+ * unreadable at any depth.
+ */
+function prise(placed: ConstellationPlacement[], input: ConstellationInput): void {
+  const minX = input.edge;
+  const minY = input.safeTop;
+  const maxX = input.stageWidth - input.edge;
+  const maxY = input.stageHeight - input.edge;
+  for (let round = 0; round < 4; round += 1) {
+    let moved = false;
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        const a = placed[i];
+        const b = placed[j];
+        const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+        if (ox <= 0 || oy <= 0) continue;
+        if (ox <= oy) {
+          const right = b.x + b.width / 2 >= a.x + a.width / 2;
+          b.x = clamp(right ? b.x + ox : b.x - ox, minX, maxX - b.width);
+        } else {
+          const below = b.y + b.height / 2 >= a.y + a.height / 2;
+          b.y = clamp(below ? b.y + oy : b.y - oy, minY, maxY - b.height);
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 /** How much of the walk's answer is two instruments in the same place. */
@@ -599,6 +660,7 @@ export function constellationPlacement(
       if (bestOverlap === 0) break;
     }
   }
+  if (bestOverlap > 0) prise(best, input);
   // ⚠️ The lock is written from the ACCEPTED pass only: a retry that was thrown
   // away must not tell the next frame which rooms this one chose.
   if (input.lock) {

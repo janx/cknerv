@@ -5,7 +5,7 @@ import {
 } from './cellConstellationFrame';
 import type { ConstellationSlot } from '../../derives/cellConstellation.derive';
 import { CELL_CARD_ACCENT, HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
-import { CloseButton, spatialPlate } from './primitives';
+import { CloseButton, spatialPlate, spatialPlateBackground } from './primitives';
 
 /** The class the injected sheet themes the one scrollbar this layout can grow.
  *
@@ -36,6 +36,7 @@ export default function ConstellationPanel({
   status,
   onClose,
   closeTitle,
+  windowed = false,
   attributes,
   bodyStyle,
   children,
@@ -49,6 +50,16 @@ export default function ConstellationPanel({
   status?: ReactNode;
   onClose: () => void;
   closeTitle: string;
+  /** ⚠️ THE BODY IS A HOLE, SO THE PLATE MAY NOT PAINT BEHIND IT.
+   *
+   *  The specimen's window is transparent because the braid is drawn on the
+   *  MAIN canvas, beneath the whole DOM HUD (`CellPortraitInset`). While the
+   *  square was a plate slot of the card there was nothing behind it; as an
+   *  instrument it has a plate of its own, and that plate's near-opaque
+   *  gradient went straight between the canvas and the window — measured live
+   *  on an iPad, the braid came through as a grey ghost at a tenth of its ink.
+   *  So the ground moves to the head and the body keeps its hole. */
+  windowed?: boolean;
   attributes?: Record<string, string | number | boolean | undefined>;
   bodyStyle?: React.CSSProperties;
   children: ReactNode;
@@ -123,6 +134,7 @@ export default function ConstellationPanel({
         // cut-outs rather than as plates standing over a scene.
         filter: `drop-shadow(0 6px 14px ${rgba(HUD_COLORS.ground, 0.56)})`,
         ...spatialPlate(accent),
+        ...(windowed ? { background: 'transparent' } : null),
       }}
     >
       <div
@@ -134,6 +146,7 @@ export default function ConstellationPanel({
           gap: 8,
           padding: '7px 10px 6px 12px',
           borderBottom: `1px solid ${rgba(accent, 0.16)}`,
+          ...(windowed ? { background: spatialPlateBackground(accent) } : null),
         }}
       >
         <span
