@@ -14,6 +14,7 @@ import {
   inspectionConnectorRestyleKey,
   inspectionFrameKey,
   resetInspectionPlacementLock,
+  inspectionStageViewport,
   resolveStickyInspectorPlacement,
   sceneInspectorPlacement,
   type SceneInspectionHandles,
@@ -1011,5 +1012,69 @@ describe('the chassis enters and leaves once', () => {
       'utf8',
     );
     expect(source).toContain('if (handles.leaving) return;');
+  });
+});
+
+/** An 11" iPad Air in landscape Safari, measured 2026-09-10: the browser's
+ *  toolbar takes 75px of window that `env()` never reports, so the Canvas was
+ *  laid out `100vh` = 763px tall inside a 688px window. The card is the docked
+ *  family's own fixpoint there — capped at the band, 570 = 688 − 104 − 14 —
+ *  which is what puts the two heights on opposite sides of `minY >= maxY`. */
+describe('the stage the card is placed into', () => {
+  const IPAD_CANVAS_H = 763;
+  const IPAD_WINDOW_H = 688;
+  const IPAD_W = 1180;
+  const DOCKED_CARD = { width: 640, height: 570 };
+
+  it('prefers the layer box to the canvas box, and falls back when there is none', () => {
+    expect(inspectionStageViewport(IPAD_W, IPAD_CANVAS_H, { width: IPAD_W, height: IPAD_WINDOW_H }))
+      .toEqual({ width: IPAD_W, height: IPAD_WINDOW_H });
+    // No reading yet (the first frame, or no document at all): the Canvas is
+    // the honest answer, and it is the one this solver always had.
+    expect(inspectionStageViewport(IPAD_W, IPAD_CANVAS_H, null))
+      .toEqual({ width: IPAD_W, height: IPAD_CANVAS_H });
+    // A collapsed axis is not a reading — and it is judged per axis, because
+    // a collapsed width says nothing about a good height.
+    expect(inspectionStageViewport(IPAD_W, IPAD_CANVAS_H, { width: 0, height: IPAD_WINDOW_H }))
+      .toEqual({ width: IPAD_W, height: IPAD_WINDOW_H });
+    expect(inspectionStageViewport(IPAD_W, IPAD_CANVAS_H, { width: IPAD_W, height: 0 }))
+      .toEqual({ width: IPAD_W, height: IPAD_CANVAS_H });
+  });
+
+  it('changes COMPOSITION between the two boxes, which is why they may not be mixed', () => {
+    // The whole cost of the confusion, in one assertion. 75px of browser
+    // chrome is not a nudge to a placement: it is a different family, and a
+    // frame loop holding both spellings alternates between them forever.
+    // Measured on the device before the fix: 213 moves in 214 frames, the two
+    // answers 256px apart, 60fps carrying the relayout down to 27.
+    const common = {
+      anchorX: 590,
+      anchorY: 293,
+      panelWidth: DOCKED_CARD.width,
+      panelHeight: DOCKED_CARD.height,
+      viewportWidth: IPAD_W,
+    };
+    const inWindow = sceneInspectorPlacement({ ...common, viewportHeight: IPAD_WINDOW_H });
+    const inCanvas = sceneInspectorPlacement({ ...common, viewportHeight: IPAD_CANVAS_H });
+
+    expect(inWindow.family).toBe('docked');
+    expect(inCanvas.family).not.toBe('docked');
+  });
+
+  it('hands the solver the stage and never the Canvas box', () => {
+    // The wiring, read off the source: `size` is R3F's Canvas box, right for
+    // the projection above this call and wrong for every extent below it.
+    const source = readFileSync(
+      join(COMPONENTS_DIR, 'sceneInspection.tsx'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+    // The LAST occurrence is the call; the first is the declaration.
+    const at = source.lastIndexOf('resolveStickyInspectorPlacement(');
+    const args = source.slice(at, at + 220);
+
+    expect(at).toBeGreaterThan(0);
+    expect(args).toContain('stage.width');
+    expect(args).toContain('stage.height');
+    expect(args).not.toContain('size.');
   });
 });

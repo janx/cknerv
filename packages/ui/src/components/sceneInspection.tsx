@@ -1011,6 +1011,83 @@ export function commitInspectionFrame(
  * Each frame it projects that point and writes the card / connector styles
  * through the handles channel. It renders no geometry of its own.
  */
+/**
+ * The box the card is PLACED INTO, which is not always the box the scene is
+ * PROJECTED FROM — and the solver must be given the first.
+ *
+ * R3F's `size` is the Canvas CSS box. The card layer is
+ * {@link INSPECTION_LAYER_STYLE}: `position: fixed`, inset 0, so its box is
+ * the layout viewport. Those two agreed on every screen this instrument had
+ * ever been read on, and the frame loop said so in a comment — until an 11"
+ * iPad in landscape Safari, where the browser's toolbar takes 75px of window
+ * that `env()` does not report: the canvas was laid out `100vh` = 763px tall
+ * inside a 688px window (fixed in `ui-app/index.html`, which is why this is
+ * belt AND braces).
+ *
+ * ⭐⭐⭐ MIXING THE TWO IS NOT AN OFFSET ERROR, IT IS A FAMILY FLIP. The
+ * solver docks when `minY >= maxY`, and with the card capped at the band
+ * (570px) the two heights land on either side of that comparison:
+ *
+ *     688 → maxY = 688 − 14 − 570 − anchorY = 104 − anchorY == minY → DOCKED
+ *     763 → maxY = 763 − 14 − 570 − anchorY = 179 − anchorY  > minY → BESIDE
+ *
+ * So the card resolved to the docked composition at y=104 on one frame and
+ * the beside composition at y=179 on the next, forever: measured on the real
+ * device, 213 moves in 214 frames, 256px apart, and the frame rate halved to
+ * 27fps carrying the relayout. That is exactly the ghost the `>=` above is
+ * written against — "a card that flickers between two compositions forever" —
+ * arriving through a door that comparison does not guard.
+ *
+ * Both boxes share an origin (the Canvas is full-bleed from the window's
+ * top-left and the layer is inset 0), so the ANCHOR is honest in either and
+ * keeps being read from `size`, which is where the projection happens. It is
+ * only the EXTENT the solver reasons about that has to come from the layer.
+ */
+export function inspectionStageViewport(
+  canvasWidth: number,
+  canvasHeight: number,
+  layer: InspectionCardSize | null,
+): InspectionCardSize {
+  if (!layer) return { width: canvasWidth, height: canvasHeight };
+  return {
+    width: layer.width > 0 ? layer.width : canvasWidth,
+    height: layer.height > 0 ? layer.height : canvasHeight,
+  };
+}
+
+/** The layer's box, kept OFF the frame loop: `handles.measured` is read from a
+ *  ResizeObserver for the same reason — nothing here may read layout sixty
+ *  times a second. A fixed, inset-0 layer is the layout viewport by
+ *  definition, so this reads `documentElement` and refreshes only when the
+ *  viewport itself changes. `visualViewport` as well as `resize`: on a tablet
+ *  the browser's chrome is what moves, and it does not always fire the
+ *  window's own event. */
+function useInspectionStageBox(): RefObject<InspectionCardSize | null> {
+  const box = useRef<InspectionCardSize | null>(readInspectionStageBox());
+  useEffect(() => {
+    const measure = () => { box.current = readInspectionStageBox(); };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+    const visual = window.visualViewport;
+    visual?.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('orientationchange', measure);
+      visual?.removeEventListener('resize', measure);
+    };
+  }, []);
+  return box;
+}
+
+function readInspectionStageBox(): InspectionCardSize | null {
+  if (typeof document === 'undefined') return null;
+  const root = document.documentElement;
+  const width = root.clientWidth;
+  const height = root.clientHeight;
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
 export function SceneInspectionAnchor({
   position,
   handles,
@@ -1041,6 +1118,7 @@ export function SceneInspectionAnchor({
 }) {
   const anchorRef = useRef<THREE.Group>(null);
   const projected = useRef(new THREE.Vector3());
+  const stageBox = useInspectionStageBox();
 
   useFrame(({ camera, size }) => {
     const anchor = anchorRef.current;
@@ -1069,16 +1147,19 @@ export function SceneInspectionAnchor({
       return;
     }
 
-    // The card layer is viewport-fixed while `size` is the Canvas CSS box;
-    // App keeps the Canvas full-viewport, so the two coordinate spaces match.
+    // The anchor is projected in the Canvas's box, which is where the
+    // projection happens and where the two boxes share an origin. The STAGE
+    // the solver reasons about is the layer's, which is not always the same
+    // box — see `inspectionStageViewport`.
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
+    const stage = inspectionStageViewport(size.width, size.height, stageBox.current);
     const placement = resolveStickyInspectorPlacement(
       handles,
       anchorX,
       anchorY,
-      size.width,
-      size.height,
+      stage.width,
+      stage.height,
       obstacles,
     );
     setInspectionLayout(handles, placement);
