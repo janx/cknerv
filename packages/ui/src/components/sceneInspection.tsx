@@ -12,7 +12,13 @@ import {
   CELL_CLICK_MAX_POINTER_DELTA_PX,
   pointerClickSlopPx,
 } from '../derives/cellInteraction.derive';
-import { HUD_COLORS, HUD_FONTS, HUD_MOTION, rgba } from './hud/hudTheme';
+import {
+  HUD_COLORS,
+  HUD_FONTS,
+  HUD_MOTION,
+  rgba,
+  viewportMinusSafeArea,
+} from './hud/hudTheme';
 import type { HudOcclusionRect } from './hudOcclusion';
 
 /**
@@ -37,7 +43,12 @@ export const INSPECTOR_GAP_PX = 42;
  *  (`CellDetailPanel`'s `CARD_EDGE_RESERVE_PX`), and a card that typed its own
  *  14 would be a second edge. */
 export const INSPECTOR_EDGE_PX = 14;
-const INSPECTOR_SAFE_TOP_PX = 104;
+/** Clear px the solver keeps under the HUD's status strip, the other number a
+ *  card is clamped between. Exported for the same reason the edge is: a docked
+ *  card caps its own height AT this band (`CellDetailPanel`'s
+ *  `CARD_DOCK_RESERVE_PX`), and the cap and the band being the same arithmetic
+ *  is what makes that family a fixpoint instead of a flicker. */
+export const INSPECTOR_SAFE_TOP_PX = 104;
 
 /**
  * Fraction of the card's own measure the opposite side must win by before an
@@ -1080,12 +1091,53 @@ function useInspectionStageBox(): RefObject<InspectionCardSize | null> {
   return box;
 }
 
+/**
+ * ⭐⭐⭐ AND IT IS MEASURED WITH THE CARD'S OWN EXPRESSION, NOT A VIEWPORT READ.
+ *
+ * The docked family is a fixpoint only because the card caps its height AT the
+ * band the solver clamps into — `CARD_DOCK_RESERVE_PX` is 118 because the band
+ * is `safeTop + edge` = 104 + 14. That cap is CSS, and since the safe-area
+ * work it has been spelled `viewportMinusSafeArea('height', 118)`: the
+ * viewport LESS THE INSETS. The solver went on being handed the whole
+ * viewport, and on every screen that has ever run this, every inset was `0px`
+ * and the two agreed.
+ *
+ * An iPad reports a 25px home indicator. So the card capped itself to 545 and
+ * the solver's band was 570, and a capped card is no longer as tall as the
+ * band it was capped to:
+ *
+ *     docks → caps to 545 → 545 < 570, so it is not docked any more →
+ *     drops the cap → grows past the band → docks → caps to 545 → …
+ *
+ * — which is precisely the flicker `sceneInspectorPlacement`'s `>=` is written
+ * against, arriving through the one door that comparison cannot watch: not the
+ * comparison being wrong, but the two sides of it being measured against
+ * different heights. Live on the device: 300 moves in 300 frames.
+ *
+ * So the ruler is a box carrying the identical `calc`, and the two cannot
+ * drift again without drifting together. (With a nonzero TOP inset this is
+ * conservative by that inset — `safeTop` already clears the top and this
+ * subtracts it a second time — which loses a notch's worth of band on a phone
+ * and can never reintroduce a flicker. A tight band is a composition; two
+ * heights are a strobe.)
+ */
+let stageRuler: HTMLDivElement | null = null;
+
 function readInspectionStageBox(): InspectionCardSize | null {
-  if (typeof document === 'undefined') return null;
-  const root = document.documentElement;
-  const width = root.clientWidth;
-  const height = root.clientHeight;
-  return width > 0 && height > 0 ? { width, height } : null;
+  if (typeof document === 'undefined' || !document.body) return null;
+  if (!stageRuler || !stageRuler.isConnected) {
+    const ruler = document.createElement('div');
+    ruler.setAttribute('data-scene-inspection-stage-ruler', 'true');
+    ruler.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none';
+    ruler.style.width = viewportMinusSafeArea('width');
+    ruler.style.height = viewportMinusSafeArea('height');
+    document.body.appendChild(ruler);
+    stageRuler = ruler;
+  }
+  const box = stageRuler.getBoundingClientRect();
+  return box.width > 0 && box.height > 0
+    ? { width: box.width, height: box.height }
+    : null;
 }
 
 export function SceneInspectionAnchor({

@@ -14,6 +14,8 @@ import {
   inspectionConnectorRestyleKey,
   inspectionFrameKey,
   resetInspectionPlacementLock,
+  INSPECTOR_EDGE_PX,
+  INSPECTOR_SAFE_TOP_PX,
   inspectionStageViewport,
   resolveStickyInspectorPlacement,
   sceneInspectorPlacement,
@@ -1059,6 +1061,41 @@ describe('the stage the card is placed into', () => {
 
     expect(inWindow.family).toBe('docked');
     expect(inCanvas.family).not.toBe('docked');
+  });
+
+
+  it('keeps a capped card docked, which is the fixpoint the cap exists for', () => {
+    // The iPad's stage: an 688px window less the 25px home indicator, which is
+    // what `viewportMinusSafeArea` resolves to and therefore what the card's
+    // own `maxHeight` is measured against. The solver must reason about the
+    // SAME height, or the cap lands short of the band and the card leaves the
+    // family it was just capped for — on the next frame, and every frame after.
+    const STAGE_H = 688 - 25;
+    const cap = STAGE_H - (INSPECTOR_SAFE_TOP_PX + INSPECTOR_EDGE_PX);
+    const capped = sceneInspectorPlacement({
+      anchorX: 590,
+      anchorY: 293,
+      panelWidth: 640,
+      panelHeight: cap,
+      viewportWidth: 1180 - 0,
+      viewportHeight: STAGE_H,
+    });
+
+    expect(capped.family).toBe('docked');
+
+    // …and the whole viewport is what it must NOT be handed: 25px of home
+    // indicator is the difference between a fixpoint and a strobe. Measured on
+    // the device before the ruler: 300 moves in 300 frames.
+    const unInset = sceneInspectorPlacement({
+      anchorX: 590,
+      anchorY: 293,
+      panelWidth: 640,
+      panelHeight: cap,
+      viewportWidth: 1180,
+      viewportHeight: 688,
+    });
+
+    expect(unInset.family).not.toBe('docked');
   });
 
   it('hands the solver the stage and never the Canvas box', () => {

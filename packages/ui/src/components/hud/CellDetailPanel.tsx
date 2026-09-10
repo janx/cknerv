@@ -70,7 +70,11 @@ import {
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import { useHudHoleWidth } from '../hudOcclusion';
-import { INSPECTOR_EDGE_PX, INSPECTOR_GAP_PX } from '../sceneInspection';
+import {
+  INSPECTOR_EDGE_PX,
+  INSPECTOR_GAP_PX,
+  INSPECTOR_SAFE_TOP_PX,
+} from '../sceneInspection';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import { ConsensusMemoryTracePlate } from './ConsensusIdentityPlate';
 import CellContentMemory, { cellContentReadingLayout } from './CellContentMemory';
@@ -282,11 +286,18 @@ export function cellCardStandsOnHud(holeWidth: number): boolean {
 
 /** What a docked card may not have of the viewport's height: the HUD's safe
  *  top and the bottom edge, the two numbers `sceneInspectorPlacement` clamps
- *  a card between (`INSPECTOR_SAFE_TOP_PX` 104 + `INSPECTOR_EDGE_PX` 14). The
- *  card's cap has to be the solver's band exactly — a card capped shorter
- *  would leave the docked family on the next frame and a card capped taller
- *  would still hang off the screen. */
-const CARD_DOCK_RESERVE_PX = 118;
+ *  a card between. The card's cap has to be the solver's band exactly — a card
+ *  capped shorter would leave the docked family on the next frame and a card
+ *  capped taller would still hang off the screen.
+ *
+ *  ⚠️ SUMMED FROM THE SOLVER'S OWN TWO NUMBERS, not typed as their total. It
+ *  was `118` and correct, and the equality still broke: this side is a
+ *  `viewportMinusSafeArea` calc and the solver's side was the whole viewport,
+ *  so an iPad's 25px home indicator left the cap 25 short of the band and the
+ *  card flickered between the two families forever. The stage is measured with
+ *  this same expression now (`sceneInspection`'s stage ruler), and a literal
+ *  here would have been the third place the arithmetic could drift. */
+const CARD_DOCK_RESERVE_PX = INSPECTOR_SAFE_TOP_PX + INSPECTOR_EDGE_PX;
 
 /** Panel-local display order — the vertical order the six facts occupy in the
  * merged CKBYTES ANALYSIS layout, used ONLY for probe-reveal indexing so the
