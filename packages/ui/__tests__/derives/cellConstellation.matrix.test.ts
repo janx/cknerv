@@ -4,62 +4,99 @@ import {
   constellationPlacement,
   type ConstellationPanel,
 } from '../../src/derives/cellConstellation.derive';
+import {
+  CONSTELLATION_ANCHOR_X_PARTS,
+  CONSTELLATION_ANCHOR_Y_PARTS,
+  CONSTELLATION_EDGE,
+  CONSTELLATION_PANELS,
+  CONSTELLATION_SAFE_TOP,
+  CONSTELLATION_STAGES,
+  constellationChipReserved,
+  railsForStage,
+} from '../fixtures/cellConstellationMatrix';
 
-const PANELS: ConstellationPanel[] = [
-  { slot: 'analysis', width: 440, height: 717 },
-  { slot: 'specimen', width: 280, height: 314 },
-  { slot: 'reader', width: 408, height: 340 },
-  { slot: 'trace', width: 560, height: 420 },
-];
+const PANELS = CONSTELLATION_PANELS as readonly ConstellationPanel[];
 
 describe('cell constellation viewport matrix', () => {
   it('finds a routed seat for three and four panels across supported stage shapes', () => {
     const unavailable: string[] = [];
-    const stages = [
-      [1920, 1080], [1920, 920], [1440, 900], [1280, 800], [1180, 663], [820, 1078],
-    ] as const;
-    for (const [stageWidth, stageHeight] of stages) {
-      for (const xPart of [0.22, 0.5, 0.78]) for (const yPart of [0.25, 0.5, 0.75]) {
-        const anchorX = stageWidth * xPart; const anchorY = stageHeight * yPart;
-        const chipWidth = 376;
-        const chipLeft = Math.max(14, Math.min(stageWidth - 14 - chipWidth, anchorX - chipWidth / 2));
-        const reserved = [{
-          left: chipLeft, top: anchorY + 58,
-          right: chipLeft + chipWidth, bottom: anchorY + 82,
-        }];
-        for (const count of [3, 4]) {
-          const layout = constellationLayout({
-            panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
-            reserved, safeTop: 104, edge: 14,
-          });
-          if (layout.placements.length !== count) {
-            const geometric = constellationPlacement({
+    for (const [stageWidth, stageHeight] of CONSTELLATION_STAGES) {
+      for (const xPart of CONSTELLATION_ANCHOR_X_PARTS) {
+        for (const yPart of CONSTELLATION_ANCHOR_Y_PARTS) {
+          const anchorX = stageWidth * xPart; const anchorY = stageHeight * yPart;
+          const reserved = constellationChipReserved(anchorX, anchorY, stageWidth);
+          for (const count of [3, 4]) {
+            const layout = constellationLayout({
               panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
-              reserved, safeTop: 104, edge: 14,
+              reserved, safeTop: CONSTELLATION_SAFE_TOP, edge: CONSTELLATION_EDGE,
             });
-            unavailable.push(`${stageWidth}x${stageHeight} @${xPart},${yPart}, ${count}`
-              + ` (${geometric.length === count ? 'route' : 'geometry'})`);
-          }
-          const reticle = {
-            left: anchorX - 46, top: anchorY - 46, right: anchorX + 46, bottom: anchorY + 46,
-          };
-          for (const panel of layout.placements) {
-            const label = panel.route?.label;
-            if (!label || label.inPanel) continue;
-            const labelBox = {
-              left: label.x - label.width / 2, top: label.y - label.height / 2,
-              right: label.x + label.width / 2, bottom: label.y + label.height / 2,
+            if (layout.placements.length !== count) {
+              const geometric = constellationPlacement({
+                panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
+                reserved, safeTop: CONSTELLATION_SAFE_TOP, edge: CONSTELLATION_EDGE,
+              });
+              unavailable.push(`${stageWidth}x${stageHeight} @${xPart},${yPart}, ${count}`
+                + ` (${geometric.length === count ? 'route' : 'geometry'})`);
+            }
+            const reticle = {
+              left: anchorX - 46, top: anchorY - 46, right: anchorX + 46, bottom: anchorY + 46,
             };
-            const overlap = Math.max(0, Math.min(labelBox.right, reticle.right)
-              - Math.max(labelBox.left, reticle.left))
-              * Math.max(0, Math.min(labelBox.bottom, reticle.bottom)
-                - Math.max(labelBox.top, reticle.top));
-            expect(overlap, `${stageWidth}x${stageHeight} @${xPart},${yPart}, ${count}`)
-              .toBe(0);
+            for (const panel of layout.placements) {
+              const label = panel.route?.label;
+              if (!label || label.inPanel) continue;
+              const labelBox = {
+                left: label.x - label.width / 2, top: label.y - label.height / 2,
+                right: label.x + label.width / 2, bottom: label.y + label.height / 2,
+              };
+              const overlap = Math.max(0, Math.min(labelBox.right, reticle.right)
+                - Math.max(labelBox.left, reticle.left))
+                * Math.max(0, Math.min(labelBox.bottom, reticle.bottom)
+                  - Math.max(labelBox.top, reticle.top));
+              expect(overlap, `${stageWidth}x${stageHeight} @${xPart},${yPart}, ${count}`)
+                .toBe(0);
+            }
           }
         }
       }
     }
     expect(unavailable).toEqual([]);
+  });
+
+  // RED until P2 — the bounded router and its caps.
+  it.fails('solves every geometry in the sweep inside a pointer interaction', () => {
+    // Measured 2026-09-11 over this exact sweep: p50 11 ms, p90 151 ms,
+    // p99 1,081 ms, max 3,874 ms, and the eight slowest cases were all
+    // four-panel ones between 0.55 s and 3.9 s. A selection that takes four
+    // seconds to answer is a selection that has already been abandoned.
+    const slow: string[] = [];
+    let solved = 0;
+    for (const [stageWidth, stageHeight] of CONSTELLATION_STAGES) {
+      for (const xPart of CONSTELLATION_ANCHOR_X_PARTS) {
+        for (const yPart of CONSTELLATION_ANCHOR_Y_PARTS) {
+          const anchorX = stageWidth * xPart; const anchorY = stageHeight * yPart;
+          const reserved = constellationChipReserved(anchorX, anchorY, stageWidth);
+          for (const count of [2, 3, 4]) {
+            for (const withRails of [false, true]) {
+              const obstacles = withRails ? railsForStage(stageWidth) : [];
+              if (withRails && obstacles.length === 0) continue;
+              solved += 1;
+              const started = performance.now();
+              constellationLayout({
+                panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
+                reserved, obstacles,
+                safeTop: CONSTELLATION_SAFE_TOP, edge: CONSTELLATION_EDGE,
+              });
+              const elapsed = performance.now() - started;
+              if (elapsed > 40) {
+                slow.push(`${stageWidth}x${stageHeight} @${xPart},${yPart} n${count}`
+                  + `${withRails ? ' rails' : ''}: ${elapsed.toFixed(1)}ms`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(solved).toBe(243);
+    expect(slow).toEqual([]);
   });
 });
