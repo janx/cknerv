@@ -1,3 +1,22 @@
+/**
+ * Where a selected Cell's instruments stand, and how each one reaches it.
+ *
+ * The contract, since the 2026-09-11 repair: geometry alone decides. A
+ * candidate is a seat set; `hardValid` is the only gate it must pass, and the
+ * squeeze is escalated only when no candidate at the current squeeze passes
+ * it — a gap of 16 px is always tried before any height is taken back, and a
+ * leader that cannot be drawn is never a reason to compress a plate or to
+ * withdraw one. Every seated plate then receives a route: the canonical
+ * orthogonal one where the router finds it, and otherwise a DEGRADED route,
+ * the straight leader from the reticle ring to the nearest point of the plate,
+ * snapped to two legs where that is clear of the plate body and the reticle.
+ * `route.degraded` says which, `layout.leaders` says whether any leader in the
+ * layout is a fallback, and `status` is now a statement about room only:
+ * `unavailable` means no seat set exists, never that no line could be drawn.
+ * Candidates are still tried in score order and the first fully clean one
+ * wins, so wherever today's router succeeds the picture is unchanged; when
+ * none is clean the candidate with the fewest degraded leaders wins.
+ */
 import type { HudOcclusionRect } from '../components/hudOcclusion';
 
 export type ConstellationQuadrant = 'tl' | 'tr' | 'bl' | 'br';
@@ -17,6 +36,21 @@ export const CONSTELLATION_HOLD_MARGIN_PX = 96;
 export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
 export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
 
+/**
+ * How far the Cell must travel before a stage that had no room for its
+ * instruments is asked again.
+ *
+ * An `unavailable` verdict is a statement about the stage, not about the
+ * half-pixel the anchor happens to occupy, and re-deriving it every frame
+ * costs a full candidate enumeration for an answer that cannot change. The
+ * trade is latency against work: at 24 px the constellation appears within
+ * about a tenth of a second of the Cell reaching a part of the stage that has
+ * room for it, at a fortieth of the solves a per-frame re-ask would cost. A
+ * geometry change — a viewport, a rail, a panel height — re-asks immediately
+ * whatever this says.
+ */
+export const CONSTELLATION_UNAVAILABLE_RESOLVE_PX = 24;
+
 export interface ConstellationPanel {
   slot: ConstellationSlot;
   width: number;
@@ -31,6 +65,11 @@ export interface ConstellationLabelPlacement {
 export interface ConstellationRoute {
   points: readonly ConstellationPoint[];
   label: ConstellationLabelPlacement;
+  /** True when the canonical orthogonal router could not reach this plate and
+   * the straight fallback leader was drawn instead. The marks draw a degraded
+   * leader dashed, because a fallback that looks like the real thing is a
+   * lie about what the layout knows. */
+  degraded: boolean;
 }
 export interface ConstellationPlacement {
   slot: ConstellationSlot;
@@ -40,10 +79,14 @@ export interface ConstellationPlacement {
   route?: ConstellationRoute;
 }
 export interface ConstellationLayout {
+  /** Room, and only room. `unavailable` means no seat set passes `hardValid`
+   * on this stage; it never means a line could not be drawn. */
   status: 'normal' | 'compressed' | 'unavailable';
   template: ConstellationTemplate | null;
   placements: ConstellationPlacement[];
   masks: HudOcclusionRect[];
+  /** `degraded` when at least one leader in this layout is the fallback. */
+  leaders: 'clean' | 'degraded';
 }
 interface Box { x: number; y: number; width: number; height: number }
 interface Candidate { template: ConstellationTemplate; placements: ConstellationPlacement[] }
@@ -745,9 +788,54 @@ function routeOutsideReticle(points: readonly ConstellationPoint[], ax: number, 
   return result.filter(([a, b]) => Math.hypot(a.x - b.x, a.y - b.y) > 0.5);
 }
 
+/**
+ * The fallback leader, for a plate the canonical router could not reach.
+ *
+ * It is the straight line the constellation drew before it had a router: out
+ * of the reticle ring, into the nearest point of the plate. Where the two
+ * orthogonal legs of that line clear the plate's own body and the reticle box
+ * it is snapped to them, so it reads as a leader and not as a stray diagonal;
+ * otherwise the straight line stands. It claims no outlet and is no obstacle
+ * to the plates routed after it: a fallback that could veto its neighbours
+ * would spread one failure across the whole constellation. Its tag falls back
+ * into the plate's own head, because a line with a bend this arbitrary has no
+ * leg long enough to carry one honestly.
+ */
+function degradedRoute(input: ConstellationInput, target: Box,
+  labelWidth: number, labelHeight: number): ConstellationRoute {
+  const line = constellationLeader(
+    input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX, target,
+  );
+  const start = { x: line.x1, y: line.y1 };
+  const end = { x: line.x2, y: line.y2 };
+  const label = { x: 0, y: 0, width: labelWidth, height: labelHeight, inPanel: true };
+  const blockers: Box[] = [target, {
+    x: input.anchorX - CONSTELLATION_RETICLE_PX / 2,
+    y: input.anchorY - CONSTELLATION_RETICLE_PX / 2,
+    width: CONSTELLATION_RETICLE_PX,
+    height: CONSTELLATION_RETICLE_PX,
+  }];
+  for (const bend of [{ x: end.x, y: start.y }, { x: start.x, y: end.y }]) {
+    const points = simplify([start, bend, end]);
+    let clear = true;
+    for (let index = 1; index < points.length && clear; index += 1) {
+      clear = segmentClear(points[index - 1], points[index], blockers);
+    }
+    if (clear) return { points, label, degraded: true };
+  }
+  return { points: [start, end], label, degraded: true };
+}
+
+interface RoutedOrder {
+  masks: HudOcclusionRect[];
+  /** How many plates in this attempt got the fallback leader. */
+  degraded: number;
+  routes: Array<ConstellationRoute | undefined>;
+}
+
 function* addRoutesInOrderSteps(input: ConstellationInput,
   placements: ConstellationPlacement[],
-  order: readonly number[]): Generator<void, HudOcclusionRect[] | null> {
+  order: readonly number[]): Generator<void, RoutedOrder> {
   const panelBoxes = placements.map(boxOf);
   const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
   const reserved = (input.reserved ?? []).map(rectBox);
@@ -767,8 +855,10 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
   const placedLabels: Box[] = [];
   const priorRoutes: ConstellationPoint[][] = [];
   const usedOutlets = new Set<string>();
+  let degraded = 0;
   for (const placementIndex of order) {
     const placement = placements[placementIndex];
+    const panel = input.panels.find((candidate) => candidate.slot === placement.slot);
     const target = panelBoxes[placementIndex];
     const priorRouteSegments = priorRoutes.flatMap((route) =>
       routeOutsideReticle(route, input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2));
@@ -859,9 +949,15 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
         }
       }
     }
-    if (!best) return null;
+    if (!best) {
+      placement.route = degradedRoute(
+        input, target, panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
+      );
+      degraded += 1;
+      yield;
+      continue;
+    }
     usedOutlets.add(`${best[0].x},${best[0].y}`);
-    const panel = input.panels.find((candidate) => candidate.slot === placement.slot);
     const priorLabelRouteBoxes = priorRoutes.flatMap((route) => segments(route).map(([a, b]) => ({
       x: Math.min(a.x, b.x) - 3,
       y: Math.min(a.y, b.y) - 3,
@@ -870,7 +966,7 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
     })));
     const label = labelForRoute(best, panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
       [...panelBoxes, ...reserved, ...hud, reticle, ...placedLabels, ...priorLabelRouteBoxes], bounds);
-    placement.route = { points: best, label };
+    placement.route = { points: best, label, degraded: false };
     if (!label.inPanel) placedLabels.push({
       x: label.x - label.width / 2, y: label.y - label.height / 2,
       width: label.width, height: label.height,
@@ -878,7 +974,7 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
     priorRoutes.push(best);
     yield;
   }
-  return masks;
+  return { masks, degraded, routes: placements.map((panel) => panel.route) };
 }
 
 const routeOrderCache: Array<readonly (readonly number[])[] | undefined> = [];
@@ -919,21 +1015,29 @@ function routeOrders(count: number): readonly (readonly number[])[] {
   return ordered;
 }
 
+/** Every plate leaves here with a route. The first order that reaches all of
+ * them cleanly wins, exactly as before; if none does, the order that needed
+ * the fewest fallbacks wins, and its routes are written back. */
 function* addRoutesSteps(input: ConstellationInput,
-  placements: ConstellationPlacement[]): Generator<void, HudOcclusionRect[] | null> {
+  placements: ConstellationPlacement[]): Generator<void, RoutedOrder> {
+  let best: RoutedOrder | null = null;
   for (const order of routeOrders(placements.length)) {
     constellationWorkStats.routeOrders += 1;
     for (const panel of placements) panel.route = undefined;
-    const masks = yield* addRoutesInOrderSteps(input, placements, order);
-    if (masks) return masks;
+    const attempt = yield* addRoutesInOrderSteps(input, placements, order);
+    if (attempt.degraded === 0) return attempt;
+    if (!best || attempt.degraded < best.degraded) best = attempt;
     // A route order is the smallest useful canonical unit: its later panels
     // depend on the exact paths chosen for its earlier panels. Yield between
     // orders so the Canvas path can budget the search without changing that
     // dependency or the winning order.
     yield;
   }
-  for (const panel of placements) panel.route = undefined;
-  return null;
+  const winner = best ?? { masks: [], degraded: 0, routes: [] };
+  for (let index = 0; index < placements.length; index += 1) {
+    placements[index].route = winner.routes[index];
+  }
+  return winner;
 }
 
 function hardValid(input: ConstellationInput, placements: readonly ConstellationPlacement[], gap: number): boolean {
@@ -1007,6 +1111,22 @@ export function revalidateConstellationLayoutForAnchor(
     const current = layout.placements[placementIndex];
     const old = current.route?.points;
     if (!old || old.length < 2) return null;
+    // A fallback leader is a pure function of the anchor and the plate, so it
+    // is rebuilt rather than translated: its start is on the reticle ring at
+    // whatever angle the plate lies, which no outlet check would accept.
+    if (current.route?.degraded) {
+      const panel = input.panels.find((candidate) => candidate.slot === current.slot);
+      translated.push({
+        ...current,
+        route: degradedRoute(
+          input, panelBoxes[placementIndex],
+          panel?.labelWidth ?? current.route.label.width,
+          panel?.labelHeight ?? current.route.label.height,
+        ),
+      });
+      outsideRoutes.push([]);
+      continue;
+    }
     let translatedPoints = old.map((point) => ({ ...point }));
     translatedPoints[0].x += dx;
     translatedPoints[0].y += dy;
@@ -1111,6 +1231,7 @@ export function revalidateConstellationLayoutForAnchor(
       route: {
         points,
         label: { ...current.route!.label },
+        degraded: false,
       },
     });
   }
@@ -1123,6 +1244,9 @@ export function revalidateConstellationLayoutForAnchor(
   })));
   const placedLabels: Box[] = [];
   for (const current of translated) {
+    // A fallback leader's tag already sits in its plate's head, and its own
+    // route was rebuilt above; there is nothing here to re-place.
+    if (current.route?.degraded) continue;
     const panel = input.panels.find((candidate) => candidate.slot === current.slot);
     const ownRouteBoxes = routeOutsideReticle(
       current.route?.points ?? [], input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2,
@@ -1137,7 +1261,9 @@ export function revalidateConstellationLayoutForAnchor(
       current.route?.points ?? [], panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
       [...panelBoxes, ...reserved, ...hud, reticle, ...placedLabels, ...otherRoutes], bounds,
     );
-    if (current.route) current.route = { points: current.route.points, label };
+    if (current.route) {
+      current.route = { points: current.route.points, label, degraded: false };
+    }
     if (!label.inPanel) placedLabels.push({
       x: label.x - label.width / 2, y: label.y - label.height / 2,
       width: label.width, height: label.height,
@@ -1226,14 +1352,15 @@ function* lockedLayoutSteps(
         return next;
       });
       if (hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) {
-        const masks = withRoutes ? yield* addRoutesSteps(input, placements) : [];
-        if (masks) {
-          constellationWorkStats.lockedReuses += 1;
-          return {
-            status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
-            template: lock.template, placements, masks,
-          };
-        }
+        const routed = withRoutes ? yield* addRoutesSteps(input, placements) : null;
+        constellationWorkStats.lockedReuses += 1;
+        return {
+          status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
+          template: lock.template,
+          placements,
+          masks: routed?.masks ?? [],
+          leaders: (routed?.degraded ?? 0) > 0 ? 'degraded' : 'clean',
+        };
       }
     }
   }
@@ -1245,15 +1372,29 @@ function* solveLayoutSteps(
   withRoutes: boolean,
 ): Generator<void, ConstellationLayout> {
   const panels = orderedPanels(input.panels);
-  if (panels.length === 0) return { status: 'normal', template: null, placements: [], masks: [] };
+  if (panels.length === 0) {
+    return { status: 'normal', template: null, placements: [], masks: [], leaders: 'clean' };
+  }
   const held = yield* lockedLayoutSteps(input, withRoutes);
   if (held) return held;
   const key = geometryKey(input, panels);
   constellationWorkStats.fullSolves += 1;
   let best: Candidate | null = null;
   let bestMasks: HudOcclusionRect[] = [];
-  for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
-    for (const squeeze of [1, 0.76, 0.56, 0.4, 0.16]) {
+  let bestDegraded = 0;
+  // The best answer found so far that needed at least one fallback leader. It
+  // is used only if no candidate anywhere routes cleanly, so a clean picture
+  // is never traded for a tidier fallback.
+  let fallback: {
+    candidate: Candidate; masks: HudOcclusionRect[]; degraded: number;
+    routes: Array<ConstellationRoute | undefined>;
+  } | null = null;
+  // Squeeze outer, gap inner. Compression is escalated only when NO candidate
+  // at the current squeeze passes `hardValid` at either gap — never because a
+  // leader could not be drawn, and never before the 16 px gap has been tried.
+  for (const squeeze of [1, 0.76, 0.56, 0.4, 0.16]) {
+    let seatedAtThisSqueeze = false;
+    for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
       const candidates: Candidate[] = [];
       const right = expandCandidate(input, panels, 'right', squeeze, gap);
       const left = expandCandidate(input, panels, 'left', squeeze, gap);
@@ -1281,24 +1422,45 @@ function* solveLayoutSteps(
       }
       constellationWorkStats.candidatesBuilt += candidates.length;
       const feasible = bestCandidates(input, candidates, gap);
+      if (feasible.length > 0) seatedAtThisSqueeze = true;
       for (const candidate of feasible) {
-        const masks = withRoutes ? yield* addRoutesSteps(input, candidate.placements) : [];
-        if (!masks) continue;
+        if (!withRoutes) { best = candidate; bestMasks = []; break; }
+        const routed = yield* addRoutesSteps(input, candidate.placements);
         // `feasible` is already sorted by its deterministic geometry score.
         // Take the first candidate whose internally shortest bounded routes are
         // all valid; trying lower-ranked geometry after that only adds latency
         // to a pointer interaction.
-        best = candidate; bestMasks = masks;
-        break;
+        if (routed.degraded === 0) {
+          best = candidate; bestMasks = routed.masks; bestDegraded = 0;
+          break;
+        }
+        if (!fallback || routed.degraded < fallback.degraded) {
+          fallback = {
+            candidate, masks: routed.masks, degraded: routed.degraded, routes: routed.routes,
+          };
+        }
       }
       if (best) break;
     }
-    if (best) break;
+    if (best || seatedAtThisSqueeze) break;
   }
-  if (!best) return { status: 'unavailable', template: null, placements: [], masks: [] };
+  if (!best && fallback) {
+    // Nothing routed cleanly anywhere. The seats are still real, so the
+    // constellation stands, with the fewest fallback leaders it could manage.
+    best = fallback.candidate;
+    bestMasks = fallback.masks;
+    bestDegraded = fallback.degraded;
+    for (let index = 0; index < best.placements.length; index += 1) {
+      best.placements[index].route = fallback.routes[index];
+    }
+  }
+  if (!best) {
+    return { status: 'unavailable', template: null, placements: [], masks: [], leaders: 'clean' };
+  }
   const result: ConstellationLayout = {
     status: best.placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
     template: best.template, placements: best.placements, masks: bestMasks,
+    leaders: bestDegraded > 0 ? 'degraded' : 'clean',
   };
   if (input.lock) {
     input.lock.template = best.template; input.lock.geometryKey = key;

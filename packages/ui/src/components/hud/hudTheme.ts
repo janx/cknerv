@@ -1114,6 +1114,16 @@ export function injectHudTheme(doc: Document = document): void {
     // …and the fade over the cut, which exists only where there is a cut.
     + `\n[data-cell-panel-fade]{opacity:0}`
     + `\n[data-cell-panel-capped="true"] [data-cell-panel-fade]{opacity:1}`
+    // ——— a leader that is only a fallback says so ————————————————————————
+    // When the router cannot reach a plate the constellation draws the straight
+    // leader instead. It connects the same two things and it is honest about
+    // the connection, but it is NOT the routed line: it may lie over a rail or
+    // cross a plate, and a reader who trusts it the same way is being misled.
+    // Dashing the rose over-stroke is the drawing convention for exactly this —
+    // a known relationship whose path is not surveyed — and the near-black
+    // stroke beneath stays solid, because legibility over the nebula is not the
+    // thing in doubt. The writer marks the group, so nothing re-renders.
+    + `\n[data-cell-leader-degraded="true"] [data-cell-leader-stroke="over"]{stroke-dasharray:4 3}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar{height:5px}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar-thumb{background:${rgba(HUD_COLORS.orange, 0.35)};border-radius:3px}`
     + `\n.cknerv-chain-cluster::-webkit-scrollbar-track{background:transparent}`

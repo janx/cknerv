@@ -318,11 +318,13 @@ function ConstellationLeader({ handles, slot, maskId }: {
   slot: ConstellationSlot;
   maskId: string;
 }) {
+  const groupRef = useRef<SVGGElement>(null);
   const underRef = useRef<SVGPathElement>(null);
   const overRef = useRef<SVGPathElement>(null);
   const dotRef = useRef<SVGCircleElement>(null);
   useLayoutEffect(() => {
     const leader = handles.leaders[slot];
+    leader.group = groupRef.current;
     leader.under = underRef.current;
     leader.over = overRef.current;
     leader.dot = dotRef.current;
@@ -333,22 +335,34 @@ function ConstellationLeader({ handles, slot, maskId }: {
     }
     invalidateConstellationFrame(handles);
     return () => {
+      leader.group = null;
       leader.under = null;
       leader.over = null;
       leader.dot = null;
     };
   }, [handles, slot]);
   return (
-    <g data-cell-leader={slot} mask={`url(#${maskId})`}>
+    <g
+      ref={groupRef}
+      data-cell-leader={slot}
+      data-cell-leader-degraded="false"
+      mask={`url(#${maskId})`}
+    >
       <path
         ref={underRef}
+        data-cell-leader-stroke="under"
         fill="none"
         strokeLinejoin="round"
         stroke={rgba(HUD_COLORS.ground, 0.85)}
         strokeWidth={3.5}
       />
+      {/* The rose stroke is the one that says the leader is a leader, so it is
+        * the one that says when it is only a fallback: the injected sheet
+        * dashes it on `data-cell-leader-degraded`, while the near-black stroke
+        * under it stays solid and keeps the line legible over the nebula. */}
       <path
         ref={overRef}
+        data-cell-leader-stroke="over"
         fill="none"
         strokeLinejoin="round"
         stroke={rgba(CELL_CARD_ACCENT, 0.72)}
