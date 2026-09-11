@@ -13,6 +13,8 @@ import {
   createConstellationLock,
   revalidateConstellationLayoutForAnchor,
   resetConstellationLock,
+  resetConstellationWorkStats,
+  snapshotConstellationWorkStats,
   type ConstellationLayout,
   type ConstellationPanel,
   type ConstellationPlacement,
@@ -831,5 +833,94 @@ describe('a leader survives a one-pixel move (F7)', () => {
     }
     expect(checked).toBeGreaterThan(0);
     expect(failed).toEqual([]);
+  });
+});
+
+describe('a held constellation routes inside the interaction (P2)', () => {
+  const base = {
+    panels: CONSTELLATION_PANELS.slice(0, 3) as ConstellationPanel[],
+    stageWidth: 1920,
+    stageHeight: 1080,
+    obstacles: RAILS_1920,
+    safeTop: SAFE_TOP,
+    edge: EDGE,
+  };
+
+  it('carries the line it already drew instead of searching for it again', () => {
+    // Measured 2026-09-11: a locked re-solve after three pixels of drift cost
+    // p90 107 ms and up to 4,153 ms, because the held seats were re-routed from
+    // nothing every frame. The lock now holds the routes too.
+    const lock = createConstellationLock();
+    const first = constellationLayout({
+      ...base,
+      anchorX: 900,
+      anchorY: 520,
+      reserved: constellationChipReserved(900, 520, 1920),
+      lock,
+    });
+    expect(first.status).not.toBe('unavailable');
+    expect(first.leaders).toBe('clean');
+
+    resetConstellationWorkStats();
+    const second = constellationLayout({
+      ...base,
+      anchorX: 903,
+      anchorY: 521,
+      reserved: constellationChipReserved(903, 521, 1920),
+      lock,
+    });
+    const stats = snapshotConstellationWorkStats();
+
+    expect(stats.lockedReuses).toBe(1);
+    expect(stats.fullSolves).toBe(0);
+    // The whole point: no grid search, one route order, and not one pair of the
+    // fast pass, because every leader was already known.
+    expect(stats.searchedRouteAttempts).toBe(0);
+    expect(stats.routeGridPoints).toBe(0);
+    expect(stats.routeOrders).toBe(1);
+    expect(stats.fastRouteAttempts).toBe(0);
+    expect(stats.degradedRoutes).toBe(0);
+    expect(second.leaders).toBe('clean');
+    for (const panel of second.placements) {
+      const before = first.placements.find((other) => other.slot === panel.slot);
+      const from = before?.route?.points[0];
+      const to = panel.route?.points[0];
+      expect(to, `${panel.slot} keeps its outlet`).toEqual({
+        x: (from?.x ?? 0) + 3, y: (from?.y ?? 0) + 1,
+      });
+    }
+  });
+
+  it('takes the fallback leader rather than spending a search it cannot afford', () => {
+    // A held plate whose line no longer reaches it degrades for this frame.
+    // The locked path runs under the pointer; the grid search does not belong
+    // in it at any price, and the reader sees a dashed leader rather than a
+    // dropped frame.
+    const lock = createConstellationLock();
+    constellationLayout({
+      ...base,
+      anchorX: 900,
+      anchorY: 520,
+      reserved: constellationChipReserved(900, 520, 1920),
+      lock,
+    });
+    // Move far enough that the translated legs cannot all survive, but stay
+    // inside the 160 px hold radius so the seats are still reused.
+    resetConstellationWorkStats();
+    const drifted = constellationLayout({
+      ...base,
+      anchorX: 1020,
+      anchorY: 590,
+      reserved: constellationChipReserved(1020, 590, 1920),
+      lock,
+    });
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.lockedReuses + stats.fullSolves).toBeGreaterThan(0);
+    if (stats.lockedReuses === 1) {
+      expect(stats.searchedRouteAttempts).toBe(0);
+      expect(stats.routeGridPoints).toBe(0);
+      expect(drifted.placements.length).toBe(3);
+      expect(drifted.placements.every((panel) => panel.route)).toBe(true);
+    }
   });
 });

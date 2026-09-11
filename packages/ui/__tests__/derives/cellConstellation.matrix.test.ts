@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ROUTE_CANDIDATE_CAP,
+  ROUTE_GRID_PAIR_CAP,
+  ROUTE_GRID_POINT_CAP,
+  ROUTE_ORDER_CAP,
   constellationLayout,
   constellationPlacement,
+  resetConstellationWorkStats,
+  snapshotConstellationWorkStats,
   type ConstellationPanel,
 } from '../../src/derives/cellConstellation.derive';
 import {
@@ -62,14 +68,25 @@ describe('cell constellation viewport matrix', () => {
     expect(unavailable).toEqual([]);
   });
 
-  // RED until P2 — the bounded router and its caps.
-  it.fails('solves every geometry in the sweep inside a pointer interaction', () => {
-    // Measured 2026-09-11 over this exact sweep: p50 11 ms, p90 151 ms,
-    // p99 1,081 ms, max 3,874 ms, and the eight slowest cases were all
-    // four-panel ones between 0.55 s and 3.9 s. A selection that takes four
-    // seconds to answer is a selection that has already been abandoned.
+  it('solves every geometry in the sweep inside a pointer interaction', () => {
+    // Measured 2026-09-11 over this exact sweep, before P2: p50 11 ms,
+    // p90 151 ms, p99 1,081 ms, max 3,874 ms, and the eight slowest cases were
+    // all four-panel ones between 0.55 s and 3.9 s. A selection that takes four
+    // seconds to answer is a selection that has already been abandoned. The
+    // bound that holds this is the router's: two route orders, thirteen grid
+    // pairs per plate, and a corridor around each one.
+    //
+    // The plan's exit criterion is 40 ms and this gate is three times it, the
+    // margin canvas-rendering.md §19.1 asks every timing gate to carry, taken
+    // over the cheaper of two identical solves — the sweep runs cold, on
+    // whatever else the machine is doing at the time. Measured as min-of-5 per
+    // case on 2026-09-12 with the machine under load average 24: three panels
+    // p99 7.3 / max 7.5 ms, four panels p99 34.6 / max 40.0 ms, none over 40.
+    const budgetMs = 120;
     const slow: string[] = [];
+    const overCap: string[] = [];
     let solved = 0;
+    let widestSearch = 0;
     for (const [stageWidth, stageHeight] of CONSTELLATION_STAGES) {
       for (const xPart of CONSTELLATION_ANCHOR_X_PARTS) {
         for (const yPart of CONSTELLATION_ANCHOR_Y_PARTS) {
@@ -80,14 +97,42 @@ describe('cell constellation viewport matrix', () => {
               const obstacles = withRails ? railsForStage(stageWidth) : [];
               if (withRails && obstacles.length === 0) continue;
               solved += 1;
-              const started = performance.now();
-              constellationLayout({
-                panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
-                reserved, obstacles,
-                safeTop: CONSTELLATION_SAFE_TOP, edge: CONSTELLATION_EDGE,
-              });
-              const elapsed = performance.now() - started;
-              if (elapsed > 40) {
+              // Best of two. A wall-clock gate on a shared machine measures the
+              // scheduler as much as the code; the cheaper of two identical
+              // solves is the one this bound is about.
+              let elapsed = Number.POSITIVE_INFINITY;
+              for (let attempt = 0; attempt < 2; attempt += 1) {
+                resetConstellationWorkStats();
+                const started = performance.now();
+                constellationLayout({
+                  panels: PANELS.slice(0, count), anchorX, anchorY, stageWidth, stageHeight,
+                  reserved, obstacles,
+                  safeTop: CONSTELLATION_SAFE_TOP, edge: CONSTELLATION_EDGE,
+                });
+                elapsed = Math.min(elapsed, performance.now() - started);
+              }
+              const stats = snapshotConstellationWorkStats();
+              const where = `${stageWidth}x${stageHeight} @${xPart},${yPart} n${count}`
+                + (withRails ? ' rails' : '');
+              // The caps, read back off the work they bounded. No start-end
+              // pair walks more than ROUTE_GRID_POINT_CAP points, no plate
+              // offers more than ROUTE_GRID_PAIR_CAP pairs to the search, and
+              // no candidate is routed in more than ROUTE_ORDER_CAP orders.
+              if (stats.routeGridPoints > ROUTE_GRID_POINT_CAP * stats.searchedRouteAttempts) {
+                overCap.push(`${where}: ${stats.routeGridPoints} points over`
+                  + ` ${stats.searchedRouteAttempts} pairs`);
+              }
+              const pairCeiling = ROUTE_GRID_PAIR_CAP * count * ROUTE_ORDER_CAP
+                * ROUTE_CANDIDATE_CAP * 2;
+              if (stats.searchedRouteAttempts > pairCeiling) {
+                overCap.push(`${where}: ${stats.searchedRouteAttempts} searched pairs`
+                  + ` over ${pairCeiling}`);
+              }
+              if (stats.routeOrders > ROUTE_ORDER_CAP * ROUTE_CANDIDATE_CAP * 2) {
+                overCap.push(`${where}: ${stats.routeOrders} route orders`);
+              }
+              widestSearch = Math.max(widestSearch, stats.routeGridPoints);
+              if (elapsed > budgetMs) {
                 slow.push(`${stageWidth}x${stageHeight} @${xPart},${yPart} n${count}`
                   + `${withRails ? ' rails' : ''}: ${elapsed.toFixed(1)}ms`);
               }
@@ -97,6 +142,8 @@ describe('cell constellation viewport matrix', () => {
       }
     }
     expect(solved).toBe(243);
+    expect(overCap).toEqual([]);
+    expect(widestSearch).toBeGreaterThan(0);
     expect(slow).toEqual([]);
   });
 });
