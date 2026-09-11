@@ -752,6 +752,31 @@ describe('the entrance the channel outlives', () => {
   });
 });
 
+describe('a dossier with no frame writer', () => {
+  it('stands its plates in flow, visible, instead of waiting for a seat', () => {
+    // The review labs and the component tests render CellDetailPanel with no
+    // channel handed in, so nothing will ever seat its hosts. Since 1901530d a
+    // fresh host waits at `visibility: hidden` for the writer to place that
+    // exact DOM node — correct on the stage, and a dossier nobody can see in
+    // a lab. A detached channel says nobody is coming, and the plates stand.
+    const { container } = render(<CellDetailPanel cell={cell} onClose={() => {}} />);
+    const hosts = Array.from(container.querySelectorAll<HTMLElement>('[data-cell-constellation-panel]'));
+    expect(hosts.length).toBeGreaterThan(0);
+    for (const host of hosts) {
+      expect(host.style.visibility).toBe('visible');
+      expect(host.style.position).toBe('relative');
+    }
+  });
+
+  it('keeps a live channel hidden until the writer seats that host', () => {
+    const handles = createCellConstellationHandles();
+    const { container } = render(<CellDetailPanel cell={cell} handles={handles} onClose={() => {}} />);
+    const host = container.querySelector<HTMLElement>('[data-cell-constellation-panel="analysis"]');
+    expect(host?.style.visibility).toBe('hidden');
+    expect(handles.detached).toBe(false);
+  });
+});
+
 describe('what an instrument reports about its own height', () => {
   it('⚠️ counts its head and its hairlines, not just its body', () => {
     // The walk writes the number straight onto the host, so it has to be what

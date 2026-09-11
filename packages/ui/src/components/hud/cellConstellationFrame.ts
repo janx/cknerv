@@ -115,6 +115,12 @@ export interface CellConstellationHandles {
   presentationDirty: boolean;
   /** Camera motion has hidden routes while retaining the latest panel seats. */
   motionSuspended: boolean;
+  /** No frame writer will ever seat these plates. The review labs and the
+   * component tests render the dossier standing still, with no anchor to
+   * place it; a detached channel lets every instrument register and measure
+   * itself exactly as it does live, and the plates stand in flow, visible,
+   * instead of waiting at `visibility: hidden` for a seat that never comes. */
+  detached: boolean;
 }
 
 export const CONSTELLATION_SLOTS: readonly ConstellationSlot[] = [
@@ -125,7 +131,9 @@ export const CONSTELLATION_WIDTH: { [slot: string]: number } = {
 };
 export const CONSTELLATION_MIN_WIDTH_PX = 336;
 
-export function createCellConstellationHandles(): CellConstellationHandles {
+export function createCellConstellationHandles(
+  options: { detached?: boolean } = {},
+): CellConstellationHandles {
   const panels: { [slot: string]: ConstellationPanelHandle } = {};
   const leaders: { [slot: string]: ConstellationLeaderHandle } = {};
   for (const slot of CONSTELLATION_SLOTS) {
@@ -153,6 +161,7 @@ export function createCellConstellationHandles(): CellConstellationHandles {
     provisionalBasePanelKey: '',
     provisionalBaseAnchorX: Number.NaN, provisionalBaseAnchorY: Number.NaN,
     provisionalVisible: false, presentationDirty: false, motionSuspended: false,
+    detached: options.detached === true,
   };
 }
 

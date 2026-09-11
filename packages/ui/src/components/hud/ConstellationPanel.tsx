@@ -81,7 +81,11 @@ export default function ConstellationPanel({
     // A fresh host has no screen-space seat. Keep it out of the first paint
     // until a canonical or geometry-validated presentation places this exact
     // DOM node; old handle geometry may belong to another selected Cell.
-    if (handle.positionedHost !== host) host.style.visibility = 'hidden';
+    //
+    // Unless nobody will ever place it: a detached channel (the review labs,
+    // the component tests) has no frame writer, and a plate that waits for a
+    // seat that never comes is a plate that is never seen.
+    if (!handles.detached && handle.positionedHost !== host) host.style.visibility = 'hidden';
     handle.present = true;
     const measure = () => {
       // ⚠️ THE HEAD AND THE HAIRLINES COUNT, AND THEY WERE MISSED.
@@ -129,9 +133,11 @@ export default function ConstellationPanel({
       data-cell-constellation-panel={slot}
       {...attributes}
       style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
+        // Seated by the frame writer, or — detached — standing in flow at its
+        // own measure, one under the other, for a lab or a test to look at.
+        ...(handles.detached
+          ? { position: 'relative' as const, width: handles.panels[slot]?.width, marginBottom: 16, visibility: 'visible' as const }
+          : { position: 'absolute' as const, left: 0, top: 0, visibility: 'hidden' as const }),
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
@@ -139,7 +145,6 @@ export default function ConstellationPanel({
         pointerEvents: 'auto',
         userSelect: 'text',
         willChange: 'transform',
-        visibility: 'hidden',
         zIndex: 3,
         color: HUD_COLORS.ink,
         fontFamily: HUD_FONTS.mono,

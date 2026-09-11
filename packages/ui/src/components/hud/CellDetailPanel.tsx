@@ -1793,7 +1793,7 @@ function CellDetailPanel({
   // itself exactly as it does live, and simply nobody moves them.
   const detachedHandles = useRef<CellConstellationHandles | null>(null);
   if (detachedHandles.current === null) {
-    detachedHandles.current = createCellConstellationHandles();
+    detachedHandles.current = createCellConstellationHandles({ detached: true });
   }
   const panelHandles = handles ?? detachedHandles.current;
   const [closedState, setClosedState] = useState<{
