@@ -36,6 +36,7 @@ export const CONSTELLATION_HOLD_MARGIN_PX = 96;
 export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
 export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
 
+
 /**
  * How far outside the straight line between an outlet and a plate edge the
  * orthogonal search is allowed to look.
@@ -203,6 +204,36 @@ export interface ConstellationPlacement {
   capped: boolean;
   route?: ConstellationRoute;
 }
+/** Which of the four listed positions the name chip took. The suffixed two are
+ * the same vertical side, slid horizontally to clear a held plate. */
+export type ConstellationChipPosition =
+  'below' | 'above' | 'below-shifted' | 'above-shifted';
+/** What deciding where the chip stands needs to know. The chip is the one
+ * claim the inspection layer reserves for itself, so its size travels with the
+ * request rather than with the panels. */
+export interface ConstellationChipInput {
+  anchorX: number; anchorY: number;
+  stageWidth: number; stageHeight: number;
+  edge: number;
+  chipWidth: number; chipHeight: number;
+}
+export interface ConstellationChipPlacement {
+  /** Centre x of the chip: what the transform writes, with the chip's own
+   * `translateX(-50%)` doing the rest. */
+  x: number;
+  /** Top y of the chip. */
+  y: number;
+  left: number; top: number; right: number; bottom: number;
+  position: ConstellationChipPosition;
+  /** True when this is where the chip stands with nothing in its way — under
+   * the Cell, or above it where the stage has no room below. A false here is a
+   * relocation, and the writer counts it. */
+  preferred: boolean;
+  /** True when the rectangle touches no plate. False means every listed
+   * position was blocked; the chip stands on its preferred one and the caller
+   * decides what to do about the plate underneath it. */
+  clear: boolean;
+}
 export interface ConstellationLayout {
   /** Room, and only room. `unavailable` means no seat set passes `hardValid`
    * on this stage; it never means a line could not be drawn. */
@@ -212,6 +243,10 @@ export interface ConstellationLayout {
   masks: HudOcclusionRect[];
   /** `degraded` when at least one leader in this layout is the fallback. */
   leaders: 'clean' | 'degraded';
+  /** Where the name chip stands for THIS layout: the preferred position on a
+   * fresh solve, and the position that clears the held plates on a layout the
+   * lock carried. Absent when the caller reserved no chip at all. */
+  chip?: ConstellationChipPlacement;
 }
 interface Box { x: number; y: number; width: number; height: number }
 interface Candidate { template: ConstellationTemplate; placements: ConstellationPlacement[] }
@@ -255,7 +290,8 @@ export interface ConstellationWorkStats {
   /** Seat changes the frame writer animated instead of writing at once. */
   seatTweens: number;
   /** Times the name chip moved off its preferred position to clear a held
-   * plate instead of breaking the seat lock. */
+   * plate instead of breaking the seat lock. One relocation is one MOVE, not
+   * one frame: the chip standing beside the Cell for a whole reading is one. */
   chipRelocations: number;
   cursorSlices: number;
   cursorMaxSliceMs: number;
@@ -344,6 +380,13 @@ export function observeConstellationRefineLanding(upgrades: number): void {
  * are no longer the seats on screen. */
 export function observeConstellationRefineDropped(): void {
   constellationWorkStats.refineDropped += 1;
+}
+
+/** The name chip was written somewhere other than its preferred position, to
+ * clear a plate the reader is reading. Counted per MOVE, not per frame: a chip
+ * that stands beside the Cell for two hundred frames is one relocation. */
+export function observeConstellationChipRelocation(): void {
+  constellationWorkStats.chipRelocations += 1;
 }
 
 export function snapshotConstellationWorkStats(): ConstellationWorkStats {
@@ -1557,11 +1600,146 @@ function hardValid(input: ConstellationInput, placements: readonly Constellation
   });
 }
 
+/**
+ * Where the name chip stands, given the plates that are already on screen.
+ *
+ * The chip carries the Cell's identity and it follows the reticle, so it is
+ * the one part of the inspection layer that moves every frame — and, being a
+ * hard claim the plates must keep out of, the one that used to break the seat
+ * lock every twenty-odd pixels of drift. It yields instead. Four positions are
+ * tried in order:
+ *
+ *   1. centred below the reticle — where it has always stood;
+ *   2. centred above it;
+ *   3. below, slid left or right by the smallest amount that clears every
+ *      plate without leaving the stage;
+ *   4. above, slid likewise.
+ *
+ * The first that touches no plate wins. When none does, the chip stands on its
+ * preferred position anyway with `clear: false`, and the caller — the locked
+ * path — takes that as its cue to give the seats up and solve again. A
+ * position that would put the chip outside the stage is not offered at all,
+ * which is how the flip above the Cell near the bottom edge happens: `below`
+ * is simply not in the list there.
+ *
+ * Pure, and cheap enough to call on every frame: no allocation beyond the one
+ * answer, and the plate loop is at most four plates times four positions.
+ */
+export function constellationChip(
+  input: ConstellationChipInput,
+  placements: readonly ConstellationPlacement[],
+): ConstellationChipPlacement {
+  const width = input.chipWidth; const height = input.chipHeight;
+  const centre = width > 0
+    ? clamp(input.anchorX, input.edge + width / 2, input.stageWidth - input.edge - width / 2)
+    : input.anchorX;
+  const belowTop = input.anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+  const aboveTop = input.anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - height;
+  const belowFits = belowTop + height <= input.stageHeight - input.edge;
+  const aboveFits = aboveTop >= input.edge;
+  const at = (x: number, top: number, position: ConstellationChipPosition,
+    preferred: boolean, clear: boolean): ConstellationChipPlacement => ({
+    x, y: top,
+    left: x - width / 2, top, right: x + width / 2, bottom: top + height,
+    position, preferred, clear,
+  });
+  // The position the chip takes with nothing in its way, which is exactly what
+  // the writer wrote before it learned to yield: below unless the stage has no
+  // room below, and above otherwise.
+  const fallback = belowFits
+    ? at(centre, belowTop, 'below', true, false)
+    : at(centre, aboveTop, 'above', true, false);
+  if (width <= 0 || height <= 0 || placements.length === 0) {
+    return { ...fallback, clear: true };
+  }
+  const boxes = placements.map(boxOf);
+  const lowX = input.edge + width / 2;
+  const highX = input.stageWidth - input.edge - width / 2;
+  const touches = (x: number, top: number): boolean => boxes.some((box) => intersectionArea(
+    { x: x - width / 2, y: top, width, height }, box,
+  ) > 0);
+  const shifted = (top: number): number | null => {
+    // Every offset that puts the chip fully past one plate, and the smallest
+    // of them that clears them all and stays inside the stage clamp.
+    const options: number[] = [];
+    for (const box of boxes) {
+      options.push(box.x - width / 2 - centre, box.x + box.width + width / 2 - centre);
+    }
+    options.sort((a, b) => Math.abs(a) - Math.abs(b));
+    for (const offset of options) {
+      const x = centre + offset;
+      if (x < lowX - 0.5 || x > highX + 0.5) continue;
+      if (!touches(x, top)) return x;
+    }
+    return null;
+  };
+  if (belowFits && !touches(centre, belowTop)) {
+    return at(centre, belowTop, 'below', true, true);
+  }
+  if (aboveFits && !touches(centre, aboveTop)) {
+    return at(centre, aboveTop, 'above', belowFits === false, true);
+  }
+  if (belowFits) {
+    const x = shifted(belowTop);
+    if (x !== null) return at(x, belowTop, 'below-shifted', false, true);
+  }
+  if (aboveFits) {
+    const x = shifted(aboveTop);
+    if (x !== null) return at(x, aboveTop, 'above-shifted', false, true);
+  }
+  return fallback;
+}
+
+/** The chip measure a layout input carries. Every caller reserves exactly one
+ * claim and that claim is the chip, so its size is read back off the claim
+ * rather than duplicated in a second field that could disagree with it. */
+function chipInputOf(input: ConstellationInput): ConstellationChipInput | null {
+  const claim = (input.reserved ?? [])[0];
+  if (!claim) return null;
+  const chipWidth = claim.right - claim.left;
+  const chipHeight = claim.bottom - claim.top;
+  if (chipWidth <= 0 || chipHeight <= 0) return null;
+  return {
+    anchorX: input.anchorX, anchorY: input.anchorY,
+    stageWidth: input.stageWidth, stageHeight: input.stageHeight,
+    edge: input.edge, chipWidth, chipHeight,
+  };
+}
+
+/**
+ * The same input, with the chip moved out of the way of plates that are
+ * already seated.
+ *
+ * Used by every path that re-validates HELD placements — the locked reuse, the
+ * presentation re-anchor, and the hard-validity question the frame writer asks
+ * before it keeps a stale picture. A fresh solve never comes through here: it
+ * reserves the preferred position and seats its plates around it, which is
+ * what keeps a first paint identical to the one before this rule existed.
+ */
+function heldChipInput(
+  input: ConstellationInput,
+  placements: readonly ConstellationPlacement[],
+): { input: ConstellationInput; chip: ConstellationChipPlacement | null } {
+  const measure = chipInputOf(input);
+  if (!measure) return { input, chip: null };
+  const chip = constellationChip(measure, placements);
+  return {
+    input: {
+      ...input,
+      reserved: [{
+        left: chip.left, top: chip.top, right: chip.right, bottom: chip.bottom,
+      }],
+    },
+    chip,
+  };
+}
+
 export function constellationLayoutHardValid(
   input: ConstellationInput,
   layout: ConstellationLayout,
 ): boolean {
-  return hardValid(input, layout.placements, CONSTELLATION_MIN_GAP_PX);
+  const held = heldChipInput(input, layout.placements);
+  return hardValid(held.input, layout.placements, CONSTELLATION_MIN_GAP_PX);
 }
 
 /**
@@ -1575,11 +1753,17 @@ export function constellationLayoutHardValid(
  * frame.
  */
 export function revalidateConstellationLayoutForAnchor(
-  input: ConstellationInput,
+  request: ConstellationInput,
   layout: ConstellationLayout,
   previousAnchorX: number,
   previousAnchorY: number,
 ): ConstellationLayout | null {
+  // These are held seats, so the chip yields to them exactly as it does on the
+  // locked path: the claim this validates, routes around and masks is the
+  // chip's relocated rectangle, not the one centred under a Cell that has
+  // since drifted onto a plate.
+  const held = heldChipInput(request, layout.placements);
+  const input = held.input;
   // A layout is presentation-compatible only with the same instruments. The
   // caller may deliberately reuse it across a viewport/HUD change, because
   // every current bound and obstacle is checked below, but equal panel counts
@@ -1704,6 +1888,7 @@ export function revalidateConstellationLayoutForAnchor(
     ...layout,
     placements: translated,
     masks: [...panelBoxes, ...reserved, ...hud].map(rectOf),
+    ...(held.chip ? { chip: held.chip } : {}),
   };
 }
 function scoreCandidate(input: ConstellationInput, candidate: Candidate): number {
@@ -1792,14 +1977,21 @@ function* lockedLayoutSteps(
         next.quadrant = held.quadrant;
         return next;
       });
-      if (hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) {
+      // The chip yields before the seats do. It is the one claim that moves
+      // with the Cell, and a held plate is worth more than the chip's
+      // preferred position: relocating it costs the reader a chip that stands
+      // beside the Cell instead of under it, where breaking the lock costs
+      // them the whole constellation jumping. Only when no listed position is
+      // clear does this fall through to the full solve.
+      const held = heldChipInput(input, placements);
+      if (hardValid(held.input, placements, CONSTELLATION_MIN_GAP_PX)) {
         // Route reuse and the fast two-leg pass, and nothing else. This runs
         // inside a pointer interaction on a Cell the reader is already looking
         // at: a plate whose held line no longer reaches it takes the fallback
         // leader for this frame rather than spending a grid search, and the
         // canonical solve behind it will hand back the real route.
         const routed = withRoutes
-          ? yield* addRoutesSteps(input, placements, {
+          ? yield* addRoutesSteps(held.input, placements, {
             fastOnly: true,
             held: { routes: lock.routes, anchorX: lock.anchorX, anchorY: lock.anchorY },
           })
@@ -1812,6 +2004,7 @@ function* lockedLayoutSteps(
           placements,
           masks: routed?.masks ?? [],
           leaders: (routed?.degraded ?? 0) > 0 ? 'degraded' : 'clean',
+          ...(held.chip ? { chip: held.chip } : {}),
         };
       }
     }
@@ -1906,13 +2099,23 @@ function* solveLayoutSteps(
       best.placements[index].route = fallback.routes[index];
     }
   }
+  // A fresh solve reserved the preferred position and seated its plates around
+  // it, so that is where the chip stands. Relocation is the locked path's
+  // business, and a composition that has just been chosen has no held plate to
+  // yield to.
+  const measure = chipInputOf(input);
+  const chip = measure ? constellationChip(measure, []) : null;
   if (!best) {
-    return { status: 'unavailable', template: null, placements: [], masks: [], leaders: 'clean' };
+    return {
+      status: 'unavailable', template: null, placements: [], masks: [], leaders: 'clean',
+      ...(chip ? { chip } : {}),
+    };
   }
   const result: ConstellationLayout = {
     status: best.placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
     template: best.template, placements: best.placements, masks: bestMasks,
     leaders: bestDegraded > 0 ? 'degraded' : 'clean',
+    ...(chip ? { chip } : {}),
   };
   constellationWorkStats.degradedRoutes += bestDegraded;
   if (input.lock) {

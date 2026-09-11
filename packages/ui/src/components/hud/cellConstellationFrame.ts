@@ -1,8 +1,10 @@
 import {
+  constellationChip,
   constellationLayout,
   constellationLayoutHardValid,
   constellationLayoutCursor,
   constellationLockedLayoutCursor,
+  observeConstellationChipRelocation,
   observeConstellationCursorCancel,
   observeConstellationCursorLanding,
   observeConstellationProvisionalFrame,
@@ -18,6 +20,9 @@ import {
   CONSTELLATION_RETICLE_PX,
   CONSTELLATION_ROUTE_CLEARANCE_PX,
   CONSTELLATION_UNAVAILABLE_RESOLVE_PX,
+  type ConstellationChipInput,
+  type ConstellationChipPlacement,
+  type ConstellationChipPosition,
   type ConstellationLayout,
   type ConstellationLock,
   type ConstellationPanel,
@@ -111,6 +116,10 @@ export interface CellConstellationHandles {
   chip: HTMLElement | null;
   chipWidth: number;
   chipHeight: number;
+  /** Which of the chip's four listed positions was last written. It is state
+   * only so a relocation can be counted once per move instead of once per
+   * frame; nothing reads it to decide anything. */
+  chipPosition: ConstellationChipPosition | '';
   lock: ConstellationLock;
   visible: boolean;
   leaving: boolean;
@@ -189,7 +198,7 @@ export function createCellConstellationHandles(
   }
   return {
     root: null, panels, leaders, maskGroup: null, reticle: null, chip: null,
-    chipWidth: 0, chipHeight: 0, lock: createConstellationLock(),
+    chipWidth: 0, chipHeight: 0, chipPosition: '', lock: createConstellationLock(),
     visible: false, leaving: false, frameKey: '', layoutKey: '', connectorKey: '',
     placementKey: '', maskKey: '',
     lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
@@ -211,21 +220,40 @@ const bucket = (value: number): number => Math.round(value / QUANTUM_PX);
 const scratchPanels: ConstellationPanel[] = [];
 const scratchReserved: HudOcclusionRect[] = [];
 const chipBox: HudOcclusionRect = { left: 0, top: 0, right: 0, bottom: 0 };
-const chipPoint = { x: 0, y: 0 };
+const chipInput: ConstellationChipInput = {
+  anchorX: 0, anchorY: 0, stageWidth: 0, stageHeight: 0, edge: 0,
+  chipWidth: 0, chipHeight: 0,
+};
 
-/** Where the name chip stands: centred under the reticle, clamped inside the
- * stage edges, and flipped above the Cell when there is no room below. Written
- * into a scratch point because it is read on every frame. */
-function measureChip(handles: CellConstellationHandles, anchorX: number, anchorY: number,
-  stageWidth: number, stageHeight: number, edge: number): void {
-  chipPoint.x = handles.chipWidth > 0
-    ? Math.max(edge + handles.chipWidth / 2,
-      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
-    : anchorX;
-  const below = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
-  chipPoint.y = below + handles.chipHeight <= stageHeight - edge
-    ? below
-    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+/**
+ * Where the name chip stands this frame, from the one function that decides it.
+ *
+ * `placements` is what the chip must keep out of: nothing on a fresh request,
+ * where the chip reserves its preferred position and the plates are seated
+ * around it, and the seats that are on screen everywhere else, where the chip
+ * is the thing that yields. The scratch input is filled in place because this
+ * is read on every frame, including frames that do no other work.
+ */
+function chipPlacement(
+  handles: CellConstellationHandles,
+  anchorX: number, anchorY: number,
+  stageWidth: number, stageHeight: number, edge: number,
+  placements: readonly ConstellationPlacement[],
+): ConstellationChipPlacement {
+  chipInput.anchorX = anchorX; chipInput.anchorY = anchorY;
+  chipInput.stageWidth = stageWidth; chipInput.stageHeight = stageHeight;
+  chipInput.edge = edge;
+  chipInput.chipWidth = handles.chipWidth; chipInput.chipHeight = handles.chipHeight;
+  return constellationChip(chipInput, placements);
+}
+
+const EMPTY_PLACEMENTS: readonly ConstellationPlacement[] = [];
+/** The seats the chip has to keep out of: the picture on screen, or nothing at
+ * all before there is one. */
+function seatedPlacements(
+  handles: CellConstellationHandles,
+): readonly ConstellationPlacement[] {
+  return handles.lastLayout?.placements ?? EMPTY_PLACEMENTS;
 }
 
 function collectPanels(handles: CellConstellationHandles, stageWidth: number,
@@ -565,15 +593,21 @@ function prepareRequest(
     obstacles, obstacleVersion,
   )) return handles.lastRequest as ConstellationFrameRequest;
   const panels = collectPanels(handles, stageWidth, edge).map((panel) => ({ ...panel }));
-  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
-  const chipX = chipPoint.x; const chipY = chipPoint.y;
+  // The request reserves the chip's PREFERRED position and nothing else. A
+  // solve that re-composes seats its plates around the chip; a solve that
+  // carries held seats relocates the chip against them inside the derive, and
+  // hands the moved rectangle back on `layout.chip`. Keeping the request at the
+  // preferred position is what makes `requestStillDescribes` complete: the
+  // claim is a function of the anchor bucket, the stage and the chip measure,
+  // all of which it already compares, and of no seat that could move under it.
+  const chip = chipPlacement(
+    handles, anchorX, anchorY, stageWidth, stageHeight, edge, EMPTY_PLACEMENTS,
+  );
+  const chipX = chip.x; const chipY = chip.y;
   const reserved: HudOcclusionRect[] = [];
   if (handles.chipWidth > 0 && handles.chipHeight > 0) {
     reserved.push({
-      left: chipX - handles.chipWidth / 2,
-      right: chipX + handles.chipWidth / 2,
-      top: chipY,
-      bottom: chipY + handles.chipHeight,
+      left: chip.left, right: chip.right, top: chip.top, bottom: chip.bottom,
     });
   }
   const frozenObstacles = obstacles.map((rect) => ({ ...rect }));
@@ -600,21 +634,33 @@ function prepareRequest(
   return request;
 }
 
+/**
+ * The two marks that say which Cell this is, written from the live anchor.
+ *
+ * The chip's rectangle comes from `constellationChip` and nowhere else, so
+ * what the reader sees and what the layout reserved are the same rectangle.
+ * A write at a position other than the preferred one is a relocation, counted
+ * once per move rather than once per frame: the chip standing beside the Cell
+ * through a whole reading is one relocation, not six hundred.
+ */
 function writeMovingMarks(
   handles: CellConstellationHandles,
   anchorX: number,
   anchorY: number,
-  chipX: number,
-  chipY: number,
+  chip: ConstellationChipPlacement,
 ): void {
   if (handles.reticle) {
     const half = CONSTELLATION_RETICLE_PX / 2;
     handles.reticle.style.transform =
       `translate3d(${anchorX - half}px, ${anchorY - half}px, 0)`;
   }
+  if (chip.position !== handles.chipPosition) {
+    if (!chip.preferred) observeConstellationChipRelocation();
+    handles.chipPosition = chip.position;
+  }
   if (handles.chip) {
     handles.chip.style.transform =
-      `translate3d(${chipX}px, ${chipY}px, 0) translateX(-50%)`;
+      `translate3d(${chip.x}px, ${chip.y}px, 0) translateX(-50%)`;
   }
 }
 
@@ -800,8 +846,12 @@ export function suspendConstellationFrame(
   stageHeight: number,
   edge: number,
 ): ConstellationPlacement | null {
-  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
-  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
+  // The camera is moving and no solve runs here, but the seats on screen are
+  // still the seats the chip has to keep out of, so it is computed against
+  // them by the same function the layout uses.
+  writeMovingMarks(handles, anchorX, anchorY, chipPlacement(
+    handles, anchorX, anchorY, stageWidth, stageHeight, edge, seatedPlacements(handles),
+  ));
   if (!handles.motionSuspended) {
     cancelLayoutJob(handles);
     cancelRefineJob(handles);
@@ -995,9 +1045,11 @@ export function commitConstellationFrame(
   );
   // The marks track the live anchor, not the request's: a reused request is
   // one whose HALF-PIXEL bucket matched, and the reticle owes the Cell the
-  // pixel it is actually on.
-  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
-  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
+  // pixel it is actually on. The chip is measured against the seats on screen,
+  // so it yields to them exactly as the locked layout's claim does.
+  writeMovingMarks(handles, anchorX, anchorY, chipPlacement(
+    handles, anchorX, anchorY, stageWidth, stageHeight, edge, seatedPlacements(handles),
+  ));
   if (request.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
     return currentSpecimenPlacement(handles);
   }
@@ -1049,8 +1101,9 @@ export function advanceConstellationFrame(
     handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
     obstacles, obstacleVersion,
   );
-  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
-  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
+  writeMovingMarks(handles, anchorX, anchorY, chipPlacement(
+    handles, anchorX, anchorY, stageWidth, stageHeight, edge, seatedPlacements(handles),
+  ));
   handles.desiredRequest = desired;
   // An `unavailable` verdict is a statement about the stage, not about the
   // half pixel the anchor stands on. Hold it while the Cell drifts inside
