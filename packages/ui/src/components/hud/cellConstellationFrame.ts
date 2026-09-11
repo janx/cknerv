@@ -8,6 +8,7 @@ import {
   observeConstellationProvisionalFrame,
   observeConstellationCursorSlice,
   observeConstellationCursorStart,
+  observeConstellationUnavailableHold,
   createConstellationLock,
   revalidateConstellationLayoutForAnchor,
   CONSTELLATION_RETICLE_PX,
@@ -48,6 +49,10 @@ interface ConstellationFrameRequest {
   panelKey: string;
   chipX: number;
   chipY: number;
+  /** The chip measure this request was built from, so the reuse test can read
+   * it without rebuilding the layout signature that encodes it. */
+  chipWidth: number;
+  chipHeight: number;
   input: ConstellationInput;
 }
 
@@ -102,6 +107,15 @@ export interface CellConstellationHandles {
   quadrantListeners: Set<() => void>;
   layoutJob: ConstellationLayoutJob | null;
   desiredRequest: ConstellationFrameRequest | null;
+  /** The last request `prepareRequest` built, with the HUD occlusion version
+   * it was built from. A frame whose anchor bucket, stage, chip, rails and
+   * measured panel heights all match it asks nothing new, and gets this object
+   * back rather than a fresh one — no panel copy, no signature strings, no
+   * rect key. It is dropped by `invalidateConstellationFrame`, which is also
+   * where the private lock is reset from, so the lock clone it carries can
+   * never outlive the lock it was taken from. */
+  lastRequest: ConstellationFrameRequest | null;
+  lastRequestObstacleVersion: number;
   layoutPendingFrames: number;
   appliedAnchorX: number;
   appliedAnchorY: number;
@@ -154,6 +168,7 @@ export function createCellConstellationHandles(
     placementKey: '', maskKey: '',
     lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
     layoutJob: null, desiredRequest: null,
+    lastRequest: null, lastRequestObstacleVersion: -1,
     layoutPendingFrames: 0,
     appliedAnchorX: Number.NaN, appliedAnchorY: Number.NaN,
     provisionalBaseLayout: null,
@@ -170,6 +185,22 @@ const bucket = (value: number): number => Math.round(value / QUANTUM_PX);
 const scratchPanels: ConstellationPanel[] = [];
 const scratchReserved: HudOcclusionRect[] = [];
 const chipBox: HudOcclusionRect = { left: 0, top: 0, right: 0, bottom: 0 };
+const chipPoint = { x: 0, y: 0 };
+
+/** Where the name chip stands: centred under the reticle, clamped inside the
+ * stage edges, and flipped above the Cell when there is no room below. Written
+ * into a scratch point because it is read on every frame. */
+function measureChip(handles: CellConstellationHandles, anchorX: number, anchorY: number,
+  stageWidth: number, stageHeight: number, edge: number): void {
+  chipPoint.x = handles.chipWidth > 0
+    ? Math.max(edge + handles.chipWidth / 2,
+      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
+    : anchorX;
+  const below = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+  chipPoint.y = below + handles.chipHeight <= stageHeight - edge
+    ? below
+    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+}
 
 function collectPanels(handles: CellConstellationHandles, stageWidth: number,
   edge: number): ConstellationPanel[] {
@@ -406,6 +437,9 @@ function cloneLock(lock: ConstellationLock): ConstellationLock {
     quadrant: { ...lock.quadrant },
     template: lock.template,
     placements,
+    // The held route points are immutable once published; sharing the arrays
+    // costs nothing and the clone is read, never written through.
+    routes: { ...lock.routes },
     geometryKey: lock.geometryKey,
     anchorX: lock.anchorX,
     anchorY: lock.anchorY,
@@ -419,6 +453,7 @@ function publishLock(target: ConstellationLock, source: ConstellationLock): void
   target.anchorX = source.anchorX;
   target.anchorY = source.anchorY;
   Object.assign(target.quadrant, source.quadrant);
+  Object.assign(target.routes, source.routes);
   for (const slot of Object.keys(source.placements)) {
     const panel = source.placements[slot];
     if (panel) target.placements[slot] = { ...panel, route: undefined };
@@ -428,10 +463,64 @@ function publishLock(target: ConstellationLock, source: ConstellationLock): void
 function resetLockObject(lock: ConstellationLock): void {
   for (const slot of Object.keys(lock.quadrant)) delete lock.quadrant[slot];
   for (const slot of Object.keys(lock.placements)) delete lock.placements[slot];
+  for (const slot of Object.keys(lock.routes)) delete lock.routes[slot];
   lock.template = null;
   lock.geometryKey = '';
   lock.anchorX = 0;
   lock.anchorY = 0;
+}
+
+/**
+ * Does the last request still describe this frame exactly?
+ *
+ * Everything a signature would encode, compared as numbers: the half-pixel
+ * anchor bucket the connector key is built from, the stage box, the chip
+ * measure, the HUD occlusion version and its rectangles, and every present
+ * panel's measured width, height and label. No allocation, no string. A still
+ * Cell answers `true` here every frame and the writer's whole request path
+ * becomes a handful of comparisons.
+ */
+function requestStillDescribes(
+  handles: CellConstellationHandles,
+  anchorX: number,
+  anchorY: number,
+  stageWidth: number,
+  stageHeight: number,
+  safeTop: number,
+  edge: number,
+  obstacles: readonly HudOcclusionRect[],
+  obstacleVersion: number,
+): boolean {
+  const last = handles.lastRequest;
+  if (!last || handles.lastRequestObstacleVersion !== obstacleVersion) return false;
+  const input = last.input;
+  if (input.stageWidth !== stageWidth || input.stageHeight !== stageHeight
+    || input.safeTop !== safeTop || input.edge !== edge) return false;
+  if (bucket(anchorX) !== bucket(input.anchorX)
+    || bucket(anchorY) !== bucket(input.anchorY)) return false;
+  if (last.chipWidth !== handles.chipWidth || last.chipHeight !== handles.chipHeight) return false;
+  const frozen = input.obstacles ?? [];
+  if (frozen.length !== obstacles.length) return false;
+  for (let index = 0; index < obstacles.length; index += 1) {
+    const rect = obstacles[index]; const held = frozen[index];
+    if (rect.left !== held.left || rect.top !== held.top
+      || rect.right !== held.right || rect.bottom !== held.bottom) return false;
+  }
+  const room = Math.max(CONSTELLATION_MIN_WIDTH_PX, stageWidth - edge * 2);
+  let count = 0;
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    if (!panel?.present || panel.height <= 0) continue;
+    const held = input.panels[count];
+    if (!held || held.slot !== slot || held.height !== panel.height
+      || held.width !== Math.min(panel.width, room)) return false;
+    const leader = handles.leaders[slot];
+    if (held.labelWidth !== leader.labelWidth || held.labelHeight !== leader.labelHeight) {
+      return false;
+    }
+    count += 1;
+  }
+  return count === input.panels.length;
 }
 
 function prepareRequest(
@@ -445,15 +534,13 @@ function prepareRequest(
   obstacles: readonly HudOcclusionRect[],
   obstacleVersion: number,
 ): ConstellationFrameRequest {
+  if (requestStillDescribes(
+    handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
+    obstacles, obstacleVersion,
+  )) return handles.lastRequest as ConstellationFrameRequest;
   const panels = collectPanels(handles, stageWidth, edge).map((panel) => ({ ...panel }));
-  const chipX = handles.chipWidth > 0
-    ? Math.max(edge + handles.chipWidth / 2,
-      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
-    : anchorX;
-  const chipBelow = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
-  const chipY = chipBelow + handles.chipHeight <= stageHeight - edge
-    ? chipBelow
-    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
+  const chipX = chipPoint.x; const chipY = chipPoint.y;
   const reserved: HudOcclusionRect[] = [];
   if (handles.chipWidth > 0 && handles.chipHeight > 0) {
     reserved.push({
@@ -468,18 +555,23 @@ function prepareRequest(
     stageWidth, stageHeight, safeTop, edge, panels, handles, frozenObstacles, obstacleVersion,
   );
   const connectorKey = `${bucket(anchorX)},${bucket(anchorY)}|${layoutKey}`;
-  return {
+  const request: ConstellationFrameRequest = {
     connectorKey,
     layoutKey,
     panelKey: panelSignature(panels, handles),
     chipX,
     chipY,
+    chipWidth: handles.chipWidth,
+    chipHeight: handles.chipHeight,
     input: {
       anchorX, anchorY, stageWidth, stageHeight, panels,
       obstacles: frozenObstacles, reserved, safeTop, edge,
       lock: cloneLock(handles.lock),
     },
   };
+  handles.lastRequest = request;
+  handles.lastRequestObstacleVersion = obstacleVersion;
+  return request;
 }
 
 function writeMovingMarks(
@@ -527,15 +619,8 @@ export function suspendConstellationFrame(
   stageHeight: number,
   edge: number,
 ): ConstellationPlacement | null {
-  const chipX = handles.chipWidth > 0
-    ? Math.max(edge + handles.chipWidth / 2,
-      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
-    : anchorX;
-  const chipBelow = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
-  const chipY = chipBelow + handles.chipHeight <= stageHeight - edge
-    ? chipBelow
-    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
-  writeMovingMarks(handles, anchorX, anchorY, chipX, chipY);
+  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
+  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
   if (!handles.motionSuspended) {
     cancelLayoutJob(handles);
     handles.frameKey = '';
@@ -722,13 +807,11 @@ export function commitConstellationFrame(
     handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
     obstacles, obstacleVersion,
   );
-  writeMovingMarks(
-    handles,
-    request.input.anchorX,
-    request.input.anchorY,
-    request.chipX,
-    request.chipY,
-  );
+  // The marks track the live anchor, not the request's: a reused request is
+  // one whose HALF-PIXEL bucket matched, and the reticle owes the Cell the
+  // pixel it is actually on.
+  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
+  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
   if (request.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
     return currentSpecimenPlacement(handles);
   }
@@ -779,13 +862,8 @@ export function advanceConstellationFrame(
     handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
     obstacles, obstacleVersion,
   );
-  writeMovingMarks(
-    handles,
-    desired.input.anchorX,
-    desired.input.anchorY,
-    desired.chipX,
-    desired.chipY,
-  );
+  measureChip(handles, anchorX, anchorY, stageWidth, stageHeight, edge);
+  writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
   handles.desiredRequest = desired;
   // An `unavailable` verdict is a statement about the stage, not about the
   // half pixel the anchor stands on. Hold it while the Cell drifts inside
@@ -800,6 +878,7 @@ export function advanceConstellationFrame(
     cancelLayoutJob(handles);
     handles.desiredRequest = desired;
     setConstellationVisible(handles, true);
+    observeConstellationUnavailableHold();
     return null;
   }
   if (desired.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
@@ -944,6 +1023,8 @@ export function invalidateConstellationFrame(handles: CellConstellationHandles):
   handles.provisionalBaseAnchorY = Number.NaN;
   handles.provisionalVisible = false;
   handles.presentationDirty = false;
+  handles.lastRequest = null;
+  handles.lastRequestObstacleVersion = -1;
   if (!handles.motionSuspended && handles.root) {
     delete handles.root.dataset.cellConstellationMotion;
   }

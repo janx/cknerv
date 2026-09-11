@@ -37,6 +37,80 @@ export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
 export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
 
 /**
+ * How far outside the straight line between an outlet and a plate edge the
+ * orthogonal search is allowed to look.
+ *
+ * Every point the search can reach lies inside this corridor, so an obstacle
+ * that does not touch it can neither block a leg nor contribute a coordinate,
+ * and dropping those shrinks both the grid and every clearance walk. The plan
+ * proposed twice the route clearance plus the reticle radius — 62 px — and the
+ * oracle says that is wrong for this geometry: the winning leaders of the 149
+ * clean matrix layouts step up to 617 px off the straight line to get around a
+ * plate, and a 62 px corridor moved 53 of them and left 13 with a fallback
+ * where a real route existed. 640 px is the smallest round bound above that
+ * measured worst case. It leaves a 1920 px stage almost unrestricted, which is
+ * honest: on the stages this product supports the corridor is insurance, not a
+ * saving, and it earns its cost back only where a stage is much larger than
+ * the distance a leader travels.
+ */
+export const ROUTE_SEARCH_MARGIN_PX = 640;
+
+/**
+ * The most grid points one start–end pair may examine before its route is
+ * abandoned.
+ *
+ * The orthogonal search is quadratic in the number of distinct obstacle edges
+ * inside the corridor, and a stage with five rails and four plates presents
+ * enough of them that one pair can walk thousands of points. 1,600 covers a
+ * forty-by-forty grid, which is above the largest a clean matrix layout was
+ * measured to need; past it the answer is not getting better, only later. A
+ * pair that runs out degrades, and `routeCapHits` says it happened.
+ */
+export const ROUTE_GRID_POINT_CAP = 1600;
+
+/**
+ * How many start–end pairs of one plate may enter the grid search.
+ *
+ * The fast two-leg pass has already tried all 96; the grid search only runs
+ * for a plate no straight-and-bend line reached, and it used to run for every
+ * one of the 96 again — the single dearest thing the router did. The pairs are
+ * chosen by their Manhattan lower bound, which is a strict lower bound on the
+ * length of any route between them, so the cap keeps the shortest routes that
+ * could possibly exist. 13 is where the measurement put it: across the clean
+ * matrix layouts the winning pair's rank reaches 12 at the 91st percentile
+ * (and 40 once), so a cap of 4 as the plan proposed moved 49 layouts while 13
+ * moves 7. Lower it and more plates take the fallback leader; raise it and the
+ * four-panel tail goes back over the interaction budget.
+ */
+export const ROUTE_GRID_PAIR_CAP = 13;
+
+/**
+ * How many route orders one candidate geometry may be tried in.
+ *
+ * The order plates are routed in matters because each route becomes an
+ * obstacle for the next. The preferred order is the one today's clean layouts
+ * route in; when it leaves a plate unreachable, that plate is tried first
+ * instead, which is the single change that can help it. Beyond those two the
+ * permutations are a search over 6 or 24 orders for a layout that has already
+ * said it is crowded, and the review measured it at seconds per solve.
+ */
+export const ROUTE_ORDER_CAP = 2;
+
+/**
+ * How many seat sets one squeeze/gap bucket may route.
+ *
+ * Geometry enumeration stays exhaustive, because it is what decides where the
+ * instruments stand and nothing may quietly drop a seat set; routing a
+ * candidate is far dearer than building one, so only the best twelve by score
+ * are ever routed. Twelve is what the scoring shipped with; it is named here
+ * because it is a cost gate, not a detail of the selection. It is also the
+ * bound that is NOT binding: measured over the 162 matrix layouts on
+ * 2026-09-12, enumerating and validating a four-plate stage is itself p90
+ * 8 ms and up to 35 ms, which is now the larger half of a slow solve.
+ */
+export const ROUTE_CANDIDATE_CAP = 12;
+
+/**
  * How far the Cell must travel before a stage that had no room for its
  * instruments is asked again.
  *
@@ -99,6 +173,28 @@ export interface ConstellationWorkStats {
   routeOrders: number;
   fastRouteAttempts: number;
   searchedRouteAttempts: number;
+  /** Plates that left a PUBLISHED layout carrying the fallback leader. A
+   * degraded route built during an attempt that lost is not counted: this
+   * says what the reader saw, not how hard the router worked. */
+  degradedRoutes: number;
+  /** Grid points examined by `orthogonalRouteSteps`, summed over every pair
+   * it searched. Bounded per pair by `ROUTE_GRID_POINT_CAP` and per plate by
+   * `ROUTE_GRID_PAIR_CAP`. */
+  routeGridPoints: number;
+  /** How often one of the four router caps — grid points, grid pairs, route
+   * orders, candidates — actually stopped a search that wanted to continue.
+   * Zero over a sweep means the caps are only insurance; a rising count on one
+   * stage names the geometry that needs a wider bound. */
+  routeCapHits: number;
+  /** Frames on which an `unavailable` verdict was held rather than re-derived
+   * because the Cell had not travelled `CONSTELLATION_UNAVAILABLE_RESOLVE_PX`
+   * from where the stage last said it had no room. */
+  unavailableHolds: number;
+  /** Seat changes the frame writer animated instead of writing at once. */
+  seatTweens: number;
+  /** Times the name chip moved off its preferred position to clear a held
+   * plate instead of breaking the seat lock. */
+  chipRelocations: number;
   cursorSlices: number;
   cursorMaxSliceMs: number;
   cursorPending: number;
@@ -118,6 +214,12 @@ const constellationWorkStats: ConstellationWorkStats = {
   routeOrders: 0,
   fastRouteAttempts: 0,
   searchedRouteAttempts: 0,
+  degradedRoutes: 0,
+  routeGridPoints: 0,
+  routeCapHits: 0,
+  unavailableHolds: 0,
+  seatTweens: 0,
+  chipRelocations: 0,
   cursorSlices: 0,
   cursorMaxSliceMs: 0,
   cursorPending: 0,
@@ -154,6 +256,11 @@ export function observeConstellationProvisionalFrame(): void {
   constellationWorkStats.cursorProvisionalFrames += 1;
 }
 
+/** The frame writer held an `unavailable` verdict instead of re-deriving it. */
+export function observeConstellationUnavailableHold(): void {
+  constellationWorkStats.unavailableHolds += 1;
+}
+
 export function snapshotConstellationWorkStats(): ConstellationWorkStats {
   return { ...constellationWorkStats };
 }
@@ -168,16 +275,27 @@ export interface ConstellationLock {
   quadrant: { [slot: string]: ConstellationQuadrant | undefined };
   template: ConstellationTemplate | null;
   placements: { [slot: string]: ConstellationPlacement | undefined };
+  /** The line the last full solve drew to each held plate, from the anchor it
+   * was solved at (`anchorX`/`anchorY`). The locked path carries these across
+   * the Cell's move instead of searching for them again, which is what keeps a
+   * drifting frame inside the pointer interaction — and what keeps the leader
+   * itself still, instead of finding a new path every half pixel. Points only:
+   * the label is re-placed from the route that survives. */
+  routes: { [slot: string]: readonly ConstellationPoint[] | undefined };
   geometryKey: string;
   anchorX: number;
   anchorY: number;
 }
 export function createConstellationLock(): ConstellationLock {
-  return { quadrant: {}, template: null, placements: {}, geometryKey: '', anchorX: 0, anchorY: 0 };
+  return {
+    quadrant: {}, template: null, placements: {}, routes: {},
+    geometryKey: '', anchorX: 0, anchorY: 0,
+  };
 }
 export function resetConstellationLock(lock: ConstellationLock): void {
   for (const key of Object.keys(lock.quadrant)) delete lock.quadrant[key];
   for (const key of Object.keys(lock.placements)) delete lock.placements[key];
+  for (const key of Object.keys(lock.routes)) delete lock.routes[key];
   lock.template = null;
   lock.geometryKey = '';
   lock.anchorX = 0;
@@ -593,20 +711,41 @@ interface OrthogonalGuide { xIndex: number; yIndex: number; verticalFirst: boole
 const orthogonalGuideCache = new Map<string, OrthogonalGuide>();
 
 function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoint,
-  obstacles: readonly Box[], bounds: Box,
+  allObstacles: readonly Box[], bounds: Box,
   guideKey?: string): Generator<void, ConstellationPoint[] | null> {
-  if (obstacles.some((box) => pointInside(start, box) || pointInside(end, box))) return null;
-  const fast = fastOrthogonalRoute(start, end, obstacles);
+  if (allObstacles.some((box) => pointInside(start, box) || pointInside(end, box))) return null;
+  const fast = fastOrthogonalRoute(start, end, allObstacles);
   if (fast) return fast;
-  const xs = new Set<number>([start.x, end.x, bounds.x, bounds.x + bounds.width]);
-  const ys = new Set<number>([start.y, end.y, bounds.y, bounds.y + bounds.height]);
+  // The corridor. Every point this search can reach lies inside it, so an
+  // obstacle that does not touch it can neither block a leg nor contribute a
+  // useful coordinate, and both the grid and every `segmentClear` walk shrink
+  // from stage-sized to corridor-sized.
+  const searchBox: Box = {
+    x: Math.max(bounds.x, Math.min(start.x, end.x) - ROUTE_SEARCH_MARGIN_PX),
+    y: Math.max(bounds.y, Math.min(start.y, end.y) - ROUTE_SEARCH_MARGIN_PX),
+    width: 0,
+    height: 0,
+  };
+  searchBox.width = Math.min(bounds.x + bounds.width,
+    Math.max(start.x, end.x) + ROUTE_SEARCH_MARGIN_PX) - searchBox.x;
+  searchBox.height = Math.min(bounds.y + bounds.height,
+    Math.max(start.y, end.y) + ROUTE_SEARCH_MARGIN_PX) - searchBox.y;
+  const obstacles = allObstacles.filter((box) => (
+    box.x < searchBox.x + searchBox.width + 0.5 && box.x + box.width > searchBox.x - 0.5
+    && box.y < searchBox.y + searchBox.height + 0.5 && box.y + box.height > searchBox.y - 0.5
+  ));
+  const left = searchBox.x; const right = searchBox.x + searchBox.width;
+  const top = searchBox.y; const foot = searchBox.y + searchBox.height;
+  const xs = new Set<number>([start.x, end.x, left, right]);
+  const ys = new Set<number>([start.y, end.y, top, foot]);
   obstacles.forEach((box) => {
-    xs.add(clamp(box.x, bounds.x, bounds.x + bounds.width));
-    xs.add(clamp(box.x + box.width, bounds.x, bounds.x + bounds.width));
-    ys.add(clamp(box.y, bounds.y, bounds.y + bounds.height));
-    ys.add(clamp(box.y + box.height, bounds.y, bounds.y + bounds.height));
+    xs.add(clamp(box.x, left, right));
+    xs.add(clamp(box.x + box.width, left, right));
+    ys.add(clamp(box.y, top, foot));
+    ys.add(clamp(box.y + box.height, top, foot));
   });
   const xValues = [...xs]; const yValues = [...ys];
+  let gridPoints = 0;
   let best: ConstellationPoint[] | null = null;
   let least = Number.POSITIVE_INFINITY;
   let bestOrdinal = Number.POSITIVE_INFINITY;
@@ -627,6 +766,7 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
   let directOrdinal = 0;
   let quantum = 0;
   for (const x of xValues) {
+    gridPoints += 1;
     const a = { x, y: start.y };
     if (!segmentClear(start, a, obstacles)) continue;
     consider([start, a, { x, y: end.y }, end], directOrdinal);
@@ -634,13 +774,20 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
     if ((quantum += 1) % 8 === 0) yield;
   }
   for (const y of yValues) {
+    gridPoints += 1;
     const a = { x: start.x, y };
     if (!segmentClear(start, a, obstacles)) continue;
     consider([start, a, { x: end.x, y }, end], directOrdinal);
     directOrdinal += 1;
     if ((quantum += 1) % 8 === 0) yield;
   }
+  constellationWorkStats.routeGridPoints += gridPoints;
   if (best) return best;
+  // The two-leg passes above are linear in the coordinate set and always run;
+  // the cap governs the quadratic sweep below, counting what they already
+  // spent so a corridor dense enough to exhaust it on its own searches no
+  // grid at all.
+  let capped = false;
   const clearHorizontalStarts = new Map(xValues.map((x) => {
     const first = { x, y: start.y };
     return [x, segmentClear(start, first, obstacles)] as const;
@@ -683,9 +830,13 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
   if (cachedGuide) considerGrid(
     cachedGuide.xIndex, cachedGuide.yIndex, cachedGuide.verticalFirst,
   );
+  sweep:
   for (let xIndex = 0; xIndex < xValues.length; xIndex += 1) {
     const x = xValues[xIndex];
     for (let yIndex = 0; yIndex < yValues.length; yIndex += 1) {
+    if (gridPoints >= ROUTE_GRID_POINT_CAP) { capped = true; break sweep; }
+    gridPoints += 1;
+    constellationWorkStats.routeGridPoints += 1;
     const y = yValues[yIndex];
     // Manhattan distance is a strict lower bound on routeLength. Once a
     // direct route exists, reject most x×y grid points before allocating and
@@ -699,6 +850,7 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
     if ((quantum += 1) % 8 === 0) yield;
     }
   }
+  if (capped) constellationWorkStats.routeCapHits += 1;
   if (guideKey && bestGuide) {
     if (!orthogonalGuideCache.has(guideKey) && orthogonalGuideCache.size >= 512) {
       const oldest = orthogonalGuideCache.keys().next().value as string | undefined;
@@ -826,16 +978,139 @@ function degradedRoute(input: ConstellationInput, target: Box,
   return { points: [start, end], label, degraded: true };
 }
 
+/** Where a leader may leave the reticle: eight outlets on the ring, the same
+ * eight the canonical router offers and the only ones a re-anchored route may
+ * start from. */
+function routeOutlets(anchorX: number, anchorY: number): ConstellationPoint[] {
+  const radius = CONSTELLATION_RETICLE_PX / 2 + 6;
+  const outlet = 18;
+  return [
+    { x: anchorX + radius, y: anchorY - outlet },
+    { x: anchorX + radius, y: anchorY + outlet },
+    { x: anchorX - radius, y: anchorY - outlet },
+    { x: anchorX - radius, y: anchorY + outlet },
+    { x: anchorX - outlet, y: anchorY + radius },
+    { x: anchorX + outlet, y: anchorY + radius },
+    { x: anchorX - outlet, y: anchorY - radius },
+    { x: anchorX + outlet, y: anchorY - radius },
+  ];
+}
+
+interface ReanchorContext {
+  anchorX: number; anchorY: number;
+  previousAnchorX: number; previousAnchorY: number;
+  target: Box;
+  /** Everything the route must miss, already expanded by the caller — the
+   * other plates, the chip claim, the visible rails, the labels and the routes
+   * that were drawn before this one, plus the target and the reticle at their
+   * exact bounds. */
+  obstacles: readonly Box[];
+  bounds: Box;
+}
+
+/**
+ * Carry one already-proven route across a move of the anchor.
+ *
+ * Three attempts, cheapest first, and every one of them is judged by the same
+ * `valid` predicate that the canonical router's own answers satisfy: the route
+ * leaves one of the eight outlets, lands on the target's boundary, stays
+ * inside the stage and clears every obstacle it is given. First the whole
+ * polyline is translated at its head and the leg that follows is snapped back
+ * to its axis — the ordinary one-pixel orbit frame. Then an outlet is
+ * reconnected to a later point of the proven route, which rescues a leader
+ * whose first leg alone has been blocked. Last a bounded two-leg pass over the
+ * outlets and the plate's own edge points, for a camera jump that left the old
+ * line on the wrong side entirely. Nothing here enters the orthogonal grid
+ * search, and `null` means the caller must route or degrade this plate.
+ */
+function reanchorRoutePoints(
+  old: readonly ConstellationPoint[],
+  context: ReanchorContext,
+): ConstellationPoint[] | null {
+  if (old.length < 2) return null;
+  const { target, obstacles, bounds } = context;
+  const outlets = routeOutlets(context.anchorX, context.anchorY);
+  const valid = (candidate: ConstellationPoint[]): boolean => {
+    if (candidate.length < 2 || candidate.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return false;
+    if (!outlets.some((start) => Math.hypot(
+      start.x - candidate[0].x, start.y - candidate[0].y,
+    ) < 0.1)) return false;
+    const end = candidate[candidate.length - 1];
+    const endsOnTarget = (
+      (Math.abs(end.x - target.x) < 0.1
+        || Math.abs(end.x - target.x - target.width) < 0.1)
+        && end.y >= target.y - 0.1 && end.y <= target.y + target.height + 0.1
+    ) || (
+      (Math.abs(end.y - target.y) < 0.1
+        || Math.abs(end.y - target.y - target.height) < 0.1)
+        && end.x >= target.x - 0.1 && end.x <= target.x + target.width + 0.1
+    );
+    if (!endsOnTarget) return false;
+    if (candidate.some((point) => point.x < bounds.x - 0.1 || point.y < bounds.y - 0.1
+      || point.x > bounds.x + bounds.width + 0.1
+      || point.y > bounds.y + bounds.height + 0.1)) return false;
+    for (let index = 1; index < candidate.length; index += 1) {
+      if (!segmentClear(candidate[index - 1], candidate[index], obstacles)) return false;
+    }
+    return true;
+  };
+  let translated = old.map((point) => ({ ...point }));
+  translated[0].x += context.anchorX - context.previousAnchorX;
+  translated[0].y += context.anchorY - context.previousAnchorY;
+  if (Math.abs(old[0].x - old[1].x) < 0.01) translated[1].x = translated[0].x;
+  else translated[1].y = translated[0].y;
+  translated = simplify(translated);
+  if (valid(translated)) return translated;
+  for (const start of outlets) {
+    for (let join = 1; join < old.length; join += 1) {
+      const prefix = fastOrthogonalRoute(start, old[join], obstacles);
+      if (!prefix) continue;
+      const candidate = simplify([
+        ...prefix.slice(0, -1),
+        ...old.slice(join).map((point) => ({ ...point })),
+      ]);
+      if (valid(candidate)) return candidate;
+    }
+  }
+  const endpoints = routeEndpoints(target, context.anchorX, context.anchorY);
+  for (const start of outlets) {
+    for (const endpoint of endpoints) {
+      const candidate = fastOrthogonalRoute(start, endpoint, obstacles);
+      if (candidate && valid(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
 interface RoutedOrder {
   masks: HudOcclusionRect[];
   /** How many plates in this attempt got the fallback leader. */
   degraded: number;
+  /** Index into `placements` of the first plate this attempt could not reach,
+   * in the order it walked them. It is the one plate a second order can help,
+   * by putting it first while the stage is still empty of routes. */
+  firstDegradedIndex: number | null;
   routes: Array<ConstellationRoute | undefined>;
+}
+
+interface RouteMode {
+  /** Held routes from the last published layout, by slot, with the anchor
+   * they were solved for. A plate whose held route still reaches it after the
+   * anchor moved keeps that route and costs almost nothing. */
+  held?: {
+    routes: { [slot: string]: readonly ConstellationPoint[] | undefined };
+    anchorX: number;
+    anchorY: number;
+  };
+  /** Stay out of the orthogonal grid search: try the fast two-leg pass and
+   * then degrade. The locked path runs inside a pointer interaction and has a
+   * held picture to fall back on; it may not spend a search there. */
+  fastOnly?: boolean;
 }
 
 function* addRoutesInOrderSteps(input: ConstellationInput,
   placements: ConstellationPlacement[],
-  order: readonly number[]): Generator<void, RoutedOrder> {
+  order: readonly number[], mode: RouteMode = {}): Generator<void, RoutedOrder> {
   const panelBoxes = placements.map(boxOf);
   const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
   const reserved = (input.reserved ?? []).map(rectBox);
@@ -856,6 +1131,7 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
   const priorRoutes: ConstellationPoint[][] = [];
   const usedOutlets = new Set<string>();
   let degraded = 0;
+  let firstDegradedIndex: number | null = null;
   for (const placementIndex of order) {
     const placement = placements[placementIndex];
     const panel = input.panels.find((candidate) => candidate.slot === placement.slot);
@@ -876,21 +1152,10 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
     // edge but may never enter the body and emerge at another edge.
     obstacles.push(target);
     obstacles.push(reticle);
-    const radius = CONSTELLATION_RETICLE_PX / 2 + 6;
-    const outlet = 18;
-    const starts: ConstellationPoint[] = [
-      { x: input.anchorX + radius, y: input.anchorY - outlet },
-      { x: input.anchorX + radius, y: input.anchorY + outlet },
-      { x: input.anchorX - radius, y: input.anchorY - outlet },
-      { x: input.anchorX - radius, y: input.anchorY + outlet },
-      { x: input.anchorX - outlet, y: input.anchorY + radius },
-      { x: input.anchorX + outlet, y: input.anchorY + radius },
-      { x: input.anchorX - outlet, y: input.anchorY - radius },
-      { x: input.anchorX + outlet, y: input.anchorY - radius },
-    ].filter((point) => !usedOutlets.has(`${point.x},${point.y}`))
+    const starts: ConstellationPoint[] = routeOutlets(input.anchorX, input.anchorY)
+      .filter((point) => !usedOutlets.has(`${point.x},${point.y}`))
       .sort((a, b) => Math.hypot(a.x - (target.x + target.width / 2), a.y - (target.y + target.height / 2))
         - Math.hypot(b.x - (target.x + target.width / 2), b.y - (target.y + target.height / 2)));
-    const endpoints = routeEndpoints(target, input.anchorX, input.anchorY);
     let best: ConstellationPoint[] | null = null;
     let bestLength = Number.POSITIVE_INFINITY;
     let bestOrdinal = Number.POSITIVE_INFINITY;
@@ -899,24 +1164,51 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
         CONSTELLATION_RETICLE_PX / 2);
       return outside.some((segment) => priorRouteSegments.some((other) => segmentsTouch(segment, other)));
     };
+    // A route the last published layout already proved, carried across the
+    // anchor's move. Every current obstacle still judges it; what the reuse
+    // saves is the search that would find the same line again, and what it
+    // buys the reader is a leader that does not twitch to a new path each
+    // time the galaxy turns half a pixel.
+    const heldPoints = mode.held?.routes[placement.slot];
+    if (heldPoints !== undefined && heldPoints.length >= 2) {
+      const reanchored = reanchorRoutePoints(heldPoints, {
+        anchorX: input.anchorX,
+        anchorY: input.anchorY,
+        previousAnchorX: mode.held?.anchorX ?? input.anchorX,
+        previousAnchorY: mode.held?.anchorY ?? input.anchorY,
+        target,
+        obstacles,
+        bounds,
+      });
+      if (reanchored && !crossesPrior(reanchored)) best = reanchored;
+    }
+    const endpoints = best ? [] : routeEndpoints(target, input.anchorX, input.anchorY);
     const pairs: Array<{
       start: ConstellationPoint;
       end: ConstellationPoint;
+      startIndex: number;
+      endIndex: number;
       lowerBound: number;
       ordinal: number;
     }> = [];
     let ordinal = 0;
-    for (const start of starts) for (const end of endpoints) {
+    for (let startIndex = 0; startIndex < starts.length; startIndex += 1) {
+      const start = starts[startIndex];
+      for (let endIndex = 0; endIndex < endpoints.length; endIndex += 1) {
+      const end = endpoints[endIndex];
       const aligned = Math.abs(start.x - end.x) < 0.01
         || Math.abs(start.y - end.y) < 0.01;
       pairs.push({
         start,
         end,
+        startIndex,
+        endIndex,
         lowerBound: Math.abs(start.x - end.x) + Math.abs(start.y - end.y)
           + (aligned ? 0 : 18),
         ordinal,
       });
       ordinal += 1;
+      }
     }
     pairs.sort((a, b) => a.lowerBound - b.lowerBound || a.ordinal - b.ordinal);
     let fastQuantum = 0;
@@ -934,26 +1226,31 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
       }
       if ((fastQuantum += 1) % 8 === 0) yield;
     }
-    if (!best) {
-      routeSearch:
-      for (let startIndex = 0; startIndex < starts.length; startIndex += 1) {
-        const start = starts[startIndex];
-        for (let endIndex = 0; endIndex < endpoints.length; endIndex += 1) {
-        const end = endpoints[endIndex];
+    if (!best && !mode.fastOnly) {
+      // The fast pass has already tried every pair and found no two-leg line.
+      // Only the shortest few are worth threading a bend through, so the cap
+      // takes them by their Manhattan lower bound — then walks them in the
+      // router's own start-then-endpoint order, so a plate whose winning pair
+      // the cap did not cut is routed exactly as it was before the cap existed.
+      const searchable = pairs.slice(0, ROUTE_GRID_PAIR_CAP)
+        .sort((a, b) => a.ordinal - b.ordinal);
+      for (let index = 0; index < searchable.length; index += 1) {
+        const pair = searchable[index];
         constellationWorkStats.searchedRouteAttempts += 1;
         const route = yield* orthogonalRouteSteps(
-          start, end, obstacles, bounds,
-          `${placement.slot}:${startIndex}:${endIndex}:${obstacles.length}`,
+          pair.start, pair.end, obstacles, bounds,
+          `${placement.slot}:${pair.startIndex}:${pair.endIndex}:${obstacles.length}`,
         );
-        if (route && !crossesPrior(route)) { best = route; break routeSearch; }
-        }
+        if (route && !crossesPrior(route)) { best = route; break; }
       }
+      if (!best && pairs.length > searchable.length) constellationWorkStats.routeCapHits += 1;
     }
     if (!best) {
       placement.route = degradedRoute(
         input, target, panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
       );
       degraded += 1;
+      if (firstDegradedIndex === null) firstDegradedIndex = placementIndex;
       yield;
       continue;
     }
@@ -974,66 +1271,75 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
     priorRoutes.push(best);
     yield;
   }
-  return { masks, degraded, routes: placements.map((panel) => panel.route) };
+  return {
+    masks, degraded, firstDegradedIndex, routes: placements.map((panel) => panel.route),
+  };
 }
 
-const routeOrderCache: Array<readonly (readonly number[])[] | undefined> = [];
+const routeOrderCache: Array<readonly number[] | undefined> = [];
 
-function routeOrders(count: number): readonly (readonly number[])[] {
+/**
+ * The order plates are routed in when nothing has failed yet.
+ *
+ * Each route becomes an obstacle for the ones after it, so the order is a real
+ * choice and the router used to search all of them — 6 permutations at three
+ * plates, 24 at four, each one a full routing pass. These two are the heads of
+ * the preference lists that search shipped with, and they are what today's
+ * clean layouts route in: the register first, then the reader, then the trace,
+ * then the specimen, so the instruments that carry the longest lines claim
+ * their channel while the stage is still empty.
+ */
+function preferredRouteOrder(count: number): readonly number[] {
   const cached = routeOrderCache[count];
   if (cached) return cached;
-  const canonical = Array.from({ length: count }, (_value, index) => index);
-  const result: number[][] = [];
-  const visit = (prefix: number[], remaining: number[]) => {
-    if (remaining.length === 0) { result.push(prefix); return; }
-    for (let index = 0; index < remaining.length; index += 1) {
-      visit([...prefix, remaining[index]], [
-        ...remaining.slice(0, index), ...remaining.slice(index + 1),
-      ]);
-    }
-  };
-  visit([], canonical);
-  if (count === 3) {
-    const preferred = [[0, 2, 1], [0, 1, 2], [1, 2, 0], [2, 0, 1]];
-    const preferredKeys = new Set(preferred.map((order) => order.join(',')));
-    const ordered = [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
-    routeOrderCache[count] = ordered;
-    return ordered;
-  }
-  if (count !== 4) {
-    routeOrderCache[count] = result;
-    return result;
-  }
-  const preferred = [
-    [0, 2, 3, 1], [0, 2, 1, 3], [0, 1, 3, 2], [0, 1, 2, 3],
-    [0, 3, 1, 2], [0, 3, 2, 1], [1, 0, 3, 2], [1, 2, 3, 0],
-    [2, 0, 3, 1], [2, 3, 0, 1], [2, 3, 1, 0], [3, 0, 1, 2], [3, 0, 2, 1],
-  ];
-  const preferredKeys = new Set(preferred.map((order) => order.join(',')));
-  const ordered = [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
-  routeOrderCache[count] = ordered;
-  return ordered;
+  const order = count === 3 ? [0, 2, 1]
+    : count === 4 ? [0, 2, 3, 1]
+      : Array.from({ length: count }, (_value, index) => index);
+  routeOrderCache[count] = order;
+  return order;
 }
 
-/** Every plate leaves here with a route. The first order that reaches all of
- * them cleanly wins, exactly as before; if none does, the order that needed
- * the fewest fallbacks wins, and its routes are written back. */
+/** The one order a failure earns: the plate that could not be reached goes
+ * first, where nothing else has claimed a channel yet, and the rest keep their
+ * relative places. `null` when it is already first and there is nothing to
+ * change. */
+function retryRouteOrder(
+  order: readonly number[], firstDegradedIndex: number,
+): readonly number[] | null {
+  if (order.length === 0 || order[0] === firstDegradedIndex) return null;
+  return [firstDegradedIndex, ...order.filter((index) => index !== firstDegradedIndex)];
+}
+
+/** Every plate leaves here with a route. The preferred order wins outright if
+ * it reaches all of them cleanly; otherwise the plate it could not reach is
+ * tried first, and the better of the two attempts is written back —
+ * `ROUTE_ORDER_CAP` attempts in total, where a permutation search used to
+ * cost 6 or 24. */
 function* addRoutesSteps(input: ConstellationInput,
-  placements: ConstellationPlacement[]): Generator<void, RoutedOrder> {
-  let best: RoutedOrder | null = null;
-  for (const order of routeOrders(placements.length)) {
-    constellationWorkStats.routeOrders += 1;
-    for (const panel of placements) panel.route = undefined;
-    const attempt = yield* addRoutesInOrderSteps(input, placements, order);
-    if (attempt.degraded === 0) return attempt;
-    if (!best || attempt.degraded < best.degraded) best = attempt;
-    // A route order is the smallest useful canonical unit: its later panels
-    // depend on the exact paths chosen for its earlier panels. Yield between
-    // orders so the Canvas path can budget the search without changing that
-    // dependency or the winning order.
-    yield;
+  placements: ConstellationPlacement[], mode: RouteMode = {}): Generator<void, RoutedOrder> {
+  const first = preferredRouteOrder(placements.length);
+  constellationWorkStats.routeOrders += 1;
+  for (const panel of placements) panel.route = undefined;
+  const attempt = yield* addRoutesInOrderSteps(input, placements, first, mode);
+  if (attempt.degraded === 0) return attempt;
+  const retry = attempt.firstDegradedIndex === null || mode.fastOnly
+    ? null
+    : retryRouteOrder(first, attempt.firstDegradedIndex);
+  if (!retry) {
+    // Nothing else this rule can try, where the permutation search still had
+    // 5 or 23 orders left to walk.
+    constellationWorkStats.routeCapHits += 1;
+    return attempt;
   }
-  const winner = best ?? { masks: [], degraded: 0, routes: [] };
+  constellationWorkStats.routeOrders += 1;
+  // A route order is the smallest useful canonical unit: its later plates
+  // depend on the exact paths chosen for its earlier ones. Yield between the
+  // two so the Canvas path can budget the search without changing either.
+  yield;
+  for (const panel of placements) panel.route = undefined;
+  const second = yield* addRoutesInOrderSteps(input, placements, retry, mode);
+  const winner = second.degraded < attempt.degraded ? second : attempt;
+  if (winner.degraded > 0) constellationWorkStats.routeCapHits += 1;
   for (let index = 0; index < placements.length; index += 1) {
     placements[index].route = winner.routes[index];
   }
@@ -1088,8 +1394,6 @@ export function revalidateConstellationLayoutForAnchor(
       || prior.height > panel.height + 0.1) return null;
   }
   if (!hardValid(input, layout.placements, CONSTELLATION_MIN_GAP_PX)) return null;
-  const dx = input.anchorX - previousAnchorX;
-  const dy = input.anchorY - previousAnchorY;
   const panelBoxes = layout.placements.map(boxOf);
   const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
   const reserved = (input.reserved ?? []).map(rectBox);
@@ -1127,26 +1431,7 @@ export function revalidateConstellationLayoutForAnchor(
       outsideRoutes.push([]);
       continue;
     }
-    let translatedPoints = old.map((point) => ({ ...point }));
-    translatedPoints[0].x += dx;
-    translatedPoints[0].y += dy;
-    const firstWasVertical = Math.abs(old[0].x - old[1].x) < 0.01;
-    if (firstWasVertical) translatedPoints[1].x = translatedPoints[0].x;
-    else translatedPoints[1].y = translatedPoints[0].y;
-    translatedPoints = simplify(translatedPoints);
     const target = panelBoxes[placementIndex];
-    const radius = CONSTELLATION_RETICLE_PX / 2 + 6;
-    const outlet = 18;
-    const validStarts = [
-      { x: input.anchorX + radius, y: input.anchorY - outlet },
-      { x: input.anchorX + radius, y: input.anchorY + outlet },
-      { x: input.anchorX - radius, y: input.anchorY - outlet },
-      { x: input.anchorX - radius, y: input.anchorY + outlet },
-      { x: input.anchorX - outlet, y: input.anchorY + radius },
-      { x: input.anchorX + outlet, y: input.anchorY + radius },
-      { x: input.anchorX - outlet, y: input.anchorY - radius },
-      { x: input.anchorX + outlet, y: input.anchorY - radius },
-    ];
     const obstacles = [
       ...panelBoxes.filter((_box, index) => index !== placementIndex),
       ...reserved,
@@ -1161,66 +1446,15 @@ export function revalidateConstellationLayoutForAnchor(
       width: Math.abs(a.x - b.x) + 24,
       height: Math.abs(a.y - b.y) + 24,
     }))));
-    const candidateValid = (candidate: ConstellationPoint[]) => {
-      if (candidate.length < 2 || candidate.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return false;
-      if (!validStarts.some((start) => Math.hypot(
-        start.x - candidate[0].x, start.y - candidate[0].y,
-      ) < 0.1)) return false;
-      const candidateEnd = candidate[candidate.length - 1];
-      const endsOnTarget = (
-        (Math.abs(candidateEnd.x - target.x) < 0.1
-          || Math.abs(candidateEnd.x - target.x - target.width) < 0.1)
-          && candidateEnd.y >= target.y - 0.1
-          && candidateEnd.y <= target.y + target.height + 0.1
-      ) || (
-        (Math.abs(candidateEnd.y - target.y) < 0.1
-          || Math.abs(candidateEnd.y - target.y - target.height) < 0.1)
-          && candidateEnd.x >= target.x - 0.1
-          && candidateEnd.x <= target.x + target.width + 0.1
-      );
-      if (!endsOnTarget) return false;
-      if (candidate.some((point) => point.x < bounds.x - 0.1 || point.y < bounds.y - 0.1
-        || point.x > bounds.x + bounds.width + 0.1
-        || point.y > bounds.y + bounds.height + 0.1)) return false;
-      for (let pointIndex = 1; pointIndex < candidate.length; pointIndex += 1) {
-        if (!segmentClear(candidate[pointIndex - 1], candidate[pointIndex], obstacles)) return false;
-      }
-      return true;
-    };
-    let points = candidateValid(translatedPoints) ? translatedPoints : null;
-    // If translating only the moving leg is obstructed, reconnect one of the
-    // eight current outlets to a later point on the already proven route. The
-    // fast two-bend router is bounded by this tiny set; this is still a
-    // provisional answer and never changes the canonical winning route.
-    for (const start of validStarts) {
-      for (let join = 1; points === null && join < old.length; join += 1) {
-        const prefix = fastOrthogonalRoute(start, old[join], obstacles);
-        if (!prefix) continue;
-        const candidate = simplify([
-          ...prefix.slice(0, -1),
-          ...old.slice(join).map((point) => ({ ...point })),
-        ]);
-        if (candidateValid(candidate)) points = candidate;
-      }
-      if (points) break;
-    }
-
-    // The old polyline can be entirely on the wrong side after a discontinuous
-    // camera jump. A final bounded fast pass tries the canonical outlet and
-    // panel-edge sets without entering the exhaustive orthogonal grid search.
-    if (points === null) {
-      const endpoints = routeEndpoints(target, input.anchorX, input.anchorY);
-      fastSearch:
-      for (const start of validStarts) {
-        for (const endpoint of endpoints) {
-          const candidate = fastOrthogonalRoute(start, endpoint, obstacles);
-          if (candidate && candidateValid(candidate)) {
-            points = candidate;
-            break fastSearch;
-          }
-        }
-      }
-    }
+    const points = reanchorRoutePoints(old, {
+      anchorX: input.anchorX,
+      anchorY: input.anchorY,
+      previousAnchorX,
+      previousAnchorY,
+      target,
+      obstacles,
+      bounds,
+    });
     if (!points) return null;
     const outside = routeOutsideReticle(
       points, input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2,
@@ -1291,15 +1525,18 @@ function scoreCandidate(input: ConstellationInput, candidate: Candidate): number
   return score + preference[candidate.template] * 0.01;
 }
 
-/** Stable top-12 selection equivalent to `filter().sort(score).slice(0, 12)`.
- * Scoring each candidate once avoids thousands of repeated score/map walks on
- * a cold four-panel solve while retaining generation order as the tie-break. */
+/** Stable top-`ROUTE_CANDIDATE_CAP` selection, equivalent to
+ * `filter().sort(score).slice(0, cap)`. Scoring each candidate once avoids
+ * thousands of repeated score/map walks on a cold four-panel solve while
+ * retaining generation order as the tie-break. Geometry enumeration stays
+ * exhaustive; this is the gate on how many seat sets are ever ROUTED. */
 function bestCandidates(
   input: ConstellationInput,
   candidates: readonly Candidate[],
   gap: number,
 ): Candidate[] {
   const best: Array<{ candidate: Candidate; score: number; ordinal: number }> = [];
+  let dropped = false;
   for (let ordinal = 0; ordinal < candidates.length; ordinal += 1) {
     const candidate = candidates[ordinal];
     constellationWorkStats.candidatesValidated += 1;
@@ -1312,10 +1549,11 @@ function bestCandidates(
         || (prior.score === entry.score && prior.ordinal < entry.ordinal)) break;
       at -= 1;
     }
-    if (at >= 12) continue;
+    if (at >= ROUTE_CANDIDATE_CAP) { dropped = true; continue; }
     best.splice(at, 0, entry);
-    if (best.length > 12) best.pop();
+    if (best.length > ROUTE_CANDIDATE_CAP) { best.pop(); dropped = true; }
   }
+  if (dropped) constellationWorkStats.routeCapHits += 1;
   return best.map(({ candidate }) => candidate);
 }
 function geometryKey(input: ConstellationInput, panels: readonly ConstellationPanel[]): string {
@@ -1352,8 +1590,19 @@ function* lockedLayoutSteps(
         return next;
       });
       if (hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) {
-        const routed = withRoutes ? yield* addRoutesSteps(input, placements) : null;
+        // Route reuse and the fast two-leg pass, and nothing else. This runs
+        // inside a pointer interaction on a Cell the reader is already looking
+        // at: a plate whose held line no longer reaches it takes the fallback
+        // leader for this frame rather than spending a grid search, and the
+        // canonical solve behind it will hand back the real route.
+        const routed = withRoutes
+          ? yield* addRoutesSteps(input, placements, {
+            fastOnly: true,
+            held: { routes: lock.routes, anchorX: lock.anchorX, anchorY: lock.anchorY },
+          })
+          : null;
         constellationWorkStats.lockedReuses += 1;
+        constellationWorkStats.degradedRoutes += routed?.degraded ?? 0;
         return {
           status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
           template: lock.template,
@@ -1462,13 +1711,20 @@ function* solveLayoutSteps(
     template: best.template, placements: best.placements, masks: bestMasks,
     leaders: bestDegraded > 0 ? 'degraded' : 'clean',
   };
+  constellationWorkStats.degradedRoutes += bestDegraded;
   if (input.lock) {
     input.lock.template = best.template; input.lock.geometryKey = key;
     input.lock.anchorX = input.anchorX; input.lock.anchorY = input.anchorY;
     for (const slot of Object.keys(input.lock.placements)) delete input.lock.placements[slot];
+    for (const slot of Object.keys(input.lock.routes)) delete input.lock.routes[slot];
     for (const panel of best.placements) {
       input.lock.placements[panel.slot] = { ...panel, route: undefined };
       input.lock.quadrant[panel.slot] = panel.quadrant;
+      // A fallback leader is not a route the locked path may carry: it is a
+      // pure function of the anchor and the plate and is rebuilt, not reused.
+      if (panel.route && !panel.route.degraded) {
+        input.lock.routes[panel.slot] = panel.route.points;
+      }
     }
   }
   return result;
