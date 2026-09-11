@@ -22,6 +22,7 @@ import {
   resetConstellationWorkStats,
   snapshotConstellationWorkStats,
 } from '../../../src/derives/cellConstellation.derive';
+import { RAILS_1920 } from '../../fixtures/cellConstellationMatrix';
 
 afterEach(cleanup);
 
@@ -486,17 +487,32 @@ describe('the frame writer', () => {
     expect(handles.leaders.analysis.over?.style.visibility).toBe('hidden');
   });
 
-  it('returns no specimen while changed geometry keeps the old root hidden', () => {
-    const { handles } = wired();
+  it('keeps the root visible and every host seated while a height change re-solves', () => {
+    // Until 2026-09-11 this hid the WHOLE root — reticle, chip, plates and the
+    // portrait — from the frame a panel's content changed height until the full
+    // re-solve landed, which on a four-panel stage was hundreds of frames. A
+    // measurement arriving is not a reason to withdraw the reading.
+    const { handles, hosts } = wired();
     expect(commit(handles)).not.toBeNull();
+    const seats = {
+      analysis: hosts.analysis.style.transform,
+      specimen: hosts.specimen.style.transform,
+    };
     handles.panels.analysis.height += 40;
     let tick = 0;
     const now = () => { tick += 2; return tick; };
     const specimen = advanceConstellationFrame(
       handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, [], 1, 1, now,
     );
-    expect(handles.root?.style.opacity).toBe('0');
-    expect(specimen).toBeNull();
+    expect(handles.root?.style.opacity).toBe('1');
+    expect(hosts.analysis.style.transform).toBe(seats.analysis);
+    expect(hosts.specimen.style.transform).toBe(seats.specimen);
+    expect(hosts.analysis.style.visibility).toBe('visible');
+    expect(hosts.specimen.style.visibility).toBe('visible');
+    expect(specimen?.slot).toBe('specimen');
+    // The seats are still honest; the leaders belong to the old anchor and are
+    // the one thing that may not be shown.
+    expect(handles.leaders.analysis.over?.style.visibility).toBe('hidden');
   });
 
   it('keeps a geometry-validated presentation visible while a larger viewport resolves', () => {
@@ -549,10 +565,11 @@ describe('the frame writer', () => {
     expect(handles.leaders.analysis.over?.getAttribute('d')).toBe(canonicalRoute);
   });
 
-  it('hides the whole old plate when an anchor enters its panel geometry', () => {
-    const { handles } = wired();
+  it('hides only the plate an anchor has walked into, and keeps the rest seated', () => {
+    const { handles, hosts } = wired();
     expect(commit(handles)).not.toBeNull();
     const analysis = handles.lastLayout!.placements.find((panel) => panel.slot === 'analysis')!;
+    const specimenSeat = hosts.specimen.style.transform;
     let tick = 0;
     const now = () => { tick += 0.25; return tick; };
     const specimen = advanceConstellationFrame(
@@ -561,8 +578,14 @@ describe('the frame writer', () => {
       analysis.y + analysis.height / 2,
       1920, 1080, SAFE_TOP, EDGE, [], 0, 1, now,
     );
-    expect(handles.root?.style.opacity).toBe('0');
-    expect(specimen).toBeNull();
+    // The Cell is now standing inside the register's seat, so that ONE plate is
+    // withdrawn. The reticle, the chip and every other instrument stay: the
+    // reader's answer has not stopped being true because the camera moved.
+    expect(handles.root?.style.opacity).toBe('1');
+    expect(hosts.analysis.style.visibility).toBe('hidden');
+    expect(hosts.specimen.style.visibility).toBe('visible');
+    expect(hosts.specimen.style.transform).toBe(specimenSeat);
+    expect(specimen?.slot).toBe('specimen');
   });
 
   it('invalidates after an in-place HUD rectangle mutation', () => {
@@ -609,6 +632,94 @@ describe('the frame writer', () => {
       .toBeLessThanOrEqual(688 - 104 - 14);
     expect(hosts.analysis.dataset.cellPanelCapped).toBe('true');
     expect(hosts.specimen.dataset.cellPanelCapped).toBe('false');
+  });
+});
+
+describe('how long a selection waits for its instruments (F3)', () => {
+  // RED until P2 — the bounded router and its caps.
+  it.fails('paints four instruments within three frames on a real clock', () => {
+    // Measured 2026-09-11: a cold four-panel solve costs p99 1,081 ms and up to
+    // 3,874 ms, and the writer spends it 1.6 ms at a time. The reader watches
+    // an empty stage for hundreds of frames after opening MEMORY TRACE.
+    const handles = createCellConstellationHandles();
+    for (const [slot, height] of [
+      ['analysis', 717], ['specimen', 314], ['reader', 340], ['trace', 420],
+    ] as const) {
+      handles.panels[slot].host = document.createElement('div');
+      handles.panels[slot].present = true;
+      handles.panels[slot].height = height;
+    }
+    handles.root = document.createElement('div');
+    handles.reticle = document.createElement('div');
+    handles.chip = document.createElement('div');
+    for (let frame = 1; frame <= 3; frame += 1) {
+      advanceConstellationFrame(
+        handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+      );
+    }
+    expect(handles.lastLayout?.placements).toHaveLength(4);
+  });
+});
+
+describe('a stage with no legal seat is quiet (F2)', () => {
+  function tiny() {
+    const handles = createCellConstellationHandles();
+    for (const [slot, height] of [
+      ['analysis', 620], ['specimen', 308], ['reader', 340],
+    ] as const) {
+      handles.panels[slot].host = document.createElement('div');
+      handles.panels[slot].present = true;
+      handles.panels[slot].height = height;
+    }
+    handles.root = document.createElement('div');
+    handles.reticle = document.createElement('div');
+    handles.chip = document.createElement('div');
+    return handles;
+  }
+
+  it('lands once, holds, and never blinks the root', () => {
+    // Measured 2026-09-11 on 640 × 480 over 240 frames: 80 full solves, 80
+    // landings and 159 root opacity flips at a STANDING anchor. The verdict was
+    // reached and then thrown away every frame, because an `unavailable`
+    // landing leaves no positioned host and the writer read that as "not
+    // published yet". A stage with no room says so once.
+    const handles = tiny();
+    resetConstellationWorkStats();
+    let tick = 0;
+    const now = () => { tick += 0.4; return tick; };
+    const opacities: string[] = [];
+    let flips = 0;
+    for (let frame = 1; frame <= 240; frame += 1) {
+      advanceConstellationFrame(handles, 320, 240, 640, 480, SAFE_TOP, EDGE, [], 0, frame, now);
+      const opacity = handles.root!.style.opacity;
+      if (opacities.length && opacities[opacities.length - 1] !== opacity) flips += 1;
+      opacities.push(opacity);
+    }
+    const stats = snapshotConstellationWorkStats();
+    expect(handles.root?.dataset.cellConstellationStatus).toBe('unavailable');
+    expect(handles.lastLayout?.placements).toHaveLength(0);
+    // At most one full solve per sixty frames.
+    expect(stats.fullSolves).toBeLessThanOrEqual(4);
+    expect(flips).toBe(0);
+    expect(handles.root?.style.opacity).toBe('1');
+    // …and the two marks that say WHICH Cell this is keep tracking it.
+    expect(handles.reticle?.style.transform).toBe('translate3d(274px, 194px, 0)');
+    expect(handles.chip?.style.transform).toBe('translate3d(320px, 298px, 0) translateX(-50%)');
+  });
+
+  it('re-solves once the cell has genuinely moved on', () => {
+    const handles = tiny();
+    let tick = 0;
+    const now = () => { tick += 0.4; return tick; };
+    for (let frame = 1; frame <= 120; frame += 1) {
+      advanceConstellationFrame(handles, 320, 240, 640, 480, SAFE_TOP, EDGE, [], 0, frame, now);
+    }
+    resetConstellationWorkStats();
+    for (let frame = 121; frame <= 240; frame += 1) {
+      advanceConstellationFrame(handles, 420, 240, 640, 480, SAFE_TOP, EDGE, [], 0, frame, now);
+    }
+    expect(snapshotConstellationWorkStats().fullSolves).toBeGreaterThanOrEqual(1);
+    expect(handles.reticle?.style.transform).toBe('translate3d(374px, 194px, 0)');
   });
 });
 

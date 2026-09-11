@@ -13,9 +13,18 @@ import {
   createConstellationLock,
   revalidateConstellationLayoutForAnchor,
   resetConstellationLock,
+  type ConstellationLayout,
   type ConstellationPanel,
   type ConstellationPlacement,
 } from '../../src/derives/cellConstellation.derive';
+import {
+  CONSTELLATION_PANELS,
+  RAILS_1180,
+  RAILS_1920,
+  constellationChipReserved,
+  constellationMatrixCases,
+  constellationMatrixInput,
+} from '../fixtures/cellConstellationMatrix';
 
 const SAFE_TOP = 104;
 const EDGE = 14;
@@ -28,22 +37,13 @@ const THREE: ConstellationPanel[] = [
 ];
 const TWO: ConstellationPanel[] = THREE.filter((p) => p.slot !== 'reader');
 
-/** The rails at 1920, from the live capture (`f-1920-bare.json`). */
-const RAILS_1920: HudOcclusionRect[] = [
-  { left: 14, top: 48, right: 384, bottom: 510.8 },
-  { left: 14, top: 723.5, right: 384, bottom: 934.5 },
-  { left: 14, top: 946.5, right: 384, bottom: 1066 },
-  { left: 1574, top: 48, right: 1906, bottom: 310.8 },
-  { left: 1574, top: 322.8, right: 1906, bottom: 522.8 },
-];
-
 function place(
   panels: ConstellationPanel[],
   anchorX: number,
   anchorY: number,
   stageWidth: number,
   stageHeight: number,
-  obstacles: HudOcclusionRect[] = [],
+  obstacles: readonly HudOcclusionRect[] = [],
   lock?: ReturnType<typeof createConstellationLock>,
 ): ConstellationPlacement[] {
   return constellationPlacement({
@@ -593,5 +593,243 @@ describe('whole-group routing', () => {
       ...movedInput,
       obstacles: [{ left: blockX - 3, top: blockY - 3, right: blockX + 3, bottom: blockY + 3 }],
     }, base, 502, 485)).toBeNull();
+  });
+});
+
+// ——— the 2026-09-11 repair: what each finding looks like as an assertion ————
+
+const THREE_MEASURED = CONSTELLATION_PANELS.slice(0, 3) as ConstellationPanel[];
+
+/** Every matrix geometry solved once: the routed answer and the geometry-only
+ * answer for the same input. Two suites below read it, and a cold four-panel
+ * solve is expensive enough that solving it twice would dominate them. */
+let matrixAnswers: Array<{
+  key: string;
+  input: ReturnType<typeof constellationMatrixInput>;
+  routed: ConstellationLayout;
+  geometry: ConstellationPlacement[];
+}> | null = null;
+function matrixMatrix() {
+  if (matrixAnswers) return matrixAnswers;
+  matrixAnswers = constellationMatrixCases().map((matrixCase) => {
+    const input = constellationMatrixInput(matrixCase);
+    return {
+      key: matrixCase.key,
+      input,
+      routed: constellationLayout(input),
+      geometry: constellationPlacement(input),
+    };
+  });
+  return matrixAnswers;
+}
+
+describe('a leader that cannot be drawn cleanly never vetoes a seat (F1)', () => {
+  // Measured 2026-09-11: at each of these anchors the reticle stands over a HUD
+  // rail, all eight route outlets start inside the rail obstacle, every route
+  // fails, and the whole layout comes back `unavailable` — while geometry alone
+  // finds three seats on the same input. The rail is standing on the Cell; the
+  // Cell is not standing on the rail, and a rail is not a reason to withdraw
+  // the instruments.
+  const UNDER_RAIL: Array<[number, number, number, number, readonly HudOcclusionRect[]]> = [
+    [200, 250, 1920, 1080, RAILS_1920],
+    [1700, 200, 1920, 1080, RAILS_1920],
+    [300, 800, 1920, 1080, RAILS_1920],
+    [1000, 200, 1180, 663, RAILS_1180],
+  ];
+
+  it.each(UNDER_RAIL)('seats three instruments for a cell under a rail at %i,%i',
+    (anchorX, anchorY, stageWidth, stageHeight, rails) => {
+      const input = {
+        panels: THREE_MEASURED,
+        anchorX,
+        anchorY,
+        stageWidth,
+        stageHeight,
+        obstacles: rails,
+        reserved: constellationChipReserved(anchorX, anchorY, stageWidth),
+        safeTop: SAFE_TOP,
+        edge: EDGE,
+      };
+      const geometry = constellationPlacement(input);
+      expect(geometry).toHaveLength(3);
+
+      const layout = constellationLayout(input);
+      expect(layout.status).not.toBe('unavailable');
+      expect(layout.placements).toHaveLength(3);
+      // Clean or degraded, every instrument is connected to its Cell.
+      for (const panel of layout.placements) {
+        expect(panel.route, `${panel.slot} has no leader`).toBeDefined();
+        expect(panel.route!.points.length).toBeGreaterThanOrEqual(2);
+      }
+    });
+});
+
+describe('routing failure never takes height from an instrument (F6)', () => {
+  it('answers every matrix geometry at the height geometry alone asked for', () => {
+    // Measured 2026-09-11: 6 of 155 cases came back up to 210 px shorter than
+    // the geometry-only answer for the same input, because a failed route
+    // escalated the squeeze. Compression is a statement about room, and a
+    // leader has no standing to make it.
+    const shorter: string[] = [];
+    for (const answer of matrixMatrix()) {
+      if (answer.geometry.length !== answer.routed.placements.length) continue;
+      const geometryHeight = answer.geometry.reduce((sum, panel) => sum + panel.height, 0);
+      const routedHeight = answer.routed.placements.reduce((sum, panel) => sum + panel.height, 0);
+      if (routedHeight < geometryHeight - 0.5) {
+        shorter.push(`${answer.key}: geometry ${geometryHeight.toFixed(0)} vs routed ${routedHeight.toFixed(0)}`);
+      }
+    }
+    expect(shorter).toEqual([]);
+  });
+
+  it('takes the sixteen-pixel gap before it takes height from an instrument', () => {
+    // A 793 px stage leaves a 675 px band. A specimen and a reader stacked in
+    // one column need 654 px plus the gap: 678 at the preferred 24 and 670 at
+    // the minimum 16. Trying every squeeze at 24 before ever trying 16 answers
+    // this with a 365 px register and a 258 px reader; taking the tighter gap
+    // first answers it with all three instruments whole.
+    const anchorX = 960;
+    const anchorY = 396.5;
+    const layout = constellationLayout({
+      panels: [
+        { slot: 'analysis', width: 440, height: 480, labelWidth: 62, labelHeight: 20 },
+        { slot: 'specimen', width: 280, height: 314, labelWidth: 78, labelHeight: 20 },
+        { slot: 'reader', width: 408, height: 340, labelWidth: 62, labelHeight: 20 },
+      ],
+      anchorX,
+      anchorY,
+      stageWidth: 1920,
+      stageHeight: 793,
+      reserved: constellationChipReserved(anchorX, anchorY, 1920),
+      safeTop: SAFE_TOP,
+      edge: EDGE,
+    });
+    expect(layout.placements).toHaveLength(3);
+    expect(layout.placements.map((panel) => `${panel.slot}:${panel.height}`)).toEqual([
+      'analysis:480', 'specimen:314', 'reader:340',
+    ]);
+    expect(layout.placements.every((panel) => !panel.capped)).toBe(true);
+    expect(layout.status).toBe('normal');
+  });
+});
+
+describe('the seats hold while the galaxy turns the cell (F4)', () => {
+  // RED until P3 — seat continuity and chip relocation.
+  it.fails('re-seats at most three times over 480 px of drift, and never teleports', () => {
+    // Measured 2026-09-11: 7 seat changes over the same drift, the largest
+    // single-frame jump 854 px. The 376 px chip is a hard reserved claim on
+    // every locked reuse, so about 24 px of horizontal drift breaks the lock,
+    // and the re-solve keeps the template but not the seats.
+    const lock = createConstellationLock();
+    let anchorX = 900;
+    const anchorY = 520;
+    let previous: ConstellationPlacement[] | null = null;
+    let previousAnchorX = anchorX;
+    let changes = 0;
+    let worst = 0;
+    for (let frame = 0; frame < 240; frame += 1) {
+      anchorX += 2;
+      const layout = constellationLayout({
+        panels: THREE_MEASURED,
+        anchorX,
+        anchorY,
+        stageWidth: 1920,
+        stageHeight: 1080,
+        reserved: constellationChipReserved(anchorX, anchorY, 1920),
+        obstacles: RAILS_1920,
+        safeTop: SAFE_TOP,
+        edge: EDGE,
+        lock,
+      });
+      const signature = layout.placements.map((panel) => `${panel.x},${panel.y}`).join('|');
+      if (previous && signature !== previous.map((panel) => `${panel.x},${panel.y}`).join('|')) {
+        changes += 1;
+        for (const panel of layout.placements) {
+          const before = previous.find((other) => other.slot === panel.slot);
+          if (!before) continue;
+          worst = Math.max(worst, Math.hypot(panel.x - before.x, panel.y - before.y)
+            - Math.abs(anchorX - previousAnchorX));
+        }
+      }
+      previous = layout.placements;
+      previousAnchorX = anchorX;
+    }
+    expect(changes).toBeLessThanOrEqual(3);
+    // A re-seat may follow the Cell; it may not jump the stage.
+    expect(worst).toBeLessThanOrEqual(48);
+  });
+});
+
+describe('an instrument whose content grows stays where the reader left it (F5)', () => {
+  // RED until P3 — grow in place.
+  it.fails('extends the register in place and moves neither of its neighbours', () => {
+    // Measured 2026-09-11 at a fixed anchor: the register's x went
+    // 760 → 376 → 1192 and its top 666 → 104 → 468 as its content grew, and
+    // the specimen and the reader moved with it every time.
+    const lock = createConstellationLock();
+    const anchorX = 980;
+    const anchorY = 545;
+    let firstX: number | null = null;
+    let firstTop: number | null = null;
+    let neighbours: string | null = null;
+    for (const height of [400, 480, 560, 640, 727]) {
+      const layout = constellationLayout({
+        panels: THREE_MEASURED.map((panel) => (
+          panel.slot === 'analysis' ? { ...panel, height } : panel
+        )),
+        anchorX,
+        anchorY,
+        stageWidth: 1920,
+        stageHeight: 1080,
+        reserved: constellationChipReserved(anchorX, anchorY, 1920),
+        obstacles: RAILS_1920,
+        safeTop: SAFE_TOP,
+        edge: EDGE,
+        lock,
+      });
+      const analysis = layout.placements.find((panel) => panel.slot === 'analysis')!;
+      const others = layout.placements.filter((panel) => panel.slot !== 'analysis')
+        .map((panel) => `${panel.slot}@${panel.x},${panel.y}`).join(' ');
+      if (firstX === null) {
+        firstX = analysis.x; firstTop = analysis.y; neighbours = others;
+        continue;
+      }
+      expect(analysis.x, `register x at ${height}`).toBe(firstX);
+      expect(analysis.y, `register top at ${height}`).toBe(firstTop);
+      expect(others, `neighbours at ${height}`).toBe(neighbours);
+    }
+  });
+});
+
+describe('a leader survives a one-pixel move (F7)', () => {
+  // RED until P3 — the re-anchor tolerance.
+  it.fails('re-anchors every matrix layout for a move of two pixels or less', () => {
+    // Measured 2026-09-11: null on +1 px in about 20 % of 108 geometries and on
+    // +30 px in about 45 %, because the canonical routes hug the expanded
+    // obstacle edges exactly. A leader that vanishes on a pixel of drift is a
+    // leader that vanishes whenever the galaxy turns.
+    const failed: string[] = [];
+    let checked = 0;
+    for (const answer of matrixMatrix()) {
+      if (answer.routed.status === 'unavailable') continue;
+      if (!answer.routed.placements.every((panel) => panel.route)) continue;
+      for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2]] as const) {
+        checked += 1;
+        const moved = {
+          ...answer.input,
+          anchorX: answer.input.anchorX + dx,
+          anchorY: answer.input.anchorY + dy,
+          reserved: constellationChipReserved(
+            answer.input.anchorX + dx, answer.input.anchorY + dy, answer.input.stageWidth,
+          ),
+        };
+        const next = revalidateConstellationLayoutForAnchor(
+          moved, answer.routed, answer.input.anchorX, answer.input.anchorY,
+        );
+        if (!next) failed.push(`${answer.key} ${dx},${dy}`);
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(failed).toEqual([]);
   });
 });
