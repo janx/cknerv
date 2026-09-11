@@ -27,12 +27,18 @@ import {
   CellReticle,
 } from './hud/CellConstellationMarks';
 import {
-  commitConstellationFrame,
+  advanceConstellationFrame,
   createCellConstellationHandles,
   invalidateConstellationFrame,
   setConstellationVisible,
+  suspendConstellationFrame,
   type CellConstellationHandles,
 } from './hud/cellConstellationFrame';
+import {
+  createCellConstellationCameraMotion,
+  settleCellConstellationCameraMotion,
+  type CellConstellationCameraMotion,
+} from './hud/cellConstellationCameraMotion';
 import {
   resetConstellationLock,
   type ConstellationSlot,
@@ -55,7 +61,11 @@ import {
 
 /** The dialect's channel. Named for the seam App holds it by, and nothing out
  *  there needs to know that the one card behind it became four instruments. */
-export type CellInspectionHandles = CellConstellationHandles;
+export type CellInspectionHandles = CellConstellationHandles & {
+  /** Kept on App's reused channel so a Cell switch during damping does not
+   * reset camera history and flash the new selection's leaders for one frame. */
+  cameraMotion: CellConstellationCameraMotion;
+};
 
 export { useSceneInspectionDismiss as useCellInspectionDismiss } from './sceneInspection';
 
@@ -68,7 +78,10 @@ export { useSceneInspectionDismiss as useCellInspectionDismiss } from './sceneIn
  * measured, and a Cell that holds no bytes simply never registers a reader.
  */
 export function createCellInspectionHandles(): CellInspectionHandles {
-  return createCellConstellationHandles();
+  return {
+    ...createCellConstellationHandles(),
+    cameraMotion: createCellConstellationCameraMotion(),
+  };
 }
 
 /** The stage is black and the tether is two pixels of line drawn on it, which
@@ -134,6 +147,7 @@ export function CellInspectionAnchor({
   handles: CellInspectionHandles;
 }) {
   const anchorRef = useRef<THREE.Group>(null);
+  const anchorWorld = useRef(new THREE.Vector3());
   const projected = useRef(new THREE.Vector3());
   const stageBox = useInspectionStageBox();
   const obstacles = useHudOcclusionRects();
@@ -143,13 +157,22 @@ export function CellInspectionAnchor({
   useEffect(() => {
     resetConstellationLock(handles.lock);
     invalidateConstellationFrame(handles);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') invalidateConstellationFrame(handles);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      invalidateConstellationFrame(handles);
+    };
   }, [cell.id, handles]);
 
-  useFrame(({ camera, size }) => {
+  useFrame(({ camera, size, clock }) => {
     const anchor = anchorRef.current;
     if (!anchor || !handles.root) return;
     anchor.updateWorldMatrix(true, false);
-    projected.current.setFromMatrixPosition(anchor.matrixWorld).project(camera);
+    anchorWorld.current.setFromMatrixPosition(anchor.matrixWorld);
+    projected.current.copy(anchorWorld.current).project(camera);
     // A constellation on its way out is not repositioned and not re-shown: its
     // opacity belongs to the exit for as long as the exit lasts.
     if (handles.leaving) return;
@@ -159,6 +182,7 @@ export function CellInspectionAnchor({
       && Math.abs(projected.current.y) <= 1.08;
     setConstellationVisible(handles, visible);
     if (!visible) {
+      invalidateConstellationFrame(handles);
       clearCellPortraitCardOrigin();
       return;
     }
@@ -169,7 +193,27 @@ export function CellInspectionAnchor({
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
     const stage = inspectionStageViewport(size.width, size.height, stageBox.current);
-    const specimen = commitConstellationFrame(
+    const cameraMoving = settleCellConstellationCameraMotion(
+      handles.cameraMotion,
+      camera,
+      anchorWorld.current,
+      size.height,
+      clock.elapsedTime * 1_000,
+    );
+    if (cameraMoving) {
+      const specimen = suspendConstellationFrame(
+        handles,
+        anchorX,
+        anchorY,
+        stage.width,
+        stage.height,
+        INSPECTOR_EDGE_PX,
+      );
+      if (specimen) setCellPortraitCardOrigin(specimen.x, specimen.y);
+      else clearCellPortraitCardOrigin();
+      return;
+    }
+    const specimen = advanceConstellationFrame(
       handles,
       anchorX,
       anchorY,
@@ -179,6 +223,7 @@ export function CellInspectionAnchor({
       INSPECTOR_EDGE_PX,
       obstacles,
       hudOcclusionVersion(),
+      clock.elapsedTime,
     );
     // The braid is scissored into the specimen's window, and the window's own
     // offset is measured inside that panel — so the origin the scene needs is

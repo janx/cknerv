@@ -254,7 +254,7 @@
 // frame as the stamp. A second reader of a ref whose retire policy belongs to
 // another layer is a gulp that stops working with no diff to point at. Three
 // props and this layer's own copy of the colony's gate instead.
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
@@ -284,6 +284,8 @@ import {
   buildCohortMotesGeometry,
   cohortMoteColor,
   makeCohortMotesMaterial,
+  markCohortAttributeRange,
+  setCohortMotesDrawCount,
   stampCohortMotes,
   writeCohortMotes,
   writeCohortMotesMass,
@@ -859,17 +861,20 @@ export default function ColonyCohorts({
   // picture this layer drew before the lane existed; the program floors
   // `abs(aMass)` at `COHORT_MASS_GLSL_FLOOR` on top of that, so the two guards
   // are independent.
-  const lanes = useMemo(() => ({
-    share: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-    seed: new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1),
-    gulp: new THREE.InstancedBufferAttribute(
-      new Float32Array(capacity).fill(COHORT_NEVER_WON),
-      1,
-    ),
-    mass: new THREE.InstancedBufferAttribute(
-      new Float32Array(capacity).fill(1),
-      1,
-    ),
+  const lanes = useMemo(() => {
+    const lane = (array: Float32Array) => {
+      const attribute = new THREE.InstancedBufferAttribute(array, 1);
+      // WebGLAttributes.createBuffer uses bufferData and otherwise leaves the
+      // initialization range behind. Clear it after that upload so the first
+      // one-cohort lens update is genuinely one instance too.
+      attribute.onUpload(() => attribute.clearUpdateRanges());
+      return attribute;
+    };
+    return {
+    share: lane(new Float32Array(capacity)),
+    seed: lane(new Float32Array(capacity)),
+    gulp: lane(new Float32Array(capacity).fill(COHORT_NEVER_WON)),
+    mass: lane(new Float32Array(capacity).fill(1)),
     // ⭐ WHERE THE MASS IS GOING, BESIDE WHERE IT IS. The targets are indexed
     // by the same slot as the lane and have to be rebuilt on exactly the same
     // event, so they are built by the same memo — a ref would need its own
@@ -877,7 +882,8 @@ export default function ColonyCohorts({
     // of a commit. It is a plain array and never an attribute: nothing uploads
     // it, the lane above is what the GPU ever sees.
     massTarget: new Float32Array(capacity).fill(1),
-  }), [capacity]);
+    };
+  }, [capacity]);
 
   /** When each staged cohort last won a block, in sim seconds, by graph id.
    *
@@ -946,7 +952,7 @@ export default function ColonyCohorts({
   const motesWrittenRef = useRef(0);
 
   // Placement and identity: written only when the staged cohort set moves.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const lensMesh = lensMeshRef.current;
     if (!lensMesh) return;
     // ⭐ ONE COUNT FROM ONE LIST. A cohort cannot wear a mass without the
@@ -1034,8 +1040,8 @@ export default function ColonyCohorts({
     cohortWinLane(marks, wonAtRef.current, lanes.gulp.array as Float32Array);
     lensMesh.instanceMatrix.needsUpdate = true;
     lanes.seed.needsUpdate = true;
-    lanes.gulp.needsUpdate = true;
-    lanes.mass.needsUpdate = true;
+    markCohortAttributeRange(lanes.gulp, 0, marks.length);
+    markCohortAttributeRange(lanes.mass, 0, marks.length);
     // Bound on the first pass and again only when a capacity change built new
     // lanes. The geometry outlives the InstancedMesh (a capacity change rebuilds
     // it through `args`), so it can still be holding the previous set.
@@ -1056,6 +1062,10 @@ export default function ColonyCohorts({
     if (lensGeometry.getAttribute('aMass') !== lanes.mass) {
       lensGeometry.setAttribute('aMass', lanes.mass);
     }
+    // Open the submitted prefix only after every attribute for these marks is
+    // committed. Keeping this inside the layout effect also avoids mutating a
+    // shared Three object from an aborted concurrent render.
+    setCohortMotesDrawCount(motesGeometry, marks.length);
   }, [lanes, lensGeometry, marks, motesGeometry]);
 
   // The live share, written in place whenever the window moves — which is once
@@ -1188,7 +1198,11 @@ export default function ColonyCohorts({
       moved = true;
     }
     // Flagged ONCE for the whole walk, and only when something moved.
-    if (moved) lanes.mass.needsUpdate = true;
+    if (moved) {
+      // The ease commonly moves every visible cohort, but never uploads the
+      // unused capacity behind the visible prefix.
+      markCohortAttributeRange(lanes.mass, 0, marks.length);
+    }
   });
 
   // THE WIN, stamped on a `blockPulseAtMs` INCREASE into the one mark standing
@@ -1234,7 +1248,7 @@ export default function ColonyCohorts({
     // Keyed off the MARK's own id rather than off `entryId`, so the map and the
     // lane cannot disagree about which cohort was stamped.
     wonAtRef.current.set(marks[index].nodeId, at);
-    lanes.gulp.needsUpdate = true;
+    markCohortAttributeRange(lanes.gulp, index, 1);
     // …and the SAME moment goes into that cohort's 96 mote slots, beside the
     // lane write, because a Points geometry cannot share the instanced wrapper.
     // Same value, widened; one call, so there is no path where the disc piles

@@ -118,11 +118,13 @@ import {
   planMeshUpdate,
 } from './livingMeshDriver';
 import {
+  FRAME_BUDGET_BRIDGE_STEP,
   FRAME_BUDGET_FABRIC_DRAIN,
   FRAME_BUDGET_PLAN_SLICE,
   beginFrameBudget,
   frameBudgetRemainingMs,
   mayStartFrameWork,
+  reserveFrameBudget,
   spendFrameBudget,
 } from './frameBudget';
 import {
@@ -519,6 +521,15 @@ function NeuralNetwork({
    * object), a whole build replaces it. */
   const displayGraphRef = useRef<LivingNeighborGraph>(emptyLivingNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
+  /** Immutable render-set publication belonging to the landed graph. Bridge
+   * syncs can span frames, so they must not iterate the stage Map that the
+   * next cache generation patches before its worker result lands. */
+  const displayBridgeCellsRef = useRef<readonly Cell[]>([]);
+  /** Same generation as `displayBridgeCellsRef`, with an owned edge array:
+   * chained worker landings patch the live passive selection in place. */
+  const displayBridgePassiveRef = useRef<PassiveSelection>({ edges: [] });
+  /** Version tag committed after both immutable bridge inputs above. */
+  const displayBridgeVersionRef = useRef(0);
   const displayRenderSetRef = useRef(createCellRenderSetState());
   /** The staged id→Cell map the topology builder packs, kept in step with
    * the cursor above at O(churn). Only used while the staged list is not
@@ -533,7 +544,16 @@ function NeuralNetwork({
   const displayRequestedCellsRef = useRef<Map<number, Cell> | null>(null);
   const displayRequestedTopologyRef = useRef('');
   const displayRequestedTopologyVersionRef = useRef(-1);
-  const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
+  const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder({
+    recoveryBudgetMs: () => (
+      typeof document !== 'undefined' && document.visibilityState === 'hidden'
+        ? 0
+        : frameBudgetRemainingMs(FRAME_BUDGET_BRIDGE_STEP)
+    ),
+    recoverySpendMs: (elapsedMs) => {
+      spendFrameBudget(FRAME_BUDGET_BRIDGE_STEP, elapsedMs);
+    },
+  }), []);
   /** Bumped when a display build swaps the graph pulses ride, so link batches
    *  that arrive in the same commit plan against the graph that just landed. */
   const [displayGraphVersion, setDisplayGraphVersion] = useState(0);
@@ -705,6 +725,7 @@ function NeuralNetwork({
         ? consumeTopologyJournal(displayFeedRef.current.journal)
         : invalidateTopologyJournal(displayFeedRef.current.journal),
       preferredEdges: passiveGraphRef.current.edges,
+      recoveryCells: visibleCells,
       // Read at completion: a chained response PATCHES both in place — the
       // display adjacency node by node, the passive list as a sorted merge —
       // so per-block churn costs O(changed) and no Map, Set or edge record
@@ -738,11 +759,14 @@ function NeuralNetwork({
       displayRequestedCellsRef.current = null;
       displayRequestedTopologyVersionRef.current = -1;
       displayGraphRef.current = result.graph;
+      displayBridgeCellsRef.current = visibleCells;
+      displayBridgePassiveRef.current = { edges: passiveGraph.edges.slice() };
       // The mirror moves with the state, and the queued item is named by it:
       // the setter's value is not readable from inside this microtask, and the
       // fabric's landed version has to be comparable with the very number the
       // graph's consumers are handed.
       const landedVersion = displayGraphVersionRef.current + 1;
+      displayBridgeVersionRef.current = landedVersion;
       displayGraphVersionRef.current = landedVersion;
       setDisplayGraphVersion(landedVersion);
       // The boot record's fabric line OPENS here, on the graph landing — and
@@ -1467,7 +1491,7 @@ function NeuralNetwork({
   // time even when the replay simulation is paused. Its own tiny layer means
   // clearing it cannot overwrite live writes or recalled-route afterimages.
   // Negative priority publishes the clock before default-priority consumers.
-  useFrame((_, rawDeltaSeconds) => {
+  useFrame(({ clock }, rawDeltaSeconds) => {
     // One clock read per frame, taken FIRST (this subscriber runs at priority
     // −1): it is what lets a landing between two frames be read back as the
     // rAF interval that contained it, and it finalises the gap of a landing
@@ -1477,7 +1501,13 @@ function NeuralNetwork({
     // ledger of heavy block work. Every consumer of it — the drain below, the
     // live-plan slice, the bridge class's step — asks and reports against
     // THIS frame from here on. Three writes, no allocation.
-    beginFrameBudget();
+    beginFrameBudget(clock.elapsedTime);
+    // Planning runs later at default priority but is the only heavy work with
+    // a departure clock. Promise its measured slice before the drain or bridge
+    // can spend that room; an empty queue leaves no reservation.
+    if (livePlanQueueRef.current.batches.length > 0) {
+      reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, planSliceCostMsRef.current);
+    }
     const pulseClock = advanceConsensusMemoryRouteHopPulseClock(
       routeHopPulseRef.current,
       renderedTraceRouteHopLock,
@@ -2245,8 +2275,9 @@ function NeuralNetwork({
           no route, no pulse, no reinforcement, no inspection, no recall, no
           pick ever traverses one. */}
       <CellBridgeNerves
-        cellsRef={displayCellsRef}
-        passiveGraphRef={passiveGraphRef}
+        cellsRef={displayBridgeCellsRef}
+        passiveGraphRef={displayBridgePassiveRef}
+        inputVersionRef={displayBridgeVersionRef}
         version={displayGraphVersion}
         fabricLandedVersionRef={fabricLandedVersionRef}
         cellDetailViewFocusRef={cellDetailViewFocusRef}

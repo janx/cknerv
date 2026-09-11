@@ -50,6 +50,10 @@ export interface CellSlotState {
   stamps: number[];
   generation: number;
   count: number;
+  /** Render-list snapshot the mutable assignment currently mirrors. This is
+   * an identity guard for journal-shaped incremental syncs; it is not exposed
+   * as the published slot order. */
+  source: readonly Cell[] | null;
 }
 
 export interface CellSlotSync {
@@ -68,6 +72,15 @@ export interface CellSlotSync {
   positionsChanged: boolean;
 }
 
+export interface CellSlotIncrementalUpdate {
+  /** Exact render list the update was computed against. */
+  previousCells: readonly Cell[];
+  /** Net ids that left the drawn set. */
+  removedIds: readonly number[];
+  /** New or replacement records, in current render-list order. */
+  upserts: readonly Cell[];
+}
+
 export function createCellSlotState(): CellSlotState {
   return {
     cells: [],
@@ -76,6 +89,7 @@ export function createCellSlotState(): CellSlotState {
     stamps: [],
     generation: 0,
     count: 0,
+    source: null,
   };
 }
 
@@ -107,6 +121,18 @@ function coalesceSlots(slots: number[]): CellSlotRange[] {
  * zero dirty slots.
  */
 export function syncCellSlots(
+  state: CellSlotState,
+  list: readonly Cell[],
+  incremental?: CellSlotIncrementalUpdate,
+): CellSlotSync {
+  if (incremental && state.source === incremental.previousCells) {
+    const synced = syncCellSlotsIncremental(state, list, incremental);
+    if (synced) return synced;
+  }
+  return syncCellSlotsCanonical(state, list);
+}
+
+function syncCellSlotsCanonical(
   state: CellSlotState,
   list: readonly Cell[],
 ): CellSlotSync {
@@ -184,6 +210,7 @@ export function syncCellSlots(
   }
   cells.length = state.count;
   stamps.length = state.count;
+  state.source = list;
 
   if (
     dirty.length > 0
@@ -199,6 +226,101 @@ export function syncCellSlots(
     membershipChanged,
     // Every occupant change goes through `placeAt`, and every `placeAt` is a
     // membership move — so the two sources cover the whole set between them.
+    positionsChanged: relocated || membershipChanged,
+  };
+}
+
+/** Journal path for the ordinary render-set update. It touches only ids named
+ * by the render cursor, while preserving the canonical hole-fill order of the
+ * full sync. Returning null asks the caller to use that canonical path. */
+function syncCellSlotsIncremental(
+  state: CellSlotState,
+  list: readonly Cell[],
+  update: CellSlotIncrementalUpdate,
+): CellSlotSync | null {
+  if (state.count !== update.previousCells.length) return null;
+  const { cells, slotOf, stamps } = state;
+  const removed = new Set(update.removedIds);
+  const adds: Cell[] = [];
+  const replacements: Array<{ slot: number; cell: Cell }> = [];
+
+  // Validate the whole journal before changing mutable slot state. If a stale
+  // or incomplete cursor reaches this path, the canonical fallback must still
+  // see the exact pre-update state so it can publish every dirty payload.
+  for (const cell of update.upserts) {
+    const slot = slotOf.get(cell.id);
+    if (slot === undefined || slot >= state.count || cells[slot]?.id !== cell.id) {
+      adds.push(cell);
+      continue;
+    }
+    if (cells[slot] !== cell) replacements.push({ slot, cell });
+  }
+  const addedCount = adds.length;
+
+  const removalSlots: number[] = [];
+  for (const id of removed) {
+    const slot = slotOf.get(id);
+    if (slot === undefined || slot >= state.count || cells[slot]?.id !== id) return null;
+    removalSlots.push(slot);
+  }
+  if (state.count - removalSlots.length + addedCount !== list.length) return null;
+
+  state.generation += 1;
+  const dirty: number[] = [];
+  let relocated = false;
+  for (const { slot, cell } of replacements) {
+    const before = cells[slot];
+    if (
+      before.pos_seed[0] !== cell.pos_seed[0]
+      || before.pos_seed[1] !== cell.pos_seed[1]
+      || before.pos_seed[2] !== cell.pos_seed[2]
+    ) relocated = true;
+    cells[slot] = cell;
+    dirty.push(slot);
+  }
+  removalSlots.sort((a, b) => a - b);
+  // Delete every departed id before compaction. Some tail slots disappear
+  // while an earlier hole is filled, so deleting only the slot currently
+  // visited would leave those tail ids in the reverse map.
+  for (const id of removed) slotOf.delete(id);
+  const placeAt = (slot: number, cell: Cell) => {
+    cells[slot] = cell;
+    slotOf.set(cell.id, slot);
+    dirty.push(slot);
+  };
+  for (const slot of removalSlots) {
+    if (slot >= state.count || !removed.has(cells[slot].id)) continue;
+    const add = adds.pop();
+    if (add !== undefined) {
+      placeAt(slot, add);
+      continue;
+    }
+    let tail = state.count - 1;
+    while (tail > slot && removed.has(cells[tail].id)) {
+      tail -= 1;
+    }
+    state.count = tail + 1;
+    if (tail > slot) {
+      placeAt(slot, cells[tail]);
+      state.count = tail;
+    } else {
+      state.count = slot;
+    }
+  }
+  for (const cell of adds) {
+    placeAt(state.count, cell);
+    state.count += 1;
+  }
+  cells.length = state.count;
+  stamps.length = state.count;
+  state.source = list;
+  const membershipChanged = removalSlots.length > 0 || addedCount > 0;
+  if (dirty.length > 0 || membershipChanged) state.published = cells.slice();
+  return {
+    cells: state.published,
+    count: state.count,
+    ranges: coalesceSlots(dirty),
+    membershipChanged,
     positionsChanged: relocated || membershipChanged,
   };
 }

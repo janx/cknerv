@@ -1,7 +1,7 @@
 // Dev-observable counters for the topology worker pipeline: paths that used
 // to fail silently, and the chain-integrity bookkeeping a live session has to
-// be readable on. A sync fallback quietly re-runs the FULL topology build on
-// the main thread — worth seeing in a profile session, not worth a hard
+// be readable on. A cooperative fallback re-runs the FULL canonical topology
+// build across main-thread tasks — worth seeing in a profile session, not a hard
 // failure; a `stale` resend costs a full re-pack and a second round trip; an
 // unchained apply is a whole O(V) display rebuild.
 //
@@ -13,7 +13,7 @@
 // tests have always used.
 
 export interface NeighborGraphBuilderStatsSnapshot {
-  /** Worker error / postMessage / deserialize failures → main-thread build. */
+  /** Worker error / postMessage / deserialize failures → sliced recovery. */
   workerFallbacks: number;
   /** Builds below the worker threshold (expected, small fields). */
   belowThresholdBuilds: number;
@@ -40,6 +40,15 @@ export interface NeighborGraphBuilderStatsSnapshot {
    * worker, a caller that cannot patch, or the first selection after a build
    * without one). */
   passiveFullApplies: number;
+  /** Macrotask slices used by canonical main-thread recovery. */
+  recoverySlices: number;
+  recoveryMaxSliceMs: number;
+  recoveryMaxStepMs: number;
+  recoveryCompleted: number;
+  recoveryCancelled: number;
+  /** Currently scheduled recovery callbacks; zero after cancel/dispose. */
+  recoveryPendingTasks: number;
+  recoveryMaxPendingTasks: number;
 }
 
 export const neighborGraphBuilderStats: NeighborGraphBuilderStatsSnapshot = {
@@ -52,6 +61,13 @@ export const neighborGraphBuilderStats: NeighborGraphBuilderStatsSnapshot = {
   staleResends: 0,
   passivePatchedApplies: 0,
   passiveFullApplies: 0,
+  recoverySlices: 0,
+  recoveryMaxSliceMs: 0,
+  recoveryMaxStepMs: 0,
+  recoveryCompleted: 0,
+  recoveryCancelled: 0,
+  recoveryPendingTasks: 0,
+  recoveryMaxPendingTasks: 0,
 };
 
 export function snapshotNeighborGraphBuilderStats(): NeighborGraphBuilderStatsSnapshot {
@@ -68,4 +84,11 @@ export function resetNeighborGraphBuilderStats(): void {
   neighborGraphBuilderStats.staleResends = 0;
   neighborGraphBuilderStats.passivePatchedApplies = 0;
   neighborGraphBuilderStats.passiveFullApplies = 0;
+  neighborGraphBuilderStats.recoverySlices = 0;
+  neighborGraphBuilderStats.recoveryMaxSliceMs = 0;
+  neighborGraphBuilderStats.recoveryMaxStepMs = 0;
+  neighborGraphBuilderStats.recoveryCompleted = 0;
+  neighborGraphBuilderStats.recoveryCancelled = 0;
+  neighborGraphBuilderStats.recoveryPendingTasks = 0;
+  neighborGraphBuilderStats.recoveryMaxPendingTasks = 0;
 }

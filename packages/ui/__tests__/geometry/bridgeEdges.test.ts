@@ -10,9 +10,14 @@ import {
   bridgeKey,
   bridgesForDegree,
   buildBridgeAnchorIndex,
+  createBridgeSelectionJob,
   createBridgeHostRegistry,
+  createBridgeHostSyncJob,
   planHostBridges,
+  runBridgeSelectionJobSlice,
+  stepBridgeHostSyncJob,
   selectBridgeEdges,
+  stepBridgeSelectionJob,
   syncBridgeHosts,
   type BridgeAnchorIndex,
   type BridgeHostCell,
@@ -162,6 +167,34 @@ describe('bridge anchor index', () => {
 });
 
 describe('bridge selection', () => {
+  it('resumes at operation boundaries and publishes only the complete canonical result', () => {
+    const cells = stagedCells(3000, (id) => id % 4, 2 ** 52);
+    const expected = selectBridgeEdges(cells, index, { budget: 180 });
+    const job = createBridgeSelectionJob([...cells].reverse(), index, { budget: 180 });
+    let slices = 0;
+    while (job.phase !== 'done') {
+      const progress = stepBridgeSelectionJob(job, 17);
+      expect(progress.operations).toBeLessThanOrEqual(17);
+      if (!progress.done) expect(job.result).toBeNull();
+      slices += 1;
+    }
+    expect(slices).toBeGreaterThan(10);
+    expect(job.result).toEqual(expected);
+  });
+
+  it('checks an injected wall clock between selector quanta', () => {
+    const job = createBridgeSelectionJob(stagedCells(3000), index, { budget: 180 });
+    let tick = 0;
+    const first = runBridgeSelectionJobSlice(job, 2, () => {
+      tick += 0.25;
+      return tick;
+    });
+    expect(first.done).toBe(false);
+    expect(first.elapsedMs).toBeGreaterThanOrEqual(2);
+    expect(first.operations).toBeGreaterThan(0);
+    expect(job.result).toBeNull();
+  });
+
   it('never anchors past the lowest preset draw range', () => {
     const selection = selectBridgeEdges(stagedCells(4000), index);
     expect(selection.bridges.length).toBeGreaterThan(0);
@@ -434,6 +467,52 @@ describe('bridge selection', () => {
     // A hit used to re-set the same entry — one allocation per planned host
     // per build for nothing. Identity proves it no longer does.
     for (const [id, entry] of cache) expect(entry).toBe(recorded.get(id));
+  });
+});
+
+describe('resumable bridge host sync', () => {
+  it('keeps the published registry unchanged until a complete generation lands', () => {
+    const registry = createBridgeHostRegistry();
+    const initial = stagedCells(20);
+    const initialMap = new Map(initial.map((cell) => [cell.id, {
+      id: cell.id, death_at_ms: null, pos_seed: [cell.x, cell.y, cell.z] as const,
+    }]));
+    syncBridgeHosts(registry, initialMap, []);
+    const published = registry.hosts;
+    const nextMap = new Map(initialMap);
+    nextMap.delete(1);
+    const id = 2 ** 52;
+    const [x, y, z] = helixSeedF64(id);
+    nextMap.set(id, { id, death_at_ms: null, pos_seed: [x, y, z] as const });
+    const job = createBridgeHostSyncJob(registry, nextMap, []);
+    expect(stepBridgeHostSyncJob(job, 5).done).toBe(false);
+    expect(registry.hosts).toBe(published);
+    expect(registry.hosts.has(1)).toBe(true);
+    // A superseding cursor can discard this partial job without rollback.
+    const replacement = createBridgeHostSyncJob(registry, nextMap, []);
+    while (!stepBridgeHostSyncJob(replacement, 7).done) {}
+    expect(registry.hosts).not.toBe(published);
+    expect(registry.hosts.has(1)).toBe(false);
+    expect(registry.hosts.has(id)).toBe(true);
+  });
+
+  it('reads one immutable stage publication across all sync slices', () => {
+    const registry = createBridgeHostRegistry();
+    const staged = new Map<number, BridgeHostSourceCell>([
+      [1, { id: 1, death_at_ms: null, pos_seed: [1, 2, 3] }],
+      [2, { id: 2, death_at_ms: null, pos_seed: [4, 5, 6] }],
+    ]);
+    const published = [...staged.values()];
+    const job = createBridgeHostSyncJob(registry, published, []);
+    expect(stepBridgeHostSyncJob(job, 1).done).toBe(false);
+
+    // A newer cache generation patches its stage map while this older graph
+    // is still landing. The job owns the prior immutable render-set array.
+    staged.delete(2);
+    staged.set(3, { id: 3, death_at_ms: null, pos_seed: [7, 8, 9] });
+    while (!stepBridgeHostSyncJob(job, 1).done) {}
+
+    expect([...registry.hosts.keys()]).toEqual([1, 2]);
   });
 });
 

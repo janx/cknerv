@@ -10,6 +10,7 @@
     "./helix": "./src/helix.ts"
   },
   "scripts": {
+    "benchmark:rendering": "../../node_modules/.pnpm/node_modules/.bin/esbuild benchmarks/rendering/cpu.ts --bundle --platform=node --format=esm --outfile=/tmp/cknerv-rendering-cpu.mjs && node --expose-gc /tmp/cknerv-rendering-cpu.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

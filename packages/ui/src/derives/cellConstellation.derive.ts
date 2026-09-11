@@ -48,6 +48,79 @@ export interface ConstellationLayout {
 interface Box { x: number; y: number; width: number; height: number }
 interface Candidate { template: ConstellationTemplate; placements: ConstellationPlacement[] }
 
+export interface ConstellationWorkStats {
+  fullSolves: number;
+  lockedReuses: number;
+  candidatesBuilt: number;
+  candidatesValidated: number;
+  routeOrders: number;
+  fastRouteAttempts: number;
+  searchedRouteAttempts: number;
+  cursorSlices: number;
+  cursorMaxSliceMs: number;
+  cursorPending: number;
+  cursorCancels: number;
+  cursorForcedCatchUps: number;
+  cursorFullStarts: number;
+  cursorLockedStarts: number;
+  cursorLandings: number;
+  cursorProvisionalFrames: number;
+}
+
+const constellationWorkStats: ConstellationWorkStats = {
+  fullSolves: 0,
+  lockedReuses: 0,
+  candidatesBuilt: 0,
+  candidatesValidated: 0,
+  routeOrders: 0,
+  fastRouteAttempts: 0,
+  searchedRouteAttempts: 0,
+  cursorSlices: 0,
+  cursorMaxSliceMs: 0,
+  cursorPending: 0,
+  cursorCancels: 0,
+  cursorForcedCatchUps: 0,
+  cursorFullStarts: 0,
+  cursorLockedStarts: 0,
+  cursorLandings: 0,
+  cursorProvisionalFrames: 0,
+};
+
+export function observeConstellationCursorStart(locked: boolean): void {
+  constellationWorkStats.cursorPending = 1;
+  if (locked) constellationWorkStats.cursorLockedStarts += 1;
+  else constellationWorkStats.cursorFullStarts += 1;
+}
+export function observeConstellationCursorCancel(): void {
+  constellationWorkStats.cursorCancels += 1;
+  constellationWorkStats.cursorPending = 0;
+}
+export function observeConstellationCursorSlice(elapsedMs: number, forced: boolean): void {
+  constellationWorkStats.cursorSlices += 1;
+  constellationWorkStats.cursorMaxSliceMs = Math.max(
+    constellationWorkStats.cursorMaxSliceMs, elapsedMs,
+  );
+  if (forced) constellationWorkStats.cursorForcedCatchUps += 1;
+}
+export function observeConstellationCursorLanding(): void {
+  constellationWorkStats.cursorLandings += 1;
+  constellationWorkStats.cursorPending = 0;
+}
+
+export function observeConstellationProvisionalFrame(): void {
+  constellationWorkStats.cursorProvisionalFrames += 1;
+}
+
+export function snapshotConstellationWorkStats(): ConstellationWorkStats {
+  return { ...constellationWorkStats };
+}
+
+export function resetConstellationWorkStats(): void {
+  for (const key of Object.keys(constellationWorkStats) as Array<keyof ConstellationWorkStats>) {
+    constellationWorkStats[key] = 0;
+  }
+}
+
 export interface ConstellationLock {
   quadrant: { [slot: string]: ConstellationQuadrant | undefined };
   template: ConstellationTemplate | null;
@@ -473,8 +546,12 @@ function fastOrthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
   return null;
 }
 
-function orthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
-  obstacles: readonly Box[], bounds: Box): ConstellationPoint[] | null {
+interface OrthogonalGuide { xIndex: number; yIndex: number; verticalFirst: boolean }
+const orthogonalGuideCache = new Map<string, OrthogonalGuide>();
+
+function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoint,
+  obstacles: readonly Box[], bounds: Box,
+  guideKey?: string): Generator<void, ConstellationPoint[] | null> {
   if (obstacles.some((box) => pointInside(start, box) || pointInside(end, box))) return null;
   const fast = fastOrthogonalRoute(start, end, obstacles);
   if (fast) return fast;
@@ -489,25 +566,36 @@ function orthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
   const xValues = [...xs]; const yValues = [...ys];
   let best: ConstellationPoint[] | null = null;
   let least = Number.POSITIVE_INFINITY;
-  const consider = (points: ConstellationPoint[]) => {
+  let bestOrdinal = Number.POSITIVE_INFINITY;
+  let bestGuide: OrthogonalGuide | null = null;
+  const consider = (
+    points: ConstellationPoint[], ordinal: number,
+    guide: OrthogonalGuide | null = null,
+  ) => {
     const simplified = simplify(points);
     if (simplified.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return;
     const cost = routeLength(simplified);
-    if (cost >= least) return;
+    if (cost > least || (cost === least && ordinal >= bestOrdinal)) return;
     for (let index = 1; index < simplified.length; index += 1) {
       if (!segmentClear(simplified[index - 1], simplified[index], obstacles)) return;
     }
-    if (cost < least) { least = cost; best = simplified; }
+    least = cost; bestOrdinal = ordinal; bestGuide = guide; best = simplified;
   };
+  let directOrdinal = 0;
+  let quantum = 0;
   for (const x of xValues) {
-    const a = { x, y: start.y }; const b = { x, y: end.y };
+    const a = { x, y: start.y };
     if (!segmentClear(start, a, obstacles)) continue;
-    consider([start, a, b, end]);
+    consider([start, a, { x, y: end.y }, end], directOrdinal);
+    directOrdinal += 1;
+    if ((quantum += 1) % 8 === 0) yield;
   }
   for (const y of yValues) {
-    const a = { x: start.x, y }; const b = { x: end.x, y };
+    const a = { x: start.x, y };
     if (!segmentClear(start, a, obstacles)) continue;
-    consider([start, a, b, end]);
+    consider([start, a, { x: end.x, y }, end], directOrdinal);
+    directOrdinal += 1;
+    if ((quantum += 1) % 8 === 0) yield;
   }
   if (best) return best;
   const clearHorizontalStarts = new Map(xValues.map((x) => {
@@ -518,15 +606,62 @@ function orthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
     const first = { x: start.x, y };
     return [y, segmentClear(start, first, obstacles)] as const;
   }));
-  for (const x of xValues) for (const y of yValues) {
-    const h1 = { x, y: start.y };
-    if (clearHorizontalStarts.get(x)) {
-      consider([start, h1, { x, y }, { x: end.x, y }, end]);
+  const clearLeg = (a: ConstellationPoint, b: ConstellationPoint) => (
+    (Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01)
+    || segmentClear(a, b, obstacles)
+  );
+  const considerGrid = (xIndex: number, yIndex: number, verticalFirst: boolean) => {
+    const x = xValues[xIndex]; const y = yValues[yIndex];
+    if (x === undefined || y === undefined) return;
+    const ordinal = (xIndex * yValues.length + yIndex) * 2
+      + (verticalFirst ? 1 : 0);
+    const middle = { x, y };
+    if (!verticalFirst) {
+      const h1 = { x, y: start.y }; const beforeEnd = { x: end.x, y };
+      if (clearHorizontalStarts.get(x)
+        && clearLeg(h1, middle) && clearLeg(middle, beforeEnd)
+        && clearLeg(beforeEnd, end)) {
+        consider([start, h1, middle, beforeEnd, end], ordinal, {
+          xIndex, yIndex, verticalFirst,
+        });
+      }
+      return;
     }
-    const v1 = { x: start.x, y };
-    if (clearVerticalStarts.get(y)) {
-      consider([start, v1, { x, y }, { x, y: end.y }, end]);
+    const v1 = { x: start.x, y }; const beforeEnd = { x, y: end.y };
+    if (clearVerticalStarts.get(y)
+      && clearLeg(v1, middle) && clearLeg(middle, beforeEnd)
+      && clearLeg(beforeEnd, end)) {
+      consider([start, v1, middle, beforeEnd, end], ordinal, {
+        xIndex, yIndex, verticalFirst,
+      });
     }
+  };
+  const cachedGuide = guideKey ? orthogonalGuideCache.get(guideKey) : undefined;
+  if (cachedGuide) considerGrid(
+    cachedGuide.xIndex, cachedGuide.yIndex, cachedGuide.verticalFirst,
+  );
+  for (let xIndex = 0; xIndex < xValues.length; xIndex += 1) {
+    const x = xValues[xIndex];
+    for (let yIndex = 0; yIndex < yValues.length; yIndex += 1) {
+    const y = yValues[yIndex];
+    // Manhattan distance is a strict lower bound on routeLength. Once a
+    // direct route exists, reject most x×y grid points before allocating and
+    // simplifying their five-point paths or walking obstacles segment-wise.
+    const lowerBound = Math.abs(x - start.x) + Math.abs(y - start.y)
+      + Math.abs(end.x - x) + Math.abs(end.y - y);
+    if (lowerBound <= least) {
+      considerGrid(xIndex, yIndex, false);
+      considerGrid(xIndex, yIndex, true);
+    }
+    if ((quantum += 1) % 8 === 0) yield;
+    }
+  }
+  if (guideKey && bestGuide) {
+    if (!orthogonalGuideCache.has(guideKey) && orthogonalGuideCache.size >= 512) {
+      const oldest = orthogonalGuideCache.keys().next().value as string | undefined;
+      if (oldest !== undefined) orthogonalGuideCache.delete(oldest);
+    }
+    orthogonalGuideCache.set(guideKey, bestGuide);
   }
   return best;
 }
@@ -610,8 +745,9 @@ function routeOutsideReticle(points: readonly ConstellationPoint[], ax: number, 
   return result.filter(([a, b]) => Math.hypot(a.x - b.x, a.y - b.y) > 0.5);
 }
 
-function addRoutesInOrder(input: ConstellationInput, placements: ConstellationPlacement[],
-  order: readonly number[]): HudOcclusionRect[] | null {
+function* addRoutesInOrderSteps(input: ConstellationInput,
+  placements: ConstellationPlacement[],
+  order: readonly number[]): Generator<void, HudOcclusionRect[] | null> {
   const panelBoxes = placements.map(boxOf);
   const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
   const reserved = (input.reserved ?? []).map(rectBox);
@@ -664,24 +800,63 @@ function addRoutesInOrder(input: ConstellationInput, placements: ConstellationPl
     ].filter((point) => !usedOutlets.has(`${point.x},${point.y}`))
       .sort((a, b) => Math.hypot(a.x - (target.x + target.width / 2), a.y - (target.y + target.height / 2))
         - Math.hypot(b.x - (target.x + target.width / 2), b.y - (target.y + target.height / 2)));
+    const endpoints = routeEndpoints(target, input.anchorX, input.anchorY);
     let best: ConstellationPoint[] | null = null;
+    let bestLength = Number.POSITIVE_INFINITY;
+    let bestOrdinal = Number.POSITIVE_INFINITY;
     const crossesPrior = (route: readonly ConstellationPoint[]) => {
       const outside = routeOutsideReticle(route, input.anchorX, input.anchorY,
         CONSTELLATION_RETICLE_PX / 2);
       return outside.some((segment) => priorRouteSegments.some((other) => segmentsTouch(segment, other)));
     };
-    for (const start of starts) {
-      for (const end of routeEndpoints(target, input.anchorX, input.anchorY)) {
-        const route = fastOrthogonalRoute(start, end, obstacles);
-        if (!route || crossesPrior(route)) continue;
-        if (!best || routeLength(route) < routeLength(best)) best = route;
+    const pairs: Array<{
+      start: ConstellationPoint;
+      end: ConstellationPoint;
+      lowerBound: number;
+      ordinal: number;
+    }> = [];
+    let ordinal = 0;
+    for (const start of starts) for (const end of endpoints) {
+      const aligned = Math.abs(start.x - end.x) < 0.01
+        || Math.abs(start.y - end.y) < 0.01;
+      pairs.push({
+        start,
+        end,
+        lowerBound: Math.abs(start.x - end.x) + Math.abs(start.y - end.y)
+          + (aligned ? 0 : 18),
+        ordinal,
+      });
+      ordinal += 1;
+    }
+    pairs.sort((a, b) => a.lowerBound - b.lowerBound || a.ordinal - b.ordinal);
+    let fastQuantum = 0;
+    for (const pair of pairs) {
+      if (pair.lowerBound > bestLength) break;
+      constellationWorkStats.fastRouteAttempts += 1;
+      const route = fastOrthogonalRoute(pair.start, pair.end, obstacles);
+      if (route && !crossesPrior(route)) {
+        const length = routeLength(route);
+        if (length < bestLength || (length === bestLength && pair.ordinal < bestOrdinal)) {
+          best = route;
+          bestLength = length;
+          bestOrdinal = pair.ordinal;
+        }
       }
+      if ((fastQuantum += 1) % 8 === 0) yield;
     }
     if (!best) {
       routeSearch:
-      for (const start of starts) for (const end of routeEndpoints(target, input.anchorX, input.anchorY)) {
-        const route = orthogonalRoute(start, end, obstacles, bounds);
+      for (let startIndex = 0; startIndex < starts.length; startIndex += 1) {
+        const start = starts[startIndex];
+        for (let endIndex = 0; endIndex < endpoints.length; endIndex += 1) {
+        const end = endpoints[endIndex];
+        constellationWorkStats.searchedRouteAttempts += 1;
+        const route = yield* orthogonalRouteSteps(
+          start, end, obstacles, bounds,
+          `${placement.slot}:${startIndex}:${endIndex}:${obstacles.length}`,
+        );
         if (route && !crossesPrior(route)) { best = route; break routeSearch; }
+        }
       }
     }
     if (!best) return null;
@@ -701,11 +876,16 @@ function addRoutesInOrder(input: ConstellationInput, placements: ConstellationPl
       width: label.width, height: label.height,
     });
     priorRoutes.push(best);
+    yield;
   }
   return masks;
 }
 
-function routeOrders(count: number): number[][] {
+const routeOrderCache: Array<readonly (readonly number[])[] | undefined> = [];
+
+function routeOrders(count: number): readonly (readonly number[])[] {
+  const cached = routeOrderCache[count];
+  if (cached) return cached;
   const canonical = Array.from({ length: count }, (_value, index) => index);
   const result: number[][] = [];
   const visit = (prefix: number[], remaining: number[]) => {
@@ -720,24 +900,37 @@ function routeOrders(count: number): number[][] {
   if (count === 3) {
     const preferred = [[0, 2, 1], [0, 1, 2], [1, 2, 0], [2, 0, 1]];
     const preferredKeys = new Set(preferred.map((order) => order.join(',')));
-    return [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+    const ordered = [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+    routeOrderCache[count] = ordered;
+    return ordered;
   }
-  if (count !== 4) return result;
+  if (count !== 4) {
+    routeOrderCache[count] = result;
+    return result;
+  }
   const preferred = [
     [0, 2, 3, 1], [0, 2, 1, 3], [0, 1, 3, 2], [0, 1, 2, 3],
     [0, 3, 1, 2], [0, 3, 2, 1], [1, 0, 3, 2], [1, 2, 3, 0],
     [2, 0, 3, 1], [2, 3, 0, 1], [2, 3, 1, 0], [3, 0, 1, 2], [3, 0, 2, 1],
   ];
   const preferredKeys = new Set(preferred.map((order) => order.join(',')));
-  return [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+  const ordered = [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+  routeOrderCache[count] = ordered;
+  return ordered;
 }
 
-function addRoutes(input: ConstellationInput,
-  placements: ConstellationPlacement[]): HudOcclusionRect[] | null {
+function* addRoutesSteps(input: ConstellationInput,
+  placements: ConstellationPlacement[]): Generator<void, HudOcclusionRect[] | null> {
   for (const order of routeOrders(placements.length)) {
+    constellationWorkStats.routeOrders += 1;
     for (const panel of placements) panel.route = undefined;
-    const masks = addRoutesInOrder(input, placements, order);
+    const masks = yield* addRoutesInOrderSteps(input, placements, order);
     if (masks) return masks;
+    // A route order is the smallest useful canonical unit: its later panels
+    // depend on the exact paths chosen for its earlier panels. Yield between
+    // orders so the Canvas path can budget the search without changing that
+    // dependency or the winning order.
+    yield;
   }
   for (const panel of placements) panel.route = undefined;
   return null;
@@ -756,6 +949,206 @@ function hardValid(input: ConstellationInput, placements: readonly Constellation
       && reserved.every((claim) => intersectionArea(box, claim) === 0);
   });
 }
+
+export function constellationLayoutHardValid(
+  input: ConstellationInput,
+  layout: ConstellationLayout,
+): boolean {
+  return hardValid(input, layout.placements, CONSTELLATION_MIN_GAP_PX);
+}
+
+/**
+ * Re-anchor an already published layout without running the route search.
+ *
+ * This is a presentation-only result: callers must continue the canonical
+ * cursor and replace it when that cursor lands.  Every translated route is
+ * checked against the current hard geometry, HUD/chip claims, reticle and the
+ * other routes before it is returned.  A failed check deliberately yields
+ * `null`, so stale geometry is never made visible merely to avoid a blank
+ * frame.
+ */
+export function revalidateConstellationLayoutForAnchor(
+  input: ConstellationInput,
+  layout: ConstellationLayout,
+  previousAnchorX: number,
+  previousAnchorY: number,
+): ConstellationLayout | null {
+  // A layout is presentation-compatible only with the same instruments. The
+  // caller may deliberately reuse it across a viewport/HUD change, because
+  // every current bound and obstacle is checked below, but equal panel counts
+  // must never let (for example) a removed reader masquerade as a new trace.
+  if (input.panels.length !== layout.placements.length) return null;
+  for (const panel of input.panels) {
+    const prior = layout.placements.find((placement) => placement.slot === panel.slot);
+    if (!prior || Math.abs(prior.width - panel.width) > 0.1
+      || prior.height > panel.height + 0.1) return null;
+  }
+  if (!hardValid(input, layout.placements, CONSTELLATION_MIN_GAP_PX)) return null;
+  const dx = input.anchorX - previousAnchorX;
+  const dy = input.anchorY - previousAnchorY;
+  const panelBoxes = layout.placements.map(boxOf);
+  const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
+  const reserved = (input.reserved ?? []).map(rectBox);
+  const bounds: Box = {
+    x: input.edge + CONSTELLATION_ROUTE_CLEARANCE_PX,
+    y: input.safeTop + CONSTELLATION_ROUTE_CLEARANCE_PX,
+    width: input.stageWidth - input.edge * 2 - CONSTELLATION_ROUTE_CLEARANCE_PX * 2,
+    height: input.stageHeight - input.safeTop - input.edge - CONSTELLATION_ROUTE_CLEARANCE_PX * 2,
+  };
+  const reticle: Box = {
+    x: input.anchorX - CONSTELLATION_RETICLE_PX / 2,
+    y: input.anchorY - CONSTELLATION_RETICLE_PX / 2,
+    width: CONSTELLATION_RETICLE_PX,
+    height: CONSTELLATION_RETICLE_PX,
+  };
+  const translated: ConstellationPlacement[] = [];
+  const outsideRoutes: Array<Array<[ConstellationPoint, ConstellationPoint]>> = [];
+  for (let placementIndex = 0; placementIndex < layout.placements.length; placementIndex += 1) {
+    const current = layout.placements[placementIndex];
+    const old = current.route?.points;
+    if (!old || old.length < 2) return null;
+    let translatedPoints = old.map((point) => ({ ...point }));
+    translatedPoints[0].x += dx;
+    translatedPoints[0].y += dy;
+    const firstWasVertical = Math.abs(old[0].x - old[1].x) < 0.01;
+    if (firstWasVertical) translatedPoints[1].x = translatedPoints[0].x;
+    else translatedPoints[1].y = translatedPoints[0].y;
+    translatedPoints = simplify(translatedPoints);
+    const target = panelBoxes[placementIndex];
+    const radius = CONSTELLATION_RETICLE_PX / 2 + 6;
+    const outlet = 18;
+    const validStarts = [
+      { x: input.anchorX + radius, y: input.anchorY - outlet },
+      { x: input.anchorX + radius, y: input.anchorY + outlet },
+      { x: input.anchorX - radius, y: input.anchorY - outlet },
+      { x: input.anchorX - radius, y: input.anchorY + outlet },
+      { x: input.anchorX - outlet, y: input.anchorY + radius },
+      { x: input.anchorX + outlet, y: input.anchorY + radius },
+      { x: input.anchorX - outlet, y: input.anchorY - radius },
+      { x: input.anchorX + outlet, y: input.anchorY - radius },
+    ];
+    const obstacles = [
+      ...panelBoxes.filter((_box, index) => index !== placementIndex),
+      ...reserved,
+      ...hud,
+    ].map((box) => expanded(box, CONSTELLATION_ROUTE_CLEARANCE_PX));
+    obstacles.push(target, reticle);
+    // Canonical routing leaves a twelve-pixel channel around prior segments
+    // (four-pixel stroke box plus the eight-pixel route clearance).
+    obstacles.push(...outsideRoutes.flatMap((route) => route.map(([a, b]) => ({
+      x: Math.min(a.x, b.x) - 12,
+      y: Math.min(a.y, b.y) - 12,
+      width: Math.abs(a.x - b.x) + 24,
+      height: Math.abs(a.y - b.y) + 24,
+    }))));
+    const candidateValid = (candidate: ConstellationPoint[]) => {
+      if (candidate.length < 2 || candidate.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return false;
+      if (!validStarts.some((start) => Math.hypot(
+        start.x - candidate[0].x, start.y - candidate[0].y,
+      ) < 0.1)) return false;
+      const candidateEnd = candidate[candidate.length - 1];
+      const endsOnTarget = (
+        (Math.abs(candidateEnd.x - target.x) < 0.1
+          || Math.abs(candidateEnd.x - target.x - target.width) < 0.1)
+          && candidateEnd.y >= target.y - 0.1
+          && candidateEnd.y <= target.y + target.height + 0.1
+      ) || (
+        (Math.abs(candidateEnd.y - target.y) < 0.1
+          || Math.abs(candidateEnd.y - target.y - target.height) < 0.1)
+          && candidateEnd.x >= target.x - 0.1
+          && candidateEnd.x <= target.x + target.width + 0.1
+      );
+      if (!endsOnTarget) return false;
+      if (candidate.some((point) => point.x < bounds.x - 0.1 || point.y < bounds.y - 0.1
+        || point.x > bounds.x + bounds.width + 0.1
+        || point.y > bounds.y + bounds.height + 0.1)) return false;
+      for (let pointIndex = 1; pointIndex < candidate.length; pointIndex += 1) {
+        if (!segmentClear(candidate[pointIndex - 1], candidate[pointIndex], obstacles)) return false;
+      }
+      return true;
+    };
+    let points = candidateValid(translatedPoints) ? translatedPoints : null;
+    // If translating only the moving leg is obstructed, reconnect one of the
+    // eight current outlets to a later point on the already proven route. The
+    // fast two-bend router is bounded by this tiny set; this is still a
+    // provisional answer and never changes the canonical winning route.
+    for (const start of validStarts) {
+      for (let join = 1; points === null && join < old.length; join += 1) {
+        const prefix = fastOrthogonalRoute(start, old[join], obstacles);
+        if (!prefix) continue;
+        const candidate = simplify([
+          ...prefix.slice(0, -1),
+          ...old.slice(join).map((point) => ({ ...point })),
+        ]);
+        if (candidateValid(candidate)) points = candidate;
+      }
+      if (points) break;
+    }
+
+    // The old polyline can be entirely on the wrong side after a discontinuous
+    // camera jump. A final bounded fast pass tries the canonical outlet and
+    // panel-edge sets without entering the exhaustive orthogonal grid search.
+    if (points === null) {
+      const endpoints = routeEndpoints(target, input.anchorX, input.anchorY);
+      fastSearch:
+      for (const start of validStarts) {
+        for (const endpoint of endpoints) {
+          const candidate = fastOrthogonalRoute(start, endpoint, obstacles);
+          if (candidate && candidateValid(candidate)) {
+            points = candidate;
+            break fastSearch;
+          }
+        }
+      }
+    }
+    if (!points) return null;
+    const outside = routeOutsideReticle(
+      points, input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2,
+    );
+    outsideRoutes.push(outside);
+    translated.push({
+      ...current,
+      route: {
+        points,
+        label: { ...current.route!.label },
+      },
+    });
+  }
+
+  const allRouteBoxes = outsideRoutes.flatMap((route) => route.map(([a, b]) => ({
+    x: Math.min(a.x, b.x) - 3,
+    y: Math.min(a.y, b.y) - 3,
+    width: Math.max(6, Math.abs(a.x - b.x) + 6),
+    height: Math.max(6, Math.abs(a.y - b.y) + 6),
+  })));
+  const placedLabels: Box[] = [];
+  for (const current of translated) {
+    const panel = input.panels.find((candidate) => candidate.slot === current.slot);
+    const ownRouteBoxes = routeOutsideReticle(
+      current.route?.points ?? [], input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2,
+    ).map(([a, b]) => ({
+      x: Math.min(a.x, b.x) - 3, y: Math.min(a.y, b.y) - 3,
+      width: Math.max(6, Math.abs(a.x - b.x) + 6),
+      height: Math.max(6, Math.abs(a.y - b.y) + 6),
+    }));
+    const otherRoutes = allRouteBoxes.filter((box) => !ownRouteBoxes.some((own) =>
+      box.x === own.x && box.y === own.y && box.width === own.width && box.height === own.height));
+    const label = labelForRoute(
+      current.route?.points ?? [], panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
+      [...panelBoxes, ...reserved, ...hud, reticle, ...placedLabels, ...otherRoutes], bounds,
+    );
+    if (current.route) current.route = { points: current.route.points, label };
+    if (!label.inPanel) placedLabels.push({
+      x: label.x - label.width / 2, y: label.y - label.height / 2,
+      width: label.width, height: label.height,
+    });
+  }
+  return {
+    ...layout,
+    placements: translated,
+    masks: [...panelBoxes, ...reserved, ...hud].map(rectOf),
+  };
+}
 function scoreCandidate(input: ConstellationInput, candidate: Candidate): number {
   let score = candidate.template === input.lock?.template ? -CONSTELLATION_HOLD_MARGIN_PX : 0;
   const hud = (input.obstacles ?? []).map(rectBox);
@@ -771,6 +1164,34 @@ function scoreCandidate(input: ConstellationInput, candidate: Candidate): number
   };
   return score + preference[candidate.template] * 0.01;
 }
+
+/** Stable top-12 selection equivalent to `filter().sort(score).slice(0, 12)`.
+ * Scoring each candidate once avoids thousands of repeated score/map walks on
+ * a cold four-panel solve while retaining generation order as the tie-break. */
+function bestCandidates(
+  input: ConstellationInput,
+  candidates: readonly Candidate[],
+  gap: number,
+): Candidate[] {
+  const best: Array<{ candidate: Candidate; score: number; ordinal: number }> = [];
+  for (let ordinal = 0; ordinal < candidates.length; ordinal += 1) {
+    const candidate = candidates[ordinal];
+    constellationWorkStats.candidatesValidated += 1;
+    if (!hardValid(input, candidate.placements, gap)) continue;
+    const entry = { candidate, score: scoreCandidate(input, candidate), ordinal };
+    let at = best.length;
+    while (at > 0) {
+      const prior = best[at - 1];
+      if (prior.score < entry.score
+        || (prior.score === entry.score && prior.ordinal < entry.ordinal)) break;
+      at -= 1;
+    }
+    if (at >= 12) continue;
+    best.splice(at, 0, entry);
+    if (best.length > 12) best.pop();
+  }
+  return best.map(({ candidate }) => candidate);
+}
 function geometryKey(input: ConstellationInput, panels: readonly ConstellationPanel[]): string {
   const part = (value: number) => Math.round(value * 2);
   let key = `${part(input.stageWidth)},${part(input.stageHeight)},${part(input.safeTop)},${part(input.edge)}`;
@@ -783,38 +1204,52 @@ function geometryKey(input: ConstellationInput, panels: readonly ConstellationPa
   }
   return key;
 }
-function reuseLocked(input: ConstellationInput, panels: readonly ConstellationPanel[],
-  key: string, withRoutes: boolean): ConstellationLayout | null {
+function* lockedLayoutSteps(
+  input: ConstellationInput,
+  withRoutes: boolean,
+): Generator<void, ConstellationLayout | null> {
+  const panels = orderedPanels(input.panels);
+  const key = geometryKey(input, panels);
   const lock = input.lock;
-  if (!lock || lock.template === null) return null;
-  if (Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY) > 160) return null;
-  const previousSlots = Object.keys(lock.placements).filter((slot) => lock.placements[slot]);
-  const removedOnly = panels.every((panel) => lock.placements[panel.slot] !== undefined)
-    && panels.length < previousSlots.length;
-  if (lock.geometryKey !== key && !removedOnly) return null;
-  const sameGeometry = lock.geometryKey === key;
-  const placements = panels.map((panel) => {
-    const held = lock.placements[panel.slot] as ConstellationPlacement;
-    const next = placement(panel, sameGeometry ? held.height : panel.height, held.x, held.y,
-      input.anchorX, input.anchorY);
-    next.quadrant = held.quadrant;
-    return next;
-  });
-  if (!hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) return null;
-  const masks = withRoutes ? addRoutes(input, placements) : [];
-  if (!masks) return null;
-  return {
-    status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
-    template: lock.template, placements, masks,
-  };
+  if (lock?.template !== null && lock !== undefined
+    && Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY) <= 160) {
+    const previousSlots = Object.keys(lock.placements).filter((slot) => lock.placements[slot]);
+    const removedOnly = panels.every((panel) => lock.placements[panel.slot] !== undefined)
+      && panels.length < previousSlots.length;
+    if (lock.geometryKey === key || removedOnly) {
+      const sameGeometry = lock.geometryKey === key;
+      const placements = panels.map((panel) => {
+        const held = lock.placements[panel.slot] as ConstellationPlacement;
+        const next = placement(panel, sameGeometry ? held.height : panel.height, held.x, held.y,
+          input.anchorX, input.anchorY);
+        next.quadrant = held.quadrant;
+        return next;
+      });
+      if (hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) {
+        const masks = withRoutes ? yield* addRoutesSteps(input, placements) : [];
+        if (masks) {
+          constellationWorkStats.lockedReuses += 1;
+          return {
+            status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
+            template: lock.template, placements, masks,
+          };
+        }
+      }
+    }
+  }
+  return null;
 }
 
-function solveLayout(input: ConstellationInput, withRoutes: boolean): ConstellationLayout {
+function* solveLayoutSteps(
+  input: ConstellationInput,
+  withRoutes: boolean,
+): Generator<void, ConstellationLayout> {
   const panels = orderedPanels(input.panels);
   if (panels.length === 0) return { status: 'normal', template: null, placements: [], masks: [] };
-  const key = geometryKey(input, panels);
-  const held = reuseLocked(input, panels, key, withRoutes);
+  const held = yield* lockedLayoutSteps(input, withRoutes);
   if (held) return held;
+  const key = geometryKey(input, panels);
+  constellationWorkStats.fullSolves += 1;
   let best: Candidate | null = null;
   let bestMasks: HudOcclusionRect[] = [];
   for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
@@ -832,6 +1267,7 @@ function solveLayout(input: ConstellationInput, withRoutes: boolean): Constellat
         }
         const candidate = distributedCandidate(input, panels, sides, squeeze, gap);
         if (candidate) candidates.push(candidate);
+        if ((encoded & 31) === 31) yield;
       }
       const foldCount = 2 ** panels.length;
       for (let encoded = 1; encoded < foldCount - 1; encoded += 1) {
@@ -841,13 +1277,12 @@ function solveLayout(input: ConstellationInput, withRoutes: boolean): Constellat
         });
         const candidate = foldCandidate(input, panels, topSlots, squeeze, gap);
         if (candidate) candidates.push(candidate);
+        if ((encoded & 31) === 31) yield;
       }
-      const feasible = candidates
-        .filter((candidate) => hardValid(input, candidate.placements, gap))
-        .sort((a, b) => scoreCandidate(input, a) - scoreCandidate(input, b))
-        .slice(0, 12);
+      constellationWorkStats.candidatesBuilt += candidates.length;
+      const feasible = bestCandidates(input, candidates, gap);
       for (const candidate of feasible) {
-        const masks = withRoutes ? addRoutes(input, candidate.placements) : [];
+        const masks = withRoutes ? yield* addRoutesSteps(input, candidate.placements) : [];
         if (!masks) continue;
         // `feasible` is already sorted by its deterministic geometry score.
         // Take the first candidate whose internally shortest bounded routes are
@@ -875,6 +1310,31 @@ function solveLayout(input: ConstellationInput, withRoutes: boolean): Constellat
     }
   }
   return result;
+}
+
+function solveLayout(input: ConstellationInput, withRoutes: boolean): ConstellationLayout {
+  const steps = solveLayoutSteps(input, withRoutes);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/** Canonical layout as resumable work. Draining this iterator is byte-for-byte
+ * equivalent to `constellationLayout`; Canvas advances it under the shared
+ * frame ledger while tests and non-frame callers retain the synchronous API. */
+export function constellationLayoutCursor(
+  input: ConstellationInput,
+): Generator<void, ConstellationLayout> {
+  return solveLayoutSteps(input, true);
+}
+
+/** Only the held-placement path. A caller may drain this at a presentation
+ * deadline because failure returns `null` rather than falling through into the
+ * expensive candidate solve. */
+export function constellationLockedLayoutCursor(
+  input: ConstellationInput,
+): Generator<void, ConstellationLayout | null> {
+  return lockedLayoutSteps(input, true);
 }
 export function constellationLayout(input: ConstellationInput): ConstellationLayout {
   return solveLayout(input, true);

@@ -12,6 +12,7 @@ import {
   BRIDGE_PRE_BUILD_VERSION,
   BRIDGE_STEP_ESTIMATE_MS,
   bridgeRunDecision,
+  bridgeInputVersionMatches,
   nextBridgeStep,
   type BridgeBuildStep,
   type PendingBridgeBuild,
@@ -23,6 +24,10 @@ function arm(version: number, serial: number): PendingBridgeBuild {
 }
 
 describe('the bridge run decision', () => {
+  it('does not arm a rendered version against refs from a newer worker landing', () => {
+    expect(bridgeInputVersionMatches(7, 7)).toBe(true);
+    expect(bridgeInputVersionMatches(7, 8)).toBe(false);
+  });
   it('does not run before the fabric of its own build has landed', () => {
     const pending = arm(7, 1);
     // The commit that published build 7 armed this; the owner is still
@@ -116,19 +121,14 @@ describe('the bridge build as three steps', () => {
     expect(walked).toEqual(['sync', 'select', 'reconcile']);
   });
 
-  it('estimates the select as the grain and the reconcile as noise', () => {
-    // The review's own split of the 19.7 ms median body. These are the FIRST
-    // ask only: after a step runs, its last measured cost is the estimate.
+  it('seeds every first ask with the resumable slice cost', () => {
+    // Whole-step estimates would make the old 15 ms selector ineligible for
+    // the 12 ms ledger and force its first slice through starvation. These are
+    // the first ask only; the last measured slice becomes the next estimate.
     expect(BRIDGE_STEP_ESTIMATE_MS).toEqual({
-      sync: 6,
-      select: 15,
-      reconcile: 3,
+      sync: 2,
+      select: 2,
+      reconcile: 2,
     });
-    // The selection is the largest single grain the class has, which is why
-    // it is the step the frame budget is most likely to hold back.
-    expect(BRIDGE_STEP_ESTIMATE_MS.select)
-      .toBeGreaterThan(BRIDGE_STEP_ESTIMATE_MS.sync);
-    expect(BRIDGE_STEP_ESTIMATE_MS.select)
-      .toBeGreaterThan(BRIDGE_STEP_ESTIMATE_MS.reconcile);
   });
 });

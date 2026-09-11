@@ -11,6 +11,7 @@ import {
   constellationLayout,
   constellationPlacement,
   createConstellationLock,
+  revalidateConstellationLayoutForAnchor,
   resetConstellationLock,
   type ConstellationPanel,
   type ConstellationPlacement,
@@ -560,5 +561,37 @@ describe('whole-group routing', () => {
     expect(last.placements.map((panel) => `${panel.x},${panel.y}`).join('|')).toBe(seats);
     expect(last.placements[0].route?.points.map((point) => `${point.x},${point.y}`).join('|'))
       .not.toBe(route);
+  });
+
+  it('only presents a re-anchored old route after current hard-geometry checks', () => {
+    const baseInput = {
+      panels: THREE, stageWidth: 1920, stageHeight: 920,
+      safeTop: SAFE_TOP, edge: EDGE,
+      reserved: [{ left: 314, top: 543, right: 690, bottom: 567 }],
+    };
+    const base = constellationLayout({ ...baseInput, anchorX: 502, anchorY: 485 });
+    const movedInput = { ...baseInput, anchorX: 504, anchorY: 487 };
+    const moved = revalidateConstellationLayoutForAnchor(movedInput, base, 502, 485);
+    expect(moved).not.toBeNull();
+    expectCleanRoutes(moved!);
+    expectRoutesAvoid(moved!, 504, 487, movedInput.reserved, []);
+    for (const panel of moved!.placements) {
+      const end = panel.route!.points.at(-1)!;
+      const onVertical = (Math.abs(end.x - panel.x) < 0.1
+        || Math.abs(end.x - panel.x - panel.width) < 0.1)
+        && end.y >= panel.y && end.y <= panel.y + panel.height;
+      const onHorizontal = (Math.abs(end.y - panel.y) < 0.1
+        || Math.abs(end.y - panel.y - panel.height) < 0.1)
+        && end.x >= panel.x && end.x <= panel.x + panel.width;
+      expect(onVertical || onHorizontal).toBe(true);
+    }
+
+    const segment = base.placements[0].route!.points.slice(-2);
+    const blockX = (segment[0].x + segment[1].x) / 2;
+    const blockY = (segment[0].y + segment[1].y) / 2;
+    expect(revalidateConstellationLayoutForAnchor({
+      ...movedInput,
+      obstacles: [{ left: blockX - 3, top: blockY - 3, right: blockX + 3, bottom: blockY + 3 }],
+    }, base, 502, 485)).toBeNull();
   });
 });

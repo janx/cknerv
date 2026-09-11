@@ -340,34 +340,125 @@ export function reconcileBridgeStrokes(
   nowSec: number,
   moved?: BridgeStrokeState[],
 ): number {
-  let changed = 0;
-  const live = new Set<string>();
-  for (const bridge of bridges) {
-    const key = bridgeKey(bridge.cellId, bridge.anchorIndex);
-    live.add(key);
-    const existing = strokes.get(key);
-    if (existing === undefined) {
-      const born = makeBridgeStrokeState(bridge, nowSec);
-      strokes.set(key, born);
-      moved?.push(born);
-      changed += 1;
+  const job = createBridgeReconcileJob(strokes, bridges, nowSec, moved);
+  while (!stepBridgeReconcileJob(job, 16_384).done) {
+    // Compatibility API; the layer uses the resumable cursor.
+  }
+  return job.changed;
+}
+
+type BridgeReconcileAction =
+  | { kind: 'live'; key: string; stroke: BridgeStrokeState }
+  | { kind: 'die'; key: string };
+
+export interface BridgeReconcileJob {
+  phase: 'bridges' | 'existing' | 'commit' | 'done';
+  readonly strokes: Map<string, BridgeStrokeState>;
+  readonly bridges: readonly BridgeEdge[];
+  readonly nowSec: number;
+  readonly moved?: BridgeStrokeState[];
+  readonly live: Set<string>;
+  readonly actions: BridgeReconcileAction[];
+  bridgeCursor: number;
+  existing: Iterator<[string, BridgeStrokeState]> | null;
+  changed: number;
+  operations: number;
+}
+
+export function createBridgeReconcileJob(
+  strokes: Map<string, BridgeStrokeState>,
+  bridges: readonly BridgeEdge[],
+  nowSec: number,
+  moved?: BridgeStrokeState[],
+): BridgeReconcileJob {
+  return {
+    phase: 'bridges', strokes, bridges, nowSec, moved,
+    live: new Set(), actions: [], bridgeCursor: 0, existing: null,
+    changed: 0, operations: 0,
+  };
+}
+
+export function stepBridgeReconcileJob(
+  job: BridgeReconcileJob,
+  operationBudget: number,
+): { done: boolean; phase: BridgeReconcileJob['phase']; operations: number } {
+  let left = Math.max(1, Math.floor(operationBudget));
+  const started = left;
+  while (left > 0 && job.phase !== 'done') {
+    if (job.phase === 'bridges') {
+      if (job.bridgeCursor >= job.bridges.length) {
+        job.existing = job.strokes.entries();
+        job.phase = 'existing';
+        continue;
+      }
+      const bridge = job.bridges[job.bridgeCursor++];
+      const key = bridgeKey(bridge.cellId, bridge.anchorIndex);
+      job.live.add(key);
+      const existing = job.strokes.get(key);
+      if (existing === undefined) {
+        job.actions.push({
+          kind: 'live', key,
+          stroke: makeBridgeStrokeState(bridge, job.nowSec),
+        });
+      } else if (existing.dyingAt !== null) {
+        job.actions.push({ kind: 'live', key, stroke: existing });
+      }
+      left -= 1;
       continue;
     }
-    // A host re-admitted before its retract finished keeps growing from where
-    // it is rather than restarting: the clock is left alone.
-    if (existing.dyingAt !== null) {
-      existing.dyingAt = null;
-      moved?.push(existing);
+    if (job.phase === 'existing') {
+      const next = job.existing!.next(); left -= 1;
+      if (next.done) { job.phase = 'commit'; continue; }
+      const [key, stroke] = next.value;
+      if (!job.live.has(key) && stroke.dyingAt === null) {
+        job.actions.push({ kind: 'die', key });
+      }
+      continue;
+    }
+    // The scan above is cancellation-safe. Commit is one bounded O(churn)
+    // transaction, so a superseding generation cannot leave half a selection
+    // with an earlier birth/death clock.
+    let changed = 0;
+    for (const action of job.actions) {
+      const current = job.strokes.get(action.key);
+      if (action.kind === 'live') {
+        // The render loop may reap a fully withdrawn record while this scan
+        // is suspended. Rebase on the map at commit: revive the current
+        // record when one exists, or put the scanned record back after its
+        // slot was released. Either route keeps the selection's original
+        // event clock and lets admission allocate a fresh slot when needed.
+        const stroke = current ?? action.stroke;
+        if (current !== undefined && current.dyingAt === null) continue;
+        stroke.dyingAt = null;
+        if (current === undefined) job.strokes.set(action.key, stroke);
+        job.moved?.push(stroke);
+      } else {
+        if (current === undefined || current.dyingAt !== null) continue;
+        current.dyingAt = job.nowSec;
+        job.moved?.push(current);
+      }
       changed += 1;
     }
+    job.changed = changed;
+    job.phase = 'done';
   }
-  for (const [key, stroke] of strokes) {
-    if (live.has(key) || stroke.dyingAt !== null) continue;
-    stroke.dyingAt = nowSec;
-    moved?.push(stroke);
-    changed += 1;
-  }
-  return changed;
+  const operations = started - left;
+  job.operations += operations;
+  return { done: job.phase === 'done', phase: job.phase, operations };
+}
+
+export function runBridgeReconcileJobSlice(
+  job: BridgeReconcileJob,
+  budgetMs = 2,
+  now: () => number = () => performance.now(),
+): { done: boolean; phase: BridgeReconcileJob['phase']; operations: number; elapsedMs: number } {
+  const started = now(); let operations = 0;
+  let progress = { done: false, phase: job.phase, operations: 0 };
+  do {
+    progress = stepBridgeReconcileJob(job, 32);
+    operations += progress.operations;
+  } while (!progress.done && now() - started < budgetMs);
+  return { ...progress, operations, elapsedMs: now() - started };
 }
 
 /** Reused so the per-frame walk allocates nothing. Two of its five fields are

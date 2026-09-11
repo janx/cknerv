@@ -2419,6 +2419,8 @@ function CellGalaxy({
     // to conclude exactly that. Reaping is frame-driven and is the one thing
     // that re-syncs the slots with no journal patch behind it.
     const membershipNeedsSync = stagedChanged || overlayChanged || holdsChanged;
+    const previousCombined = overlayState.combined;
+    let stagedSlotHint = false;
     if (membershipNeedsSync) {
       const staged = renderSet.cells;
       const overlayEntries = overlayState.entries;
@@ -2430,11 +2432,26 @@ function CellGalaxy({
         && holdCells.length === 0
         ? staged
         : staged.concat(overlayEntries, holdCells);
+      stagedSlotHint = renderUpdate !== null
+        && previousCombined === renderUpdate.previousCells
+        && overlayState.combined === renderUpdate.cells;
     }
     // Stable-slot indirection: each cell keeps its GPU slot while visible
     // (staged, overlay, or fading out), so uploads collapse to O(churn).
     const slotSync = membershipNeedsSync
-      ? syncCellSlots(cellSlotStateRef.current, overlayState.combined)
+      ? syncCellSlots(
+        cellSlotStateRef.current,
+        overlayState.combined,
+        stagedSlotHint && renderUpdate !== null
+          ? {
+            previousCells: renderUpdate.previousCells,
+            removedIds: renderUpdate.exited,
+            upserts: renderUpdate.ranges.flatMap((range) => (
+              renderUpdate.cells.slice(range.start, range.start + range.count)
+            )),
+          }
+          : undefined,
+      )
       : null;
     const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
     const count = cellsList.length;

@@ -63,19 +63,23 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import type { Cell } from '@cknerv/types';
 
 import { neverRaycast } from '../components/CellPopulationField';
 import {
   BRIDGE_ALLOCATION_BRIDGES,
   buildBridgeAnchorIndex,
+  createBridgeHostSyncJob,
   bridgeKey,
+  createBridgeSelectionJob,
   createBridgeHostRegistry,
-  selectBridgeEdges,
-  syncBridgeHosts,
+  runBridgeSelectionJobSlice,
+  runBridgeHostSyncJobSlice,
   type BridgeAnchorIndex,
   type BridgeHostPlan,
+  type BridgeHostSources,
+  type BridgeHostSyncJob,
   type BridgeSelection,
+  type BridgeSelectionJob,
 } from '../geometry/bridgeEdges';
 import type { PassiveSelection } from '../geometry/neighborGraph';
 import { usePopulationPlacement } from '../geometry/populationPlacementStore';
@@ -102,6 +106,7 @@ import {
 import { blockFrameNowMs, blockFrameStats } from './blockFrameStats';
 import {
   BRIDGE_STEP_ESTIMATE_MS,
+  bridgeInputVersionMatches,
   bridgeRunDecision,
   nextBridgeStep,
   type BridgeBuildStep,
@@ -116,7 +121,9 @@ import {
   BRIDGE_NO_SLOT,
   BRIDGE_WIDTH_RATIO,
   bridgeRenderStateInto,
-  reconcileBridgeStrokes,
+  createBridgeReconcileJob,
+  runBridgeReconcileJobSlice,
+  type BridgeReconcileJob,
   writeBridgeStroke,
   type BridgeStrokeState,
 } from './bridgeStroke';
@@ -168,11 +175,9 @@ const BRIDGE_SLOT_SEGMENTS = FABRIC_SLOT_SEGMENTS;
  *  tests; the merge itself is the fabric family's (see `fabricSlots`). */
 export const BRIDGE_UPLOAD_POLICY = slotUploadPolicy(BRIDGE_SLOT_UPLOAD_BYTES, 3);
 
-/** Memo caches are keyed by Cell id and a Cell that leaves the stage never
- *  comes back with a different position, so nothing ever invalidates an entry
- *  — which over a long session is a leak rather than a cache. Both are pure
- *  memos, so dropping them wholesale is free. */
-const MEMO_CAP = 200_000;
+/** Target wall time per selector frame. The cursor checks time between
+ * deterministic 32-operation quanta and records the unavoidable overshoot. */
+export const BRIDGE_SELECTION_SLICE_MS = 2;
 
 /** Park a run of segments: the fabric's own parking — zero colours, endpoints
  *  far outside the frustum — plus the one lane this class owns on top of it.
@@ -306,22 +311,29 @@ function commitBridgeSlotRanges(
 interface RunningBridgeBuild {
   readonly pending: PendingBridgeBuild & {
     readonly anchorIndex: BridgeAnchorIndex;
+    readonly cells: BridgeHostSources;
+    readonly edges: PassiveSelection['edges'];
   };
   /** The step this sequence will run NEXT. */
   step: BridgeBuildStep;
   /** What step B chose, waiting for step C to reconcile it. */
   selection: BridgeSelection | null;
+  syncJob: BridgeHostSyncJob | null;
+  selectionJob: BridgeSelectionJob | null;
+  reconcileJob: BridgeReconcileJob | null;
   spentMs: number;
   stepMaxMs: number;
 }
 
 export interface CellBridgeNervesProps {
-  /** The staged Cell map the topology build packed. Read at `version`. */
-  cellsRef: { readonly current: ReadonlyMap<number, Cell> };
+  /** Immutable staged Cells captured when the topology build landed. */
+  cellsRef: { readonly current: BridgeHostSources };
   /** The DRAWN passive fabric selection, for host degree — a Cell whose
    *  neighbours exist but were never selected looks exactly as bare as one
    *  with no neighbours. */
   passiveGraphRef: { readonly current: PassiveSelection };
+  /** Atomically published after both immutable refs above. */
+  inputVersionRef?: { readonly current: number };
   /** Bumped by the owner whenever both refs above hold a completed build. */
   version: number;
   /** The display graph version whose fabric grow/kill has fully landed — the
@@ -337,6 +349,7 @@ export interface CellBridgeNervesProps {
 export default function CellBridgeNerves({
   cellsRef,
   passiveGraphRef,
+  inputVersionRef,
   version,
   fabricLandedVersionRef,
   cellDetailViewFocusRef,
@@ -393,13 +406,17 @@ export default function CellBridgeNerves({
    *  one, so a build superseded before its own fabric landed never selects
    *  (the newer arm's selection reads the same registry it would have). */
   const pendingBuildRef = useRef<
-    (PendingBridgeBuild & { readonly anchorIndex: BridgeAnchorIndex }) | null
+    (PendingBridgeBuild & {
+      readonly anchorIndex: BridgeAnchorIndex;
+      readonly cells: BridgeHostSources;
+      readonly edges: PassiveSelection['edges'];
+    }) | null
   >(null);
   /** Arm serials: the one the last commit issued, and the one the last frame
    *  consumed. See `bridgeSchedule` for why the arm and not the version. */
   const armRef = useRef(0);
   const ranArmRef = useRef(0);
-  /** The build part-way through its three steps, at most one step a frame.
+  /** The build part-way through its three phases, at most one slice a frame.
    *  Null between sequences; REPLACED (never queued behind) by a newer arm,
    *  so the hosts of two versions can never be mixed inside one selection. */
   const runningRef = useRef<RunningBridgeBuild | null>(null);
@@ -475,16 +492,16 @@ export default function CellBridgeNerves({
   // run there would read a fabric that is provably one to three frames behind.
   // And the body is 19.7 ms at the median (33.2 at the worst) on the very
   // frame the fabric drain and the live-plan slice also want, so it runs as
-  // `bridgeSchedule`'s three steps — sync, select, reconcile — one step per
-  // frame at most, each asking the frame budget before it starts.
+  // `bridgeSchedule`'s three phases — sync, select, reconcile — one bounded
+  // slice per frame at most, each asking the frame budget before it starts.
   //
   // ⚠️ The build every step runs for is the one the ARM named, and both halves
   // of it are destructured out of the running record on purpose: the body
   // cannot see the render's current `anchorIndex` or `version` at all, so it
-  // cannot select for a build other than its own. Everything else is a ref
-  // read NOW — the registry sync is about what the staged Cells and the drawn
-  // fabric hold THIS frame, not what they held when the slot was armed, and
-  // the same is true of every later step.
+  // cannot select for a build other than its own. Cells and passive edges are
+  // the immutable pair captured by that arm's version tag; a later worker may
+  // publish its refs before React renders the new version without changing a
+  // sync already waiting for the fabric drain.
   const runBridgeBuild = useCallback((running: RunningBridgeBuild) => {
     const { anchorIndex, version } = running.pending;
     const step = running.step;
@@ -497,6 +514,7 @@ export default function CellBridgeNerves({
     // report the two writes that arm it and hide everything they defer.
     const stepStartedAtMs = blockFrameNowMs();
     let finished = false;
+    let repeatStep = false;
     try {
       if (step === 'sync') {
         const registry = registryRef.current;
@@ -506,12 +524,16 @@ export default function CellBridgeNerves({
         const hostsProbe = beginCpuProbe(
           PERFORMANCE_PROBE_LABELS.bridgeHostsSync,
         );
-        const moved = syncBridgeHosts(
-          registry,
-          cellsRef.current,
-          passiveGraphRef.current.edges,
+        running.syncJob ??= createBridgeHostSyncJob(
+          registry, running.pending.cells, running.pending.edges,
+        );
+        const syncProgress = runBridgeHostSyncJobSlice(
+          running.syncJob, BRIDGE_SELECTION_SLICE_MS, blockFrameNowMs,
         );
         endCpuProbe(hostsProbe);
+        if (!syncProgress.done) {
+          repeatStep = true;
+        }
         // ⭐ The skip. The registry is exact about what the selection reads, so
         // a build that moved no host against the same anchors would select the
         // same bridges, reconcile them to zero movement, and leave the layer as
@@ -520,7 +542,9 @@ export default function CellBridgeNerves({
         // this one are never even started. The boot record still hears from
         // this build: first report wins in the gate, and the answer is the last
         // selection's, which is what this build's would have been.
-        if (!moved && selectedAgainstRef.current === anchorIndex) {
+        if (syncProgress.done
+          && !running.syncJob.moved
+          && selectedAgainstRef.current === anchorIndex) {
           const now = simClock.elapsedSec;
           bridgeStats.observeBuild(true, 0);
           if (version >= 1) {
@@ -531,25 +555,22 @@ export default function CellBridgeNerves({
           finished = true;
         }
       } else if (step === 'select') {
-        if (coverageCacheRef.current.size > MEMO_CAP) {
-          coverageCacheRef.current = new Map();
-        }
-        if (planCacheRef.current.size > MEMO_CAP) {
-          planCacheRef.current = new Map();
-        }
         // ⚠️ The span is the SELECTION alone now — the reconcile is a step of
         // its own and has the step gauge for a reading. That is the honest
         // shape: this probe's mean used to fold in a reconcile that costs
         // single-digit percent of it.
         const selectProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.bridgeSelect);
-        running.selection = selectBridgeEdges(
-          registryRef.current.hosts.values(),
-          anchorIndex,
-          {
+        running.selectionJob ??= createBridgeSelectionJob(
+          registryRef.current.hosts.values(), anchorIndex, {
             coverageCache: coverageCacheRef.current,
             planCache: planCacheRef.current,
           },
         );
+        const progress = runBridgeSelectionJobSlice(
+          running.selectionJob, BRIDGE_SELECTION_SLICE_MS, blockFrameNowMs,
+        );
+        if (progress.done) running.selection = running.selectionJob.result;
+        else repeatStep = true;
         endCpuProbe(selectProbe);
       } else {
         const selection = running.selection;
@@ -557,6 +578,15 @@ export default function CellBridgeNerves({
         // closes rather than retrying a step that has already failed.
         if (selection !== null) {
           const now = simClock.elapsedSec;
+          running.reconcileJob ??= createBridgeReconcileJob(
+            strokesRef.current, selection.bridges, now, pendingRef.current,
+          );
+          const reconcileProgress = runBridgeReconcileJobSlice(
+            running.reconcileJob, BRIDGE_SELECTION_SLICE_MS, blockFrameNowMs,
+          );
+          if (!reconcileProgress.done) {
+            repeatStep = true;
+          } else {
           // ⚠️ Written HERE and not beside the selection: these two are what
           // the skip above tests, so they may only claim what the layer
           // actually holds. A sequence a newer arm replaced between B and C
@@ -573,9 +603,7 @@ export default function CellBridgeNerves({
           // strokes writes six, not the ~1,600 the full walk used to restate.
           // The knob gate in the frame is the other arm and stays
           // unconditional: a knob moves every stroke's energy at once.
-          const changed = reconcileBridgeStrokes(
-            strokesRef.current, selection.bridges, now, pendingRef.current,
-          );
+          const changed = running.reconcileJob.changed;
           bridgeStats.observeBuild(false, changed);
           // The boot record's outer-nerve deadline. The first selection against
           // a real topology build (version 0 is the pre-build mount pass over
@@ -589,8 +617,9 @@ export default function CellBridgeNerves({
               selection.bridges.length > 0 ? now + GROWTH_MS / 1000 : now,
             );
           }
+          }
         }
-        finished = true;
+        finished = !repeatStep;
       }
     } finally {
       const elapsedMs = blockFrameNowMs() - stepStartedAtMs;
@@ -602,7 +631,7 @@ export default function CellBridgeNerves({
       if (elapsedMs > running.stepMaxMs) running.stepMaxMs = elapsedMs;
       // A step is spent whether it returned or threw — a sequence that retried
       // a step which had already failed would fail on every frame from here on.
-      const next = finished ? null : nextBridgeStep(step);
+      const next = finished ? null : (repeatStep ? step : nextBridgeStep(step));
       if (next === null) {
         if (runningRef.current === running) runningRef.current = null;
         blockFrameStats.observeBridge(running.spentMs, running.stepMaxMs);
@@ -619,9 +648,17 @@ export default function CellBridgeNerves({
   // set of things that re-select is unchanged to the letter.
   useEffect(() => {
     if (anchorIndex === null) return;
+    if (inputVersionRef
+      && !bridgeInputVersionMatches(version, inputVersionRef.current)) return;
     armRef.current += 1;
-    pendingBuildRef.current = { anchorIndex, version, arm: armRef.current };
-  }, [anchorIndex, version, cellsRef, passiveGraphRef, simClock]);
+    pendingBuildRef.current = {
+      anchorIndex,
+      version,
+      arm: armRef.current,
+      cells: cellsRef.current,
+      edges: passiveGraphRef.current.edges,
+    };
+  }, [anchorIndex, version, cellsRef, passiveGraphRef, inputVersionRef, simClock]);
 
   useSimFrame(() => {
     // ⭐ The bridge frames. One STEP per frame, ahead of everything else this
@@ -654,6 +691,9 @@ export default function CellBridgeNerves({
         pending: pendingBuild,
         step: 'sync',
         selection: null,
+        syncJob: null,
+        selectionJob: null,
+        reconcileJob: null,
         spentMs: abandoned?.spentMs ?? 0,
         stepMaxMs: abandoned?.stepMaxMs ?? 0,
       };

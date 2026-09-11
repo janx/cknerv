@@ -1566,7 +1566,7 @@ describe('what a POW cohort looks like', () => {
     // session reaches; this is where the ALLOCATION is pinned — on BOTH
     // buffers, since the specks' copy is filled by `buildCohortMotesGeometry`.
     expect(COHORT_NEVER_WON).toBe(-1e6);
-    expect(layer).toContain('new Float32Array(capacity).fill(COHORT_NEVER_WON),');
+    expect(layer).toContain('gulp: lane(new Float32Array(capacity).fill(COHORT_NEVER_WON)),');
 
     // ⭐⭐ ONE WRAPPER PER LANE, AND THE WRAPPER IS THE IDENTITY THE UPLOADS GO
     // BY. A second `InstancedBufferAttribute` around the same array is a second
@@ -1576,7 +1576,7 @@ describe('what a POW cohort looks like', () => {
     // the seed, the gulp and — since 2026-09-04 — the MASS, which is allocated
     // at 1 before anything writes it, because a lane the geometry does not
     // carry reads as ZERO in WebGL and zero is a mark with no extent at all.
-    expect([...layer.matchAll(/new THREE\.InstancedBufferAttribute\(/g)]).toHaveLength(4);
+    expect([...layer.matchAll(/:\s*lane\(new Float32Array\(capacity\)/g)]).toHaveLength(4);
     expect(layer).toContain('new Float32Array(capacity).fill(1),');
     expect([...layer.matchAll(/setAttribute\('aMass'/g)]).toHaveLength(1);
     expect(layer).toContain("lensGeometry.setAttribute('aMass', lanes.mass);");
@@ -1595,7 +1595,7 @@ describe('what a POW cohort looks like', () => {
     expect([...layer.matchAll(/stampCohortMotes\(/g)]).toHaveLength(2);
     expect(layer).toContain('stampCohortMotes(motesGeometry, index, at);');
     expect(layer).toContain('wonAtRef.current.get(mark.nodeId) ?? COHORT_NEVER_WON,');
-    expect([...layer.matchAll(/lanes\.gulp\.needsUpdate = true;/g)]).toHaveLength(2);
+    expect([...layer.matchAll(/markCohortAttributeRange\(lanes\.gulp,/g)]).toHaveLength(2);
     expect(lensVertex()).toContain('attribute float aGulp;');
     expect(motesVertex()).toContain('attribute float aGulp;');
     // ⚠️ THE LIVE OBJECT CANNOT BE REACHED FROM HERE, AND THAT IS WHY THIS IS A

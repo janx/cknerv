@@ -25,6 +25,11 @@ export * from './layout';
 // camera uses the rails' horizontal reservation, independent of loaded data.
 export type { HudHole } from './components/hudOcclusion';
 export type { HudCameraFrame } from './components/hud/useHudCameraFrame';
+export {
+  snapshotConstellationWorkStats,
+  resetConstellationWorkStats,
+  type ConstellationWorkStats,
+} from './derives/cellConstellation.derive';
 
 // ── Tweaks (sim-clock, useSimFrame, leva presets) ───────────────────
 export * from './tweaks/simClock';

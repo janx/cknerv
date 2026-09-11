@@ -673,6 +673,10 @@ export function viewportMinusSafeArea(
 //   `cellScanClock.ts` 80  its sampling period. The beam's own transition
 //                       READS this constant, so the beam interpolates between
 //                       two samples rather than racing them.
+//   `cellConstellationCameraMotion.ts` 80  the camera classifier's evidence
+//                       window. It waits for cumulative screen drift to stay
+//                       below its settle threshold; no visual transition is
+//                       assigned this duration.
 //   `BlockCadenceEcg.tsx` 100 · 1000  the trace's 10 fps redraw and the PULSE
 //                       stopwatch's tick, which drops to 1 Hz when motion is
 //                       reduced — a slower instrument, not a stopped one.

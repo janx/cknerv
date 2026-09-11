@@ -329,6 +329,13 @@ export interface BridgeHostRecord extends BridgeHostCell {
   seen: number;
 }
 
+/** A stable published host collection. Both an immutable Cell array and a
+ * readonly Map expose this surface; the Canvas owner publishes the former so
+ * a later in-place stage-map patch cannot change a suspended sync cursor. */
+export interface BridgeHostSources {
+  values(): IterableIterator<BridgeHostSourceCell>;
+}
+
 export function createBridgeHostRegistry(): BridgeHostRegistry {
   return { hosts: new Map(), generation: 0 };
 }
@@ -338,9 +345,6 @@ export function createBridgeHostRegistry(): BridgeHostRegistry {
 function hostDegreeRung(degree: number, maxHostDegree: number): number {
   return degree > maxHostDegree ? maxHostDegree + 1 : degree;
 }
-
-/** A record's degree before it has ever been counted. */
-const UNCOUNTED = -1;
 
 /**
  * Bring the registry up to date with one completed topology build, and report
@@ -362,70 +366,132 @@ const UNCOUNTED = -1;
  * `edges` is the DRAWN passive selection: a Cell whose neighbours exist but
  * were never selected has to look exactly as bare as one with none.
  *
- * Three passes and no scratch map: the stage stamps every living record (and
- * creates the missing ones), the edges count degrees straight onto those
- * records, and the registry then judges each record against what it was —
- * an unstamped record is a Cell that left. Measured on a 12,000-Cell stage
- * with 8,000 drawn edges this is the whole cost of a build that moved
- * nothing.
+ * The resumable cursor first captures living sources and degrees into private
+ * scratch maps, then builds the next host map. It swaps that map into the
+ * registry only after all passes finish, so cancellation cannot publish a
+ * mixed generation.
  */
 export function syncBridgeHosts(
   registry: BridgeHostRegistry,
-  cells: ReadonlyMap<number, BridgeHostSourceCell>,
+  cells: BridgeHostSources,
   edges: Iterable<{ readonly from: number; readonly to: number }>,
   maxHostDegree: number = BRIDGE_MAX_HOST_DEGREE,
 ): boolean {
-  const hosts = registry.hosts;
-  const generation = registry.generation + 1;
-  registry.generation = generation;
-  for (const cell of cells.values()) {
-    // A dead-but-not-yet-collected Cell contributes no fabric edge, and it
-    // must contribute no bridge either — a retracting fibre that a rebuild
-    // resurrects is the exact bug `buildNeighborGraph` guards against.
-    if (cell.death_at_ms != null) continue;
-    const host = hosts.get(cell.id);
-    if (host === undefined) {
-      hosts.set(cell.id, {
-        id: cell.id,
-        x: cell.pos_seed[0],
-        y: cell.pos_seed[1],
-        z: cell.pos_seed[2],
-        degree: UNCOUNTED,
-        next: 0,
-        seen: generation,
-      });
-    } else {
-      host.seen = generation;
-    }
+  const job = createBridgeHostSyncJob(registry, cells, edges, maxHostDegree);
+  while (!stepBridgeHostSyncJob(job, 16_384).done) {
+    // Compatibility API; Canvas advances this cursor under a wall budget.
   }
-  for (const edge of edges) {
-    const from = hosts.get(edge.from);
-    if (from !== undefined) from.next += 1;
-    const to = hosts.get(edge.to);
-    if (to !== undefined) to.next += 1;
-  }
-  let moved = false;
-  for (const [id, host] of hosts) {
-    if (host.seen !== generation) {
-      // Left the stage, or died on it. Judged at the degree the last
-      // selection saw: a Cell that was never a candidate takes no stroke.
-      hosts.delete(id);
-      if (host.degree <= maxHostDegree) moved = true;
+  return job.moved;
+}
+
+export type BridgeHostSyncPhase = 'cells' | 'edges' | 'hosts' | 'departures' | 'done';
+
+export interface BridgeHostSyncJob {
+  phase: BridgeHostSyncPhase;
+  readonly registry: BridgeHostRegistry;
+  readonly oldHosts: Map<number, BridgeHostRecord>;
+  readonly cells: Iterator<BridgeHostSourceCell>;
+  readonly edges: Iterator<{ readonly from: number; readonly to: number }>;
+  readonly sources: Map<number, BridgeHostSourceCell>;
+  readonly degrees: Map<number, number>;
+  readonly nextHosts: Map<number, BridgeHostRecord>;
+  readonly maxHostDegree: number;
+  hostIterator: Iterator<[number, BridgeHostSourceCell]> | null;
+  departureIterator: Iterator<[number, BridgeHostRecord]> | null;
+  moved: boolean;
+  operations: number;
+}
+
+export function createBridgeHostSyncJob(
+  registry: BridgeHostRegistry,
+  cells: BridgeHostSources,
+  edges: Iterable<{ readonly from: number; readonly to: number }>,
+  maxHostDegree = BRIDGE_MAX_HOST_DEGREE,
+): BridgeHostSyncJob {
+  return {
+    phase: 'cells', registry, oldHosts: registry.hosts,
+    cells: cells.values(), edges: edges[Symbol.iterator](),
+    sources: new Map(), degrees: new Map(), nextHosts: new Map(),
+    maxHostDegree, hostIterator: null, departureIterator: null,
+    moved: false, operations: 0,
+  };
+}
+
+export function stepBridgeHostSyncJob(
+  job: BridgeHostSyncJob,
+  operationBudget: number,
+): { done: boolean; phase: BridgeHostSyncPhase; operations: number } {
+  let left = Math.max(1, Math.floor(operationBudget));
+  const started = left;
+  while (left > 0 && job.phase !== 'done') {
+    if (job.phase === 'cells') {
+      const next = job.cells.next(); left -= 1;
+      if (next.done) { job.phase = 'edges'; continue; }
+      if (next.value.death_at_ms == null) job.sources.set(next.value.id, next.value);
       continue;
     }
-    const next = host.next;
-    host.next = 0;
-    if (host.degree === UNCOUNTED) {
-      if (next <= maxHostDegree) moved = true;
-    } else if (
-      hostDegreeRung(host.degree, maxHostDegree)
-      !== hostDegreeRung(next, maxHostDegree)
-    ) {
-      moved = true;
+    if (job.phase === 'edges') {
+      const next = job.edges.next(); left -= 1;
+      if (next.done) {
+        job.hostIterator = job.sources.entries();
+        job.phase = 'hosts';
+        continue;
+      }
+      if (job.sources.has(next.value.from)) {
+        job.degrees.set(next.value.from, (job.degrees.get(next.value.from) ?? 0) + 1);
+      }
+      if (job.sources.has(next.value.to)) {
+        job.degrees.set(next.value.to, (job.degrees.get(next.value.to) ?? 0) + 1);
+      }
+      continue;
     }
-    host.degree = next;
+    if (job.phase === 'hosts') {
+      const next = job.hostIterator!.next(); left -= 1;
+      if (next.done) {
+        job.departureIterator = job.oldHosts.entries();
+        job.phase = 'departures';
+        continue;
+      }
+      const [id, cell] = next.value;
+      const degree = job.degrees.get(id) ?? 0;
+      const old = job.oldHosts.get(id);
+      if (old === undefined) {
+        if (degree <= job.maxHostDegree) job.moved = true;
+      } else if (hostDegreeRung(old.degree, job.maxHostDegree)
+        !== hostDegreeRung(degree, job.maxHostDegree)) job.moved = true;
+      job.nextHosts.set(id, {
+        id, x: cell.pos_seed[0], y: cell.pos_seed[1], z: cell.pos_seed[2],
+        degree, next: 0, seen: job.registry.generation + 1,
+      });
+      continue;
+    }
+    const next = job.departureIterator!.next(); left -= 1;
+    if (!next.done) {
+      const [id, old] = next.value;
+      if (!job.sources.has(id) && old.degree <= job.maxHostDegree) job.moved = true;
+      continue;
+    }
+    job.registry.hosts = job.nextHosts;
+    job.registry.generation += 1;
+    job.phase = 'done';
   }
-  return moved;
+  const operations = started - left;
+  job.operations += operations;
+  return { done: job.phase === 'done', phase: job.phase, operations };
+}
+
+export function runBridgeHostSyncJobSlice(
+  job: BridgeHostSyncJob,
+  budgetMs = 2,
+  now: () => number = () => performance.now(),
+): { done: boolean; phase: BridgeHostSyncPhase; operations: number; elapsedMs: number } {
+  const started = now(); let operations = 0;
+  let progress = { done: false, phase: job.phase, operations: 0 };
+  do {
+    progress = stepBridgeHostSyncJob(job, 32);
+    operations += progress.operations;
+  } while (!progress.done && now() - started < budgetMs);
+  return { ...progress, operations, elapsedMs: now() - started };
 }
 
 /** The halo's placed buffers, read-only. This module never writes them and
@@ -692,15 +758,54 @@ export interface AnchorCandidate {
   tier: number;
 }
 
-function collectAnchorCandidates(
+function compareAnchorCandidates(a: AnchorCandidate, b: AnchorCandidate): number {
+  return a.tier - b.tier
+    || a.distanceSq - b.distanceSq
+    || a.index - b.index;
+}
+
+/** Keep the worst retained anchor at zero so a dense bucket scan only owns
+ * the globally best pool-sized prefix. */
+function pushAnchorCandidate(heap: AnchorCandidate[], candidate: AnchorCandidate): void {
+  let child = heap.length;
+  heap.push(candidate);
+  while (child > 0) {
+    const parent = Math.floor((child - 1) / 2);
+    if (compareAnchorCandidates(heap[parent], candidate) >= 0) break;
+    heap[child] = heap[parent];
+    child = parent;
+  }
+  heap[child] = candidate;
+}
+
+function replaceWorstAnchorCandidate(
+  heap: AnchorCandidate[],
+  candidate: AnchorCandidate,
+): void {
+  let parent = 0;
+  while (true) {
+    const left = parent * 2 + 1;
+    if (left >= heap.length) break;
+    const right = left + 1;
+    const child = right < heap.length
+      && compareAnchorCandidates(heap[right], heap[left]) > 0 ? right : left;
+    if (compareAnchorCandidates(heap[child], candidate) <= 0) break;
+    heap[parent] = heap[child];
+    parent = child;
+  }
+  heap[parent] = candidate;
+}
+
+function* collectAnchorCandidateSteps(
   index: BridgeAnchorIndex,
   x: number,
   z: number,
   reach: number,
   out: AnchorCandidate[],
-): void {
+): Generator<void, void, void> {
   out.length = 0;
   if (index.limit === 0) return;
+  let scanned = 0;
   const reachSq = reach * reach;
   const col = Math.floor((x - index.minX) / index.cellSize);
   const row = Math.floor((z - index.minZ) / index.cellSize);
@@ -712,27 +817,43 @@ function collectAnchorCandidates(
       const start = index.bucketStart[bucket];
       const end = index.bucketStart[bucket + 1];
       for (let slot = start; slot < end; slot += 1) {
+        scanned += 1;
         const point = index.bucketItems[slot];
         const dx = index.field.positions[point * 3] - x;
         const dz = index.field.positions[point * 3 + 2] - z;
         const distanceSq = dx * dx + dz * dz;
-        if (distanceSq > reachSq) continue;
-        out.push({
-          index: point,
-          distanceSq,
-          tier: componentTier(index.componentSize[point]),
-        });
+        if (distanceSq <= reachSq) {
+          const candidate = {
+            index: point,
+            distanceSq,
+            tier: componentTier(index.componentSize[point]),
+          };
+          if (out.length < BRIDGE_ANCHOR_POOL) pushAnchorCandidate(out, candidate);
+          else if (compareAnchorCandidates(candidate, out[0]) < 0) {
+            replaceWorstAnchorCandidate(out, candidate);
+          }
+        }
+        if ((scanned & 31) === 0) yield;
       }
     }
   }
   // Total order: strand before dust, then nearest, then the placement's own
   // index. No two candidates compare equal, so the result cannot depend on
   // the bucket walk that produced them.
-  out.sort((a, b) => (
-    a.tier - b.tier
-    || a.distanceSq - b.distanceSq
-    || a.index - b.index
-  ));
+  // planHostBridgeSteps never observes more than BRIDGE_ANCHOR_POOL entries.
+  // Sorting that bounded prefix recreates the exact old full-sort prefix.
+  out.sort(compareAnchorCandidates);
+}
+
+function collectAnchorCandidates(
+  index: BridgeAnchorIndex,
+  x: number,
+  z: number,
+  reach: number,
+  out: AnchorCandidate[],
+): void {
+  const steps = collectAnchorCandidateSteps(index, x, z, reach, out);
+  while (!steps.next().done) {}
 }
 
 interface HostCandidate {
@@ -756,6 +877,9 @@ export interface BridgeSelectionOptions {
    *  turns a 19 ms rebuild into a 2 ms one. Invalidate by discarding the map
    *  whenever the anchor index is rebuilt. */
   planCache?: Map<number, BridgeHostPlan>;
+  /** Bounded insertion-order retention. Eviction changes only recomputation,
+   * never selection order or identity. */
+  cacheLimit?: number;
 }
 
 export interface BridgeHostPlan {
@@ -772,12 +896,26 @@ export interface BridgeHostPlan {
 function hostCoverage(
   cell: BridgeHostCell,
   cache: Map<number, number> | undefined,
+  cacheLimit = 200_000,
 ): number {
   const cached = cache?.get(cell.id);
   if (cached !== undefined) return cached;
   const coverage = tissueSampleAt(cell.x, cell.z).resolvedCoverage;
-  cache?.set(cell.id, coverage);
+  if (cache) boundedCacheSet(cache, cell.id, coverage, cacheLimit);
   return coverage;
+}
+
+function boundedCacheSet<T>(
+  cache: Map<number, T>,
+  id: number,
+  value: T,
+  limit: number,
+): void {
+  if (!cache.has(id) && cache.size >= limit) {
+    const oldest = cache.keys().next().value as number | undefined;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(id, value);
 }
 
 interface BridgeLanding {
@@ -852,7 +990,20 @@ export function planHostBridges(
   reach: number = BRIDGE_ANCHOR_REACH,
   scratch: AnchorCandidate[] = [],
 ): BridgeEdge[] {
-  collectAnchorCandidates(index, cell.x, cell.z, reach, scratch);
+  const steps = planHostBridgeSteps(cell, index, reach, scratch);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+function* planHostBridgeSteps(
+  cell: BridgeHostCell,
+  index: BridgeAnchorIndex,
+  reach: number = BRIDGE_ANCHOR_REACH,
+  scratch: AnchorCandidate[] = [],
+): Generator<void, BridgeEdge[], void> {
+  yield* collectAnchorCandidateSteps(index, cell.x, cell.z, reach, scratch);
   if (scratch.length === 0) return [];
   const want = bridgesForDegree(cell.degree);
   // The pool: this host's best tier, widened past it only when that tier is
@@ -920,63 +1071,219 @@ export function selectBridgeEdges(
   index: BridgeAnchorIndex,
   options: BridgeSelectionOptions = {},
 ): BridgeSelection {
-  const budget = options.budget ?? BRIDGE_BUDGET;
-  const reach = options.reach ?? BRIDGE_ANCHOR_REACH;
-  const maxHostDegree = options.maxHostDegree ?? BRIDGE_MAX_HOST_DEGREE;
-  const coverageCeiling = options.coverageCeiling
-    ?? BRIDGE_HOST_COVERAGE_CEILING;
-  const breadthShare = options.breadthShare ?? BRIDGE_BREADTH_SHARE;
-  const bridges: BridgeEdge[] = [];
-  if (index.limit === 0 || budget <= 0) {
-    return { bridges, hosts: 0, considered: 0 };
+  const job = createBridgeSelectionJob(cells, index, options);
+  while (!stepBridgeSelectionJob(job, 16_384).done) {
+    // Synchronous compatibility API. The Canvas owner uses the cursor API.
   }
+  return job.result as BridgeSelection;
+}
 
-  const candidates: HostCandidate[] = [];
-  for (const cell of cells) {
-    if (cell.degree > maxHostDegree) continue;
-    if (hostCoverage(cell, options.coverageCache) > coverageCeiling) continue;
-    candidates.push({ cell, order: fnv1a(`${cell.id}`) });
-  }
-  candidates.sort((a, b) => (
-    a.cell.degree - b.cell.degree
+export type BridgeSelectionJobPhase = 'scan' | 'plan' | 'emit' | 'done';
+
+export interface BridgeSelectionJob {
+  phase: BridgeSelectionJobPhase;
+  readonly index: BridgeAnchorIndex;
+  readonly options: BridgeSelectionOptions;
+  readonly source: Iterator<BridgeHostCell>;
+  readonly candidates: HostCandidate[];
+  readonly plans: BridgeEdge[][];
+  readonly bridges: BridgeEdge[];
+  readonly scratch: AnchorCandidate[];
+  readonly budget: number;
+  readonly breadth: number;
+  planSteps: Generator<void, BridgeEdge[], void> | null;
+  planCell: BridgeHostCell | null;
+  emitPlan: number;
+  emitPick: number;
+  result: BridgeSelection | null;
+  operations: number;
+  considered: number;
+}
+
+function compareHostCandidates(a: HostCandidate, b: HostCandidate): number {
+  return a.cell.degree - b.cell.degree
     || a.order - b.order
-    || (a.cell.id < b.cell.id ? -1 : a.cell.id > b.cell.id ? 1 : 0)
-  ));
+    || (a.cell.id < b.cell.id ? -1 : a.cell.id > b.cell.id ? 1 : 0);
+}
 
-  // Plan only as many hosts as the breadth pass can pay for. The anchor
-  // search is the expensive half — a grid query plus a sort per host — and
-  // planning all 6,959 eligible Cells measured 68 ms against 25 for this, or
-  // 4 ms once the plan cache is warm.
-  const breadth = Math.max(1, Math.floor(budget * breadthShare));
-  const scratch: AnchorCandidate[] = [];
-  const planCache = options.planCache;
-  const plans: BridgeEdge[][] = [];
-  for (const candidate of candidates) {
-    if (plans.length >= breadth) break;
-    const cell = candidate.cell;
-    const cached = planCache?.get(cell.id);
-    let picks: BridgeEdge[];
-    if (cached !== undefined && cached.degree === cell.degree) {
-      picks = cached.picks;
-    } else {
-      picks = planHostBridges(cell, index, reach, scratch);
-      // Only a miss writes the cache: a hit that re-set the same entry
-      // allocated a record per planned host per build for nothing.
-      planCache?.set(cell.id, { degree: cell.degree, picks });
-    }
-    if (picks.length > 0) plans.push(picks);
+function pushHostCandidate(heap: HostCandidate[], candidate: HostCandidate): void {
+  let child = heap.length;
+  heap.push(candidate);
+  while (child > 0) {
+    const parent = Math.floor((child - 1) / 2);
+    if (compareHostCandidates(heap[parent], candidate) <= 0) break;
+    heap[child] = heap[parent];
+    child = parent;
   }
+  heap[child] = candidate;
+}
 
-  for (const picks of plans) bridges.push(picks[0]);
-  for (const picks of plans) {
-    for (let k = 1; k < picks.length; k += 1) {
-      if (bridges.length >= budget) break;
-      bridges.push(picks[k]);
-    }
-    if (bridges.length >= budget) break;
+function popHostCandidate(heap: HostCandidate[]): HostCandidate | undefined {
+  const first = heap[0];
+  const last = heap.pop();
+  if (first === undefined || last === undefined || heap.length === 0) return first;
+  let parent = 0;
+  while (true) {
+    const left = parent * 2 + 1;
+    if (left >= heap.length) break;
+    const right = left + 1;
+    const child = right < heap.length
+      && compareHostCandidates(heap[right], heap[left]) < 0 ? right : left;
+    if (compareHostCandidates(heap[child], last) >= 0) break;
+    heap[parent] = heap[child];
+    parent = child;
   }
+  heap[parent] = last;
+  return first;
+}
 
-  return { bridges, hosts: plans.length, considered: candidates.length };
+export function createBridgeSelectionJob(
+  cells: Iterable<BridgeHostCell>,
+  index: BridgeAnchorIndex,
+  options: BridgeSelectionOptions = {},
+): BridgeSelectionJob {
+  const budget = options.budget ?? BRIDGE_BUDGET;
+  const breadthShare = options.breadthShare ?? BRIDGE_BREADTH_SHARE;
+  const job: BridgeSelectionJob = {
+    phase: 'scan', index, options, source: cells[Symbol.iterator](),
+    candidates: [], plans: [], bridges: [], scratch: [], budget,
+    breadth: Math.max(1, Math.floor(budget * breadthShare)),
+    planSteps: null, planCell: null,
+    emitPlan: 0, emitPick: 0, result: null, operations: 0,
+    considered: 0,
+  };
+  if (index.limit === 0 || budget <= 0) {
+    job.phase = 'done';
+    job.result = { bridges: job.bridges, hosts: 0, considered: 0 };
+  }
+  return job;
+}
+
+/** Advance a deterministic selector by an operation quota. Merge comparisons,
+ * source visits and emitted records are individually resumable. Host anchor
+ * planning advances a generator whose anchor scan and merge sort yield every
+ * 32 visits/moves, so even a pathologically dense anchor bucket stays bounded. */
+export function stepBridgeSelectionJob(
+  job: BridgeSelectionJob,
+  operationBudget: number,
+): { done: boolean; phase: BridgeSelectionJobPhase; operations: number } {
+  let left = Math.max(1, Math.floor(operationBudget));
+  const started = left;
+  const { options } = job;
+  const maxHostDegree = options.maxHostDegree ?? BRIDGE_MAX_HOST_DEGREE;
+  const coverageCeiling = options.coverageCeiling ?? BRIDGE_HOST_COVERAGE_CEILING;
+  const cacheLimit = options.cacheLimit ?? 200_000;
+  while (left > 0 && job.phase !== 'done') {
+    if (job.phase === 'scan') {
+      const next = job.source.next();
+      left -= 1;
+      if (next.done) {
+        job.phase = 'plan';
+        continue;
+      }
+      const cell = next.value;
+      if (cell.degree <= maxHostDegree
+        && hostCoverage(cell, options.coverageCache, cacheLimit) <= coverageCeiling) {
+        pushHostCandidate(job.candidates, { cell, order: fnv1a(`${cell.id}`) });
+        job.considered += 1;
+      }
+      continue;
+    }
+    if (job.phase === 'plan') {
+      if (job.planSteps !== null) {
+        const planned = job.planSteps.next();
+        left -= 1;
+        if (!planned.done) continue;
+        const cell = job.planCell!;
+        const picks = planned.value;
+        if (options.planCache) boundedCacheSet(
+          options.planCache, cell.id, { degree: cell.degree, picks }, cacheLimit,
+        );
+        if (picks.length > 0) job.plans.push(picks);
+        job.planSteps = null;
+        job.planCell = null;
+        continue;
+      }
+      if (job.plans.length >= job.breadth || job.candidates.length === 0) {
+        job.phase = 'emit';
+        continue;
+      }
+      const cell = (popHostCandidate(job.candidates) as HostCandidate).cell;
+      const cached = options.planCache?.get(cell.id);
+      if (cached !== undefined && cached.degree === cell.degree) {
+        if (cached.picks.length > 0) job.plans.push(cached.picks);
+        left -= 1;
+        continue;
+      }
+      job.planCell = cell;
+      job.planSteps = planHostBridgeSteps(
+        cell, job.index, options.reach ?? BRIDGE_ANCHOR_REACH, job.scratch,
+      );
+      continue;
+    }
+    if (job.emitPlan < job.plans.length) {
+      if (job.emitPick === 0) {
+        job.bridges.push(job.plans[job.emitPlan][0]);
+        job.emitPlan += 1;
+        left -= 1;
+        continue;
+      }
+      const picks = job.plans[job.emitPlan];
+      if (job.emitPick < picks.length && job.bridges.length < job.budget) {
+        job.bridges.push(picks[job.emitPick]);
+        job.emitPick += 1;
+        left -= 1;
+      } else {
+        job.emitPlan += 1;
+        job.emitPick = 1;
+      }
+      continue;
+    }
+    if (job.emitPick === 0) {
+      job.emitPlan = 0;
+      job.emitPick = 1;
+      continue;
+    }
+    job.phase = 'done';
+    job.result = {
+      bridges: job.bridges,
+      hosts: job.plans.length,
+      considered: job.considered,
+    };
+  }
+  const operations = started - left;
+  job.operations += operations;
+  return { done: job.phase === 'done', phase: job.phase, operations };
+}
+
+export interface BridgeSelectionSlice {
+  done: boolean;
+  phase: BridgeSelectionJobPhase;
+  operations: number;
+  elapsedMs: number;
+}
+
+/** Run small deterministic quanta until the wall-clock slice is spent. The
+ * clock is injectable for schedule tests. A quantum is the overshoot bound in
+ * scan/merge/emit phases; planning may additionally finish its current host. */
+export function runBridgeSelectionJobSlice(
+  job: BridgeSelectionJob,
+  budgetMs = 2,
+  now: () => number = () => performance.now(),
+): BridgeSelectionSlice {
+  const started = now();
+  let operations = 0;
+  let progress = { done: job.phase === 'done', phase: job.phase, operations: 0 };
+  do {
+    progress = stepBridgeSelectionJob(job, 32);
+    operations += progress.operations;
+  } while (!progress.done && now() - started < budgetMs);
+  return {
+    done: progress.done,
+    phase: progress.phase,
+    operations,
+    elapsedMs: now() - started,
+  };
 }
 
 /** Identity of one bridge in the layer's persistent lifecycle map. The Cell id

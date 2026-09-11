@@ -76,6 +76,8 @@ import {
   cohortMoteSinkK,
   cohortMoteTurn,
   makeCohortMotesMaterial,
+  markCohortAttributeRange,
+  setCohortMotesDrawCount,
   stampCohortMotes,
   writeCohortMotes,
   writeCohortMotesMass,
@@ -781,9 +783,50 @@ describe('cohort motes — the geometry the layer drives', () => {
       for (const name of ['aSeed', 'aStrength', 'aGulp', 'aMass']) {
         expect(geometry.getAttribute(name).itemSize).toBe(1);
       }
+      expect(geometry.drawRange).toEqual({ start: 0, count: 0 });
     }
     expect(() => buildCohortMotesGeometry(-1)).toThrow(/whole count/);
     expect(() => buildCohortMotesGeometry(1.5)).toThrow(/whole count/);
+  });
+
+  it('submits only the committed cohort prefix', () => {
+    const geometry = buildCohortMotesGeometry(64);
+    setCohortMotesDrawCount(geometry, 7);
+    expect(geometry.drawRange).toEqual({
+      start: 0,
+      count: 7 * COHORT_MOTES_PER_COHORT,
+    });
+    setCohortMotesDrawCount(geometry, 0);
+    expect(geometry.drawRange.count).toBe(0);
+    expect(() => setCohortMotesDrawCount(geometry, 65)).toThrow(/capacity of 64/);
+  });
+
+  it('clears initialization ranges and uploads one gulp as exactly 384 bytes', () => {
+    const geometry = buildCohortMotesGeometry(64);
+    writeCohortMotes(geometry, 0, { x: 1, y: 2, z: 3 }, 0.2, 0.4, 1);
+    for (const name of ['position', 'aOrigin', 'aSeed', 'aStrength', 'aMass']) {
+      const attribute = geometry.getAttribute(name) as THREE.BufferAttribute;
+      expect(attribute.updateRanges.length).toBeGreaterThan(0);
+      attribute.onUploadCallback();
+      expect(attribute.updateRanges).toEqual([]);
+    }
+    const gulp = geometry.getAttribute('aGulp') as THREE.BufferAttribute;
+    gulp.onUploadCallback();
+    stampCohortMotes(geometry, 6, 20);
+    expect(gulp.updateRanges).toEqual([{
+      start: 6 * COHORT_MOTES_PER_COHORT,
+      count: COHORT_MOTES_PER_COHORT,
+    }]);
+    expect(gulp.updateRanges[0].count * Float32Array.BYTES_PER_ELEMENT).toBe(384);
+  });
+
+  it('coalesces touching attribute ranges before the next upload', () => {
+    const geometry = buildCohortMotesGeometry(4);
+    const mass = geometry.getAttribute('aMass') as THREE.BufferAttribute;
+    mass.onUploadCallback();
+    markCohortAttributeRange(mass, 96, 96);
+    markCohortAttributeRange(mass, 192, 96);
+    expect(mass.updateRanges).toEqual([{ start: 96, count: 192 }]);
   });
 
   it('starts every slot silent, at the sentinel, and at full size', () => {

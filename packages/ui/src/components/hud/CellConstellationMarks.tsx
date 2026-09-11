@@ -41,6 +41,7 @@ function LeaderLabel({ handles, slot }: {
     const handle = handles.leaders[slot];
     handle.label = node;
     if (!node) return undefined;
+    if (handles.motionSuspended) node.style.visibility = 'hidden';
     const measure = () => {
       const box = node.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) return;
@@ -102,12 +103,15 @@ function bracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
  * nebula — the same reason a map label is set with a halo.
  */
 export function CellReticle({ handles }: { handles: CellConstellationHandles }) {
+  const reticleRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    handles.reticle = reticleRef.current;
+    invalidateConstellationFrame(handles);
+    return () => { handles.reticle = null; };
+  }, [handles]);
   return (
     <div
-      ref={(node) => {
-        handles.reticle = node;
-        invalidateConstellationFrame(handles);
-      }}
+      ref={reticleRef}
       data-cell-selection-reticle="true"
       aria-hidden="true"
       style={{
@@ -274,6 +278,12 @@ export function CellConstellationLeaders({
   const present = CONSTELLATION_SLOTS.filter((slot) => slots.includes(slot));
   const rawMaskId = useId();
   const maskId = `cell-constellation-${rawMaskId.replace(/:/g, '')}`;
+  const maskGroupRef = useRef<SVGGElement>(null);
+  useLayoutEffect(() => {
+    handles.maskGroup = maskGroupRef.current;
+    invalidateConstellationFrame(handles);
+    return () => { handles.maskGroup = null; };
+  }, [handles]);
   return (
     <>
       <svg
@@ -286,39 +296,71 @@ export function CellConstellationLeaders({
         <defs>
           <mask id={maskId} x="0" y="0" width="100%" height="100%" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
             <rect x="0" y="0" width="100%" height="100%" fill="white" />
-            <g ref={(node) => {
-              handles.maskGroup = node;
-              invalidateConstellationFrame(handles);
-            }} data-cell-constellation-mask-cuts="true" />
+            <g ref={maskGroupRef} data-cell-constellation-mask-cuts="true" />
           </mask>
         </defs>
         {present.map((slot) => (
-          <g key={slot} data-cell-leader={slot} mask={`url(#${maskId})`}>
-            <path
-              ref={(node) => { handles.leaders[slot].under = node; invalidateConstellationFrame(handles); }}
-              fill="none"
-              strokeLinejoin="round"
-              stroke={rgba(HUD_COLORS.ground, 0.85)}
-              strokeWidth={3.5}
-            />
-            <path
-              ref={(node) => { handles.leaders[slot].over = node; invalidateConstellationFrame(handles); }}
-              fill="none"
-              strokeLinejoin="round"
-              stroke={rgba(CELL_CARD_ACCENT, 0.72)}
-              strokeWidth={1.2}
-            />
-            <circle
-              ref={(node) => { handles.leaders[slot].dot = node; invalidateConstellationFrame(handles); }}
-              r={3}
-              fill={CELL_CARD_ACCENT}
-              stroke={rgba(HUD_COLORS.ground, 0.85)}
-              strokeWidth={1.5}
-            />
-          </g>
+          <ConstellationLeader key={slot} handles={handles} slot={slot} maskId={maskId} />
         ))}
       </svg>
       {present.map((slot) => <LeaderLabel key={slot} handles={handles} slot={slot} />)}
     </>
+  );
+}
+
+/** Keep the three SVG refs stable across ordinary parent renders. React calls
+ * an inline callback ref with `null` and then the same node whenever that
+ * callback gets a new identity. Treating those calls as geometry changes used
+ * to cancel a partially advanced layout on quality/HUD renders and leave the
+ * entire constellation hidden until another full solve landed. */
+function ConstellationLeader({ handles, slot, maskId }: {
+  handles: CellConstellationHandles;
+  slot: ConstellationSlot;
+  maskId: string;
+}) {
+  const underRef = useRef<SVGPathElement>(null);
+  const overRef = useRef<SVGPathElement>(null);
+  const dotRef = useRef<SVGCircleElement>(null);
+  useLayoutEffect(() => {
+    const leader = handles.leaders[slot];
+    leader.under = underRef.current;
+    leader.over = overRef.current;
+    leader.dot = dotRef.current;
+    if (handles.motionSuspended) {
+      if (leader.under) leader.under.style.visibility = 'hidden';
+      if (leader.over) leader.over.style.visibility = 'hidden';
+      if (leader.dot) leader.dot.style.visibility = 'hidden';
+    }
+    invalidateConstellationFrame(handles);
+    return () => {
+      leader.under = null;
+      leader.over = null;
+      leader.dot = null;
+    };
+  }, [handles, slot]);
+  return (
+    <g data-cell-leader={slot} mask={`url(#${maskId})`}>
+      <path
+        ref={underRef}
+        fill="none"
+        strokeLinejoin="round"
+        stroke={rgba(HUD_COLORS.ground, 0.85)}
+        strokeWidth={3.5}
+      />
+      <path
+        ref={overRef}
+        fill="none"
+        strokeLinejoin="round"
+        stroke={rgba(CELL_CARD_ACCENT, 0.72)}
+        strokeWidth={1.2}
+      />
+      <circle
+        ref={dotRef}
+        r={3}
+        fill={CELL_CARD_ACCENT}
+        stroke={rgba(HUD_COLORS.ground, 0.85)}
+        strokeWidth={1.5}
+      />
+    </g>
   );
 }

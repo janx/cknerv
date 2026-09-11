@@ -233,4 +233,69 @@ describe('syncCellSlots', () => {
     expect(resting.ranges).toEqual([]);
     expect(resting.positionsChanged).toBe(false);
   });
+
+  it('keeps incremental fallback atomic when a journal is stale', () => {
+    const state = createCellSlotState();
+    const original = [cell(1), cell(2)];
+    syncCellSlots(state, original);
+    const published = state.published;
+    const replacement = cell(1, 'updated');
+    const next = [replacement, original[1]];
+
+    const sync = syncCellSlots(state, next, {
+      previousCells: original,
+      removedIds: [999],
+      upserts: [replacement],
+    });
+
+    // Validation fails before the mutable slots are touched, then the
+    // canonical path still sees and publishes the payload replacement.
+    expect(sync.ranges).toEqual([{ start: 0, count: 1 }]);
+    expect(sync.cells).not.toBe(published);
+    expect(sync.cells[0]).toBe(replacement);
+    expect(published[0]).toBe(original[0]);
+  });
+
+  it('removes both an interior and tail slot without leaving reverse-map entries', () => {
+    const state = createCellSlotState();
+    const original = [cell(1), cell(2), cell(3), cell(4), cell(5)];
+    syncCellSlots(state, original);
+    const next = [original[0], original[2], original[3]];
+
+    const sync = syncCellSlots(state, next, {
+      previousCells: original,
+      removedIds: [2, 5],
+      upserts: [],
+    });
+
+    expect(sync.count).toBe(3);
+    expect(state.slotOf.size).toBe(state.count);
+    expect(state.slotOf.has(2)).toBe(false);
+    expect(state.slotOf.has(5)).toBe(false);
+    expectMirrorsMembership(state, next);
+  });
+
+  it('keeps safe-integer ids and immutable published snapshots on the incremental path', () => {
+    const state = createCellSlotState();
+    const high = 2 ** 52;
+    const original = [cell(high), cell(high + 1), cell(high + 2)];
+    const first = syncCellSlots(state, original).cells;
+    const replacement = cell(high + 1, 'wide-id');
+    const born = cell(high + 3);
+    const next = [original[0], replacement, born];
+
+    const sync = syncCellSlots(state, next, {
+      previousCells: original,
+      removedIds: [high + 2],
+      upserts: [replacement, born],
+    });
+
+    expect(sync.cells).not.toBe(first);
+    expect(first.map(({ id }) => id)).toEqual([high, high + 1, high + 2]);
+    expect(new Set(sync.cells.map(({ id }) => id))).toEqual(
+      new Set([high, high + 1, high + 3]),
+    );
+    expect(state.slotOf.get(high + 3)).toBeDefined();
+    expectMirrorsMembership(state, next);
+  });
 });

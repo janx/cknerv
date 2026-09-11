@@ -165,6 +165,13 @@ describe('CellNucleusPortrait production language', () => {
     expect(INSET_SOURCE).toContain('renderer.render(braidScene, braidCamera)');
     expect(INSET_SOURCE).toContain('}, 1);');
     expect(INSET_SOURCE).not.toContain('new THREE.WebGLRenderer');
+    // R3F does not dispose descendants of the primitive camera. The plate's
+    // GPU geometry therefore follows the same explicit ownership as its
+    // texture and material.
+    expect(INSET_SOURCE).toContain('new THREE.PlaneGeometry(plateSize, plateSize)');
+    expect(INSET_SOURCE).toContain('<primitive object={plateGeometry} attach="geometry" />');
+    expect(INSET_SOURCE).toContain('plateGeometry.dispose()');
+    expect(INSET_SOURCE).not.toContain('<planeGeometry');
     // RenderStatsSampler owns gl.info accounting; the inset must not fight
     // its autoReset mode or wipe its sampling window.
     expect(INSET_SOURCE).not.toContain('info.autoReset');

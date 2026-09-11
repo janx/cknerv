@@ -66,6 +66,16 @@ function clampShare(value: number | undefined, fallback: number): number {
  * that local shape without coupling the passive view to builder internals.
  * The union check also keeps this correct for synthetic/custom graphs. */
 function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
+  const steps = spanningCoverageEdgeSteps(graph);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+function* spanningCoverageEdgeSteps(
+  graph: NeighborGraph,
+): Generator<void, NeighborEdge[], void> {
   const parent = new Map<number, number>();
   for (const id of graph.adjacency.keys()) parent.set(id, id);
 
@@ -83,7 +93,10 @@ function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
   };
 
   const coverage: NeighborEdge[] = [];
+  let scanned = 0;
   for (const edge of graph.edges) {
+    scanned += 1;
+    if ((scanned & 63) === 0) yield;
     const fromRoot = find(edge.from);
     const toRoot = find(edge.to);
     if (fromRoot === toRoot) continue;
@@ -91,6 +104,35 @@ function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
     coverage.push(edge);
   }
   return coverage;
+}
+
+/** Stable bottom-up merge sort with a cursor boundary every 64 moves. */
+function* stableSortSteps<T>(
+  values: T[],
+  compare: (a: T, b: T) => number,
+): Generator<void, T[], void> {
+  const scratch = new Array<T>(values.length);
+  let moves = 0;
+  for (let width = 1; width < values.length; width *= 2) {
+    for (let left = 0; left < values.length; left += width * 2) {
+      const mid = Math.min(left + width, values.length);
+      const end = Math.min(left + width * 2, values.length);
+      let a = left;
+      let b = mid;
+      for (let out = left; out < end; out += 1) {
+        scratch[out] = b >= end || (a < mid && compare(values[a], values[b]) <= 0)
+          ? values[a++] : values[b++];
+        moves += 1;
+        if ((moves & 63) === 0) yield;
+      }
+    }
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = scratch[index];
+      moves += 1;
+      if ((moves & 63) === 0) yield;
+    }
+  }
+  return values;
 }
 
 /** Passive-fibre budget for a visible Cell population: the 4/3 connectivity
@@ -123,6 +165,26 @@ function graphFromEdges(
   return { adjacency, edges };
 }
 
+function* graphFromEdgeSteps(
+  graph: NeighborGraph,
+  edges: NeighborEdge[],
+): Generator<void, NeighborGraph, void> {
+  const adjacency = new Map<number, Set<number>>();
+  let scanned = 0;
+  for (const id of graph.adjacency.keys()) {
+    adjacency.set(id, new Set());
+    scanned += 1;
+    if ((scanned & 63) === 0) yield;
+  }
+  for (const edge of edges) {
+    adjacency.get(edge.from)?.add(edge.to);
+    adjacency.get(edge.to)?.add(edge.from);
+    scanned += 1;
+    if ((scanned & 63) === 0) yield;
+  }
+  return { adjacency, edges };
+}
+
 /**
  * Derive the resting biological silhouette without changing authoritative
  * routing. The full graph stays connected for pulse planning; this layer is
@@ -142,12 +204,23 @@ export function buildPassiveNeighborGraph(
   graph: NeighborGraph,
   options: PassiveNeighborGraphOptions = {},
 ): NeighborGraph {
+  const steps = buildPassiveNeighborGraphSteps(graph, options);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+export function* buildPassiveNeighborGraphSteps(
+  graph: NeighborGraph,
+  options: PassiveNeighborGraphOptions = {},
+): Generator<void, NeighborGraph, void> {
   const nodeCount = graph.adjacency.size;
   if (nodeCount <= 1 || graph.edges.length === 0) {
-    return graphFromEdges(graph, []);
+    return yield* graphFromEdgeSteps(graph, []);
   }
   if (options.includeAll) {
-    return graphFromEdges(graph, [...graph.edges]);
+    return yield* graphFromEdgeSteps(graph, graph.edges);
   }
 
   const requestedBudget = options.edgeBudget ?? passiveEdgeBudget(nodeCount);
@@ -155,7 +228,7 @@ export function buildPassiveNeighborGraph(
     graph.edges.length,
     Math.max(0, Math.floor(requestedBudget)),
   );
-  if (budget === 0) return graphFromEdges(graph, []);
+  if (budget === 0) return yield* graphFromEdgeSteps(graph, []);
 
   const trunkShare = clampShare(options.trunkShare, PASSIVE_TRUNK_SHARE);
   const twigShare = clampShare(options.twigShare, PASSIVE_TWIG_SHARE);
@@ -164,8 +237,13 @@ export function buildPassiveNeighborGraph(
     PASSIVE_COVERAGE_SHARE,
   );
 
-  const arbor = graph.edges.filter((edge) => edge.w !== undefined);
-  const crosslinks = graph.edges.filter((edge) => edge.w === undefined);
+  const arbor: NeighborEdge[] = [];
+  const crosslinks: NeighborEdge[] = [];
+  for (let index = 0; index < graph.edges.length; index += 1) {
+    const edge = graph.edges[index];
+    (edge.w !== undefined ? arbor : crosslinks).push(edge);
+    if ((index & 63) === 63) yield;
+  }
   const trunkBudget = Math.min(
     arbor.length,
     Math.round(budget * trunkShare),
@@ -175,21 +253,32 @@ export function buildPassiveNeighborGraph(
     Math.round(budget * twigShare),
   );
 
-  const byHierarchy = [...arbor].sort((a, b) =>
+  const byHierarchy = yield* stableSortSteps(arbor, (a, b) =>
     (b.w ?? 0) - (a.w ?? 0)
     || edgeHash(b) - edgeHash(a)
     || canonicalEdgeOrder(a, b));
-  const trunks = byHierarchy.slice(0, trunkBudget);
+  const trunks: NeighborEdge[] = [];
+  for (let index = 0; index < trunkBudget; index += 1) {
+    trunks.push(byHierarchy[index]);
+    if ((index & 63) === 63) yield;
+  }
 
   // Weight the stable random score by subtree size. This admits uneven tips
   // without turning the edge budget into uncorrelated white-noise hairs.
-  const twigs = byHierarchy
-    .slice(trunkBudget)
-    .sort((a, b) =>
+  const twigCandidates: NeighborEdge[] = [];
+  for (let index = trunkBudget; index < byHierarchy.length; index += 1) {
+    twigCandidates.push(byHierarchy[index]);
+    if ((index & 63) === 63) yield;
+  }
+  const sortedTwigs = yield* stableSortSteps(twigCandidates, (a, b) =>
       edgeHash(b) * (0.35 + 0.65 * (b.w ?? 0))
       - edgeHash(a) * (0.35 + 0.65 * (a.w ?? 0))
-      || canonicalEdgeOrder(a, b))
-    .slice(0, twigBudget);
+      || canonicalEdgeOrder(a, b));
+  const twigs: NeighborEdge[] = [];
+  for (let index = 0; index < twigBudget; index += 1) {
+    twigs.push(sortedTwigs[index]);
+    if ((index & 63) === 63) yield;
+  }
 
   // Cross-links are ranked by stable hash, with a mild short-edge preference
   // so they read as local membranes rather than cables across tissue voids.
@@ -200,14 +289,18 @@ export function buildPassiveNeighborGraph(
   // nudge against a [0,1] hash to a 0.019 one: a tie-break that no longer
   // breaks anything. The cables it exists to deprioritize are still there —
   // lifeline and component-stitch edges still run to 27 world units.
-  const extras = [...crosslinks]
-    .sort((a, b) =>
+  const extras = yield* stableSortSteps(crosslinks, (a, b) =>
       (edgeHash(b) - Math.min(b.d / 34, 0.2))
       - (edgeHash(a) - Math.min(a.d / 34, 0.2))
       || canonicalEdgeOrder(a, b));
 
-  const availableByKey = new Map(graph.edges.map((edge) => [edgeKey(edge), edge]));
-  const coverage = spanningCoverageEdges(graph);
+  const availableByKey = new Map<string, NeighborEdge>();
+  for (let index = 0; index < graph.edges.length; index += 1) {
+    const edge = graph.edges[index];
+    availableByKey.set(edgeKey(edge), edge);
+    if ((index & 63) === 63) yield;
+  }
+  const coverage = yield* spanningCoverageEdgeSteps(graph);
   const kept: NeighborEdge[] = [];
   const keptKeys = new Set<string>();
   const keep = (edge: NeighborEdge) => {
@@ -227,9 +320,12 @@ export function buildPassiveNeighborGraph(
   // ~an eighth of the drawn edges every block. A cold build (no
   // preferredEdges) is a no-op here, so coverage below still fills everything
   // exactly as before.
+  let keptScanned = 0;
   for (const previous of options.preferredEdges ?? []) {
     const current = availableByKey.get(edgeKey(previous));
     if (current) keep(current);
+    keptScanned += 1;
+    if ((keptScanned & 63) === 0) yield;
   }
 
   // Small fields: the budget exceeds the spanning forest (4/3 ratio), so
@@ -246,10 +342,13 @@ export function buildPassiveNeighborGraph(
   // accepted "dust" between capillaries; trunks below supply the long
   // coherent strands.
   if (coverage.length <= budget) {
-    for (const edge of coverage) keep(edge);
+    for (let index = 0; index < coverage.length; index += 1) {
+      keep(coverage[index]);
+      if ((index & 63) === 63) yield;
+    }
   } else {
     const coverageBudget = Math.round(budget * coverageShare);
-    const scattered = [...coverage].sort((a, b) =>
+    const scattered = yield* stableSortSteps(coverage, (a, b) =>
       edgeHash(b) - edgeHash(a)
       || canonicalEdgeOrder(a, b));
     for (let i = 0; i < coverageBudget && i < scattered.length; i += 1) {
@@ -258,12 +357,20 @@ export function buildPassiveNeighborGraph(
   }
 
   // The initial and incremental builds share the same hierarchy fill order.
-  for (const edge of trunks) keep(edge);
-  for (const edge of twigs) keep(edge);
-  for (const edge of extras) keep(edge);
+  for (let index = 0; index < trunks.length; index += 1) {
+    keep(trunks[index]); if ((index & 63) === 63) yield;
+  }
+  for (let index = 0; index < twigs.length; index += 1) {
+    keep(twigs[index]); if ((index & 63) === 63) yield;
+  }
+  for (let index = 0; index < extras.length; index += 1) {
+    keep(extras[index]); if ((index & 63) === 63) yield;
+  }
   // Tiny/synthetic graphs may contain only arbor edges.
-  for (const edge of byHierarchy) keep(edge);
+  for (let index = 0; index < byHierarchy.length; index += 1) {
+    keep(byHierarchy[index]); if ((index & 63) === 63) yield;
+  }
 
-  kept.sort(canonicalEdgeOrder);
-  return graphFromEdges(graph, kept);
+  yield* stableSortSteps(kept, canonicalEdgeOrder);
+  return yield* graphFromEdgeSteps(graph, kept);
 }

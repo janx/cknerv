@@ -1,13 +1,13 @@
-// ONE HEAVY BLOCK CONSUMER PER FRAME.
+// ONE SHARED HEAVY-WORK LEDGER PER FRAME.
 //
 // A landed block is no longer one long task — the fabric half drains across
 // frames (`fabricLandingQueue`), the bridge selects on a frame of its own
-// (`bridgeSchedule`), and the live plan takes a bounded slice per frame
-// (`livePulseQueue`). Each of those three is budgeted, and each budget is
+// (`bridgeSchedule`), the inspection solver yields route work, and the live
+// plan takes a bounded slice per frame (`livePulseQueue`). Each is budgeted,
 // honest on its own. What none of them could see is EACH OTHER: the frame
 // right after a landing is the frame all three want, and three budgets that
 // are individually reasonable add up to a 50 ms frame (three vsyncs) with an
-// 83 ms outlier — which is exactly what the phase-2 gate measured.
+// which is exactly what the phase-2 gate measured.
 //
 // So this module is the one thing above them: a per-frame ledger of what the
 // heavy block work has already spent, and one rule for whether the next
@@ -15,24 +15,7 @@
 //
 // ## The rule
 //
-// `mayStartFrameWork(consumer, estimateMs)` answers yes when
-//
-//   1. nothing at or above this consumer's precedence has spent yet — a frame
-//      cannot do better than one grain, and refusing the first piece of work
-//      would only move it to a frame that is no emptier (the same reason
-//      `drainFabricLandingQueue` checks its budget only once a step has been
-//      issued and `stepLivePulseQueue` always takes at least one step); or
-//   2. this consumer's own estimate still fits under
-//      {@link FRAME_HEAVY_BUDGET_MS}; or
-//   3. it has been held back {@link MAX_DEFER_FRAMES} frames in a row, in
-//      which case it runs regardless. Nothing here may starve: every consumer
-//      has a clock behind it — a departure deadline, a growth window, a
-//      1.2 s stroke — and a deferral that can repeat forever is a dropped
-//      packet or a fabric that never lands.
-//
-// ## Why precedence is a LADDER and not just an order of arrival
-//
-// The three consumers do not ask in the order they should be served. The
+// The consumers do not ask in the order they should be served. The
 // fabric drain rides the raw priority −1 frame, so it asks FIRST; the bridge
 // step rides a default-priority sim frame in a child component, so it asks
 // before the owner's own default-priority callbacks; and the live-plan slice —
@@ -40,11 +23,13 @@
 // that no budget may move — asks LAST. An ordinary running total would let
 // whatever asked first spend the deadline consumer out of its own frame.
 //
-// So a consumer is charged only against what consumers of its own precedence
-// or HIGHER have spent this frame. The live plan is therefore never held by
-// the drain or the bridge; the drain is held only by the plan; and the bridge
-// step — 5–23 ms of selection, the largest single grain of the three — is the
-// one that yields, which is the whole point of the exercise.
+// The owner reserves the measured live-plan slice before those callbacks run.
+// Every admission then sees total actual spend plus other consumers' pending
+// reservations. A reserved consumer remains admitted even when earlier work
+// underestimated its cost, preserving its departure clock; the snapshot
+// records that forced admission and the resulting actual overspend. A
+// consumer held for three consecutive frames advances one already-bounded
+// unit, so no growth or withdrawal can starve indefinitely.
 //
 // Cost: three integer adds and a compare per consumer per frame, on a
 // module-level object that is allocated once. Nothing here allocates.
@@ -67,37 +52,44 @@ export const MAX_DEFER_FRAMES = 3;
 /** The live-plan slice. Highest precedence: its packets carry departure
  *  clocks that this module is not allowed to move. */
 export const FRAME_BUDGET_PLAN_SLICE = 0;
+/** A newly opened or invalidated inspection constellation. Its canonical
+ * solver yields, but its first valid placement still has a UI deadline. */
+export const FRAME_BUDGET_PANEL_SOLVE = 1;
 /** The fabric landing drain. Its strokes have the whole growth window to
  *  enter, but a build that has not landed holds the bridge behind it. */
-export const FRAME_BUDGET_FABRIC_DRAIN = 1;
+export const FRAME_BUDGET_FABRIC_DRAIN = 2;
 /** One step of the bridge build. Lowest precedence, and the largest grain:
  *  the strokes it moves have a 1.2 s window and nothing waits on them. */
-export const FRAME_BUDGET_BRIDGE_STEP = 2;
+export const FRAME_BUDGET_BRIDGE_STEP = 3;
 
 export type FrameBudgetConsumer =
   | typeof FRAME_BUDGET_PLAN_SLICE
+  | typeof FRAME_BUDGET_PANEL_SOLVE
   | typeof FRAME_BUDGET_FABRIC_DRAIN
   | typeof FRAME_BUDGET_BRIDGE_STEP;
 
 /** How many there are — the ladder's height, not a magic number. */
-export const FRAME_BUDGET_CONSUMER_COUNT = 3;
+export const FRAME_BUDGET_CONSUMER_COUNT = 4;
 
 /** Wall milliseconds each consumer has spent in the CURRENT frame. */
-const spentMs = [0, 0, 0];
+const spentMs = [0, 0, 0, 0];
+/** Work promised to a consumer that asks later in callback order. */
+const reservedMs = [0, 0, 0, 0];
+/** Reservations announced by work that remains pending across frames. */
+const pendingReservationMs = [0, 0, 0, 0];
+/** Estimate accepted by the last admission, for actual-vs-estimated gauges. */
+const admittedEstimateMs = [0, 0, 0, 0];
+let forcedByReservation = 0;
+let forcedByStarvation = 0;
+let estimateOvershootMs = 0;
 /** Frames in a row each consumer has been refused since it last started. */
-const deferredFrames = [0, 0, 0];
+const deferredFrames = [0, 0, 0, 0];
 /** The frame serial each consumer last asked in, so a streak is frames IN A
  *  ROW and a consumer that stopped asking does not come back pre-armed. */
-const lastAskSerial = [-1, -1, -1];
+const lastAskSerial = [-1, -1, -1, -1];
 /** Bumped by the owner's raw priority −1 frame, beside T1's `markFrame()`. */
 let frameSerial = 0;
-
-/** What has been spent this frame by this consumer and everything above it. */
-function spentAtOrAboveMs(consumer: FrameBudgetConsumer): number {
-  let total = 0;
-  for (let rank = 0; rank <= consumer; rank += 1) total += spentMs[rank];
-  return total;
-}
+let frameToken: number | null = null;
 
 /**
  * A new frame: the ledger is empty again.
@@ -109,11 +101,63 @@ function spentAtOrAboveMs(consumer: FrameBudgetConsumer): number {
  * The deferral streaks deliberately survive: they are what stops a consumer
  * from being held forever, and a frame boundary is not a reason to forget one.
  */
-export function beginFrameBudget(): void {
+export function beginFrameBudget(token?: number): void {
+  if (token !== undefined && token === frameToken) return;
+  frameToken = token ?? null;
   frameSerial += 1;
   for (let rank = 0; rank < FRAME_BUDGET_CONSUMER_COUNT; rank += 1) {
     spentMs[rank] = 0;
+    reservedMs[rank] = pendingReservationMs[rank];
+    admittedEstimateMs[rank] = 0;
   }
+  forcedByReservation = 0;
+  forcedByStarvation = 0;
+  estimateOvershootMs = 0;
+}
+
+/** Keep room for a bounded cursor on following frames, before callbacks with
+ * lower precedence can consume it. */
+export function announceFrameBudgetWork(
+  consumer: FrameBudgetConsumer,
+  estimateMs: number,
+): void {
+  pendingReservationMs[consumer] = Number.isFinite(estimateMs) && estimateMs > 0
+    ? Math.min(FRAME_HEAVY_BUDGET_MS, estimateMs)
+    : 0;
+}
+
+export function clearFrameBudgetWork(consumer: FrameBudgetConsumer): void {
+  pendingReservationMs[consumer] = 0;
+  reservedMs[consumer] = 0;
+}
+
+/** Reserve room for work that is known to be pending but executes later in
+ * the frame callback order. Repeated calls replace the reservation. */
+export function reserveFrameBudget(
+  consumer: FrameBudgetConsumer,
+  estimateMs: number,
+): void {
+  reservedMs[consumer] = Number.isFinite(estimateMs) && estimateMs > 0
+    ? Math.min(FRAME_HEAVY_BUDGET_MS, estimateMs)
+    : 0;
+}
+
+export function releaseFrameBudget(consumer: FrameBudgetConsumer): void {
+  reservedMs[consumer] = 0;
+}
+
+function totalSpentMs(): number {
+  let total = 0;
+  for (let rank = 0; rank < FRAME_BUDGET_CONSUMER_COUNT; rank += 1) total += spentMs[rank];
+  return total;
+}
+
+function reservationsExceptMs(consumer: FrameBudgetConsumer): number {
+  let total = 0;
+  for (let rank = 0; rank < FRAME_BUDGET_CONSUMER_COUNT; rank += 1) {
+    if (rank !== consumer) total += reservedMs[rank];
+  }
+  return total;
 }
 
 /**
@@ -134,15 +178,26 @@ export function mayStartFrameWork(
     deferredFrames[consumer] = 0;
   }
   lastAskSerial[consumer] = frameSerial;
-  const spent = spentAtOrAboveMs(consumer);
+  const committed = totalSpentMs() + reservationsExceptMs(consumer);
   const estimate = Number.isFinite(estimateMs) && estimateMs > 0
     ? estimateMs
     : 0;
+  // A reservation is a promise to deadline work, not merely a hint to work
+  // that happens earlier. If an earlier consumer underestimated or advanced
+  // through starvation, the promised slice still runs and the actual ledger
+  // exposes the resulting overrun instead of delaying the departure clock.
+  if (reservedMs[consumer] > 0) {
+    if (committed + estimate > FRAME_HEAVY_BUDGET_MS) forcedByReservation += 1;
+    admittedEstimateMs[consumer] = estimate;
+    deferredFrames[consumer] = 0;
+    return true;
+  }
   if (
-    spent === 0
-    || spent + estimate <= FRAME_HEAVY_BUDGET_MS
+    committed + estimate <= FRAME_HEAVY_BUDGET_MS
     || deferredFrames[consumer] >= MAX_DEFER_FRAMES
   ) {
+    if (committed + estimate > FRAME_HEAVY_BUDGET_MS) forcedByStarvation += 1;
+    admittedEstimateMs[consumer] = estimate;
     deferredFrames[consumer] = 0;
     return true;
   }
@@ -157,7 +212,12 @@ export function spendFrameBudget(
   consumer: FrameBudgetConsumer,
   elapsedMs: number,
 ): void {
+  // A started consumer owns actual time now; keeping its estimate reserved
+  // would count the same work twice for callbacks that follow it.
+  reservedMs[consumer] = 0;
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return;
+  estimateOvershootMs += Math.max(0, elapsedMs - admittedEstimateMs[consumer]);
+  admittedEstimateMs[consumer] = 0;
   spentMs[consumer] += elapsedMs;
 }
 
@@ -165,13 +225,22 @@ export function spendFrameBudget(
  *  consumer that can size its own slice (the fabric drain caps its per-frame
  *  budget at this) rather than merely start or not start. */
 export function frameBudgetRemainingMs(consumer: FrameBudgetConsumer): number {
-  return Math.max(0, FRAME_HEAVY_BUDGET_MS - spentAtOrAboveMs(consumer));
+  return Math.max(
+    0,
+    FRAME_HEAVY_BUDGET_MS - totalSpentMs() - reservationsExceptMs(consumer),
+  );
 }
 
 export interface FrameBudgetSnapshot {
   serial: number;
   spentMs: number[];
   deferredFrames: number[];
+  reservedMs: number[];
+  totalSpentMs: number;
+  overspendMs: number;
+  forcedByReservation: number;
+  forcedByStarvation: number;
+  estimateOvershootMs: number;
 }
 
 /** Dev read. Allocates, so it is never called from a frame. */
@@ -180,15 +249,28 @@ export function snapshotFrameBudget(): FrameBudgetSnapshot {
     serial: frameSerial,
     spentMs: [...spentMs],
     deferredFrames: [...deferredFrames],
+    reservedMs: [...reservedMs],
+    totalSpentMs: totalSpentMs(),
+    overspendMs: Math.max(0, totalSpentMs() - FRAME_HEAVY_BUDGET_MS),
+    forcedByReservation,
+    forcedByStarvation,
+    estimateOvershootMs,
   };
 }
 
 /** Tests, and a scene teardown that must not leave a streak behind. */
 export function resetFrameBudget(): void {
   frameSerial = 0;
+  frameToken = null;
   for (let rank = 0; rank < FRAME_BUDGET_CONSUMER_COUNT; rank += 1) {
     spentMs[rank] = 0;
+    reservedMs[rank] = 0;
+    admittedEstimateMs[rank] = 0;
+    pendingReservationMs[rank] = 0;
     deferredFrames[rank] = 0;
     lastAskSerial[rank] = -1;
   }
+  forcedByReservation = 0;
+  forcedByStarvation = 0;
+  estimateOvershootMs = 0;
 }

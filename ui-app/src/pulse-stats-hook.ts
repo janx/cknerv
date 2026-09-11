@@ -95,6 +95,8 @@
 //   window.__renderPerformanceStats()   → bounded p50/p95/p99 CPU/GPU/frame data
 //   window.__renderPerformanceStatsJson() → versioned JSON export
 //   window.__renderPerformanceStatsReset() → clean measurement window
+//   window.__constellationWorkStats() → inspection solve/cursor work and
+//                                  pending/cancel/deadline catch-up scalars
 // Read-only; safe to leave attached. The library itself stays window-free —
 // every name above is an export of @cknerv/ui installed here, and
 // `packages/ui/__tests__/windowFreeLibrary.test.ts` reads the package off
@@ -121,6 +123,8 @@ import {
   snapshotPerformanceProbe,
   exportPerformanceProbeJson,
   resetPerformanceProbe,
+  snapshotConstellationWorkStats,
+  resetConstellationWorkStats,
 } from '@cknerv/ui';
 
 declare global {
@@ -146,6 +150,8 @@ declare global {
     __renderPerformanceStats?: typeof snapshotPerformanceProbe;
     __renderPerformanceStatsJson?: typeof exportPerformanceProbeJson;
     __renderPerformanceStatsReset?: typeof resetPerformanceProbe;
+    __constellationWorkStats?: typeof snapshotConstellationWorkStats;
+    __constellationWorkStatsReset?: typeof resetConstellationWorkStats;
   }
 }
 
@@ -172,4 +178,6 @@ export function installPulseStatsHook(): void {
   window.__renderPerformanceStats = snapshotPerformanceProbe;
   window.__renderPerformanceStatsJson = exportPerformanceProbeJson;
   window.__renderPerformanceStatsReset = resetPerformanceProbe;
+  window.__constellationWorkStats = snapshotConstellationWorkStats;
+  window.__constellationWorkStatsReset = resetConstellationWorkStats;
 }

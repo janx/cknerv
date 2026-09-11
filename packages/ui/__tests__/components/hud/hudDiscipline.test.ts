@@ -4925,7 +4925,7 @@ describe('one ladder for time', () => {
     for (const entry of motionComment().matchAll(/^\/\/   `([\w.-]+\.tsx?)`\s+([\d ·]+?)\s{2}/gm)) {
       instruments.set(entry[1], entry[2].split('·').map((value) => Number(value.trim())));
     }
-    expect(instruments.size).toBe(7);
+    expect(instruments.size).toBe(8);
 
     const rungs = new Set<number>(
       Object.values(HUD_MOTION).filter((value) => typeof value === 'number') as number[],

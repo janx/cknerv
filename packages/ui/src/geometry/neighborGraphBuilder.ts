@@ -1,12 +1,17 @@
 import {
   buildNeighborGraph,
+  buildNeighborGraphSteps,
   type LivingNeighborGraph,
   type NeighborEdge,
   type NeighborGraphCell,
+  type NeighborGraphCells,
   type NeighborGraphOptions,
   type PassiveSelection,
 } from './neighborGraph';
-import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
+import {
+  buildPassiveNeighborGraph,
+  buildPassiveNeighborGraphSteps,
+} from './passiveNeighborGraph';
 import {
   PACKED_TOPOLOGY_CELL_STRIDE,
   applyNeighborAdjacencyPatch,
@@ -48,12 +53,11 @@ function noteWorkerFallback(reason: unknown): void {
   neighborGraphBuilderStats.workerFallbacks += 1;
   if (!workerFallbackWarned) {
     workerFallbackWarned = true;
-    // The reason rides the warning: this fallback costs a full synchronous
-    // topology build, so "which path failed" has to be answerable from a
-    // console alone.
+    // The reason rides the warning so a profile can identify which worker
+    // path entered the cooperative canonical recovery.
     console.warn(
-      'neighborGraphBuilder: worker path failed; building topology synchronously '
-      + 'on the main thread (counted in neighborGraphBuilderStats.workerFallbacks).',
+      'neighborGraphBuilder: worker path failed; recovering topology in main-thread slices '
+      + '(counted in neighborGraphBuilderStats.workerFallbacks).',
       reason,
     );
   }
@@ -72,6 +76,10 @@ export interface NeighborGraphBuildOptions {
     twigShare: number;
   };
   preferredEdges?: readonly NeighborEdge[];
+  /** Immutable render-set publication for main-thread recovery. The worker
+   * still packs `cells`; recovery can span tasks and must not iterate a stage
+   * Map that a newer cache generation patches in place. */
+  recoveryCells?: NeighborGraphCells;
   /** O(churn) topology journal since the previous APPLIED build. When valid
    * and a previous response chained, the builder sends this instead of a
    * full 50K pack; the worker patches its retained cell map. Any gap makes
@@ -135,7 +143,7 @@ interface ActiveBuild {
   requestId: number;
   resolve: (result: NeighborGraphBuildResult | null) => void;
   reject: (reason: unknown) => void;
-  fallback: () => NeighborGraphBuildResult;
+  fallback: () => Promise<NeighborGraphBuildResult | null>;
   /** Delta-or-full request, packed at SEND time — a build superseded while
    * still queued never pays for packing at all. */
   buildRequest: () => NeighborGraphWorkerRequest;
@@ -147,6 +155,10 @@ interface ActiveBuild {
 export interface NeighborGraphBuilderOptions {
   minWorkerCells?: number;
   workerFactory?: () => Worker;
+  /** Canvas owner hook: zero pauses recovery while hidden or while this
+   * frame's shared heavy-work ledger has no room. Omitted in headless labs. */
+  recoveryBudgetMs?: () => number;
+  recoverySpendMs?: (elapsedMs: number) => void;
 }
 
 function buildSynchronously(
@@ -168,6 +180,179 @@ function buildSynchronously(
       })
       : null,
     passiveDelta: null,
+  };
+}
+
+const RECOVERY_SLICE_MS = 2;
+
+/** A real task boundary: MessageChannel is unaffected by Promise microtask
+ * draining and lets input/paint tasks run between recovery slices. */
+function scheduleRecoveryTask(run: () => void, yieldToTimers = false): () => void {
+  if (yieldToTimers || typeof MessageChannel === 'undefined') {
+    const timer = setTimeout(run, 0);
+    return () => clearTimeout(timer);
+  }
+  const channel = new MessageChannel();
+  channel.port1.onmessage = () => {
+    channel.port1.close();
+    channel.port2.close();
+    run();
+  };
+  channel.port2.postMessage(null);
+  return () => {
+    channel.port1.onmessage = null;
+    channel.port1.close();
+    channel.port2.close();
+  };
+}
+
+interface RecoveryRun {
+  promise: Promise<NeighborGraphBuildResult | null>;
+  cancel(): void;
+}
+
+function buildRecoverably(
+  cells: NeighborGraphCells,
+  options: NeighborGraphBuildOptions,
+  alive: () => boolean,
+  budgetMs: () => number,
+  spendMs: (elapsedMs: number) => void,
+): RecoveryRun {
+  const graphSteps = buildNeighborGraphSteps(cells, options.topology);
+  let graph: ReturnType<typeof buildNeighborGraph> | null = null;
+  let passiveSteps: ReturnType<typeof buildPassiveNeighborGraphSteps> | null = null;
+  let cancelScheduled: (() => void) | null = null;
+  let scheduledSlices = 0;
+  let settled = false;
+  let resolveRun!: (result: NeighborGraphBuildResult | null) => void;
+  const promise = new Promise<NeighborGraphBuildResult | null>((resolve, reject) => {
+    resolveRun = resolve;
+    const finish = (result: NeighborGraphBuildResult | null) => {
+      if (settled) return;
+      settled = true;
+      cancelScheduled?.();
+      cancelScheduled = null;
+      resolve(result);
+    };
+    const schedule = (run: () => void) => {
+      neighborGraphBuilderStats.recoveryPendingTasks += 1;
+      neighborGraphBuilderStats.recoveryMaxPendingTasks = Math.max(
+        neighborGraphBuilderStats.recoveryMaxPendingTasks,
+        neighborGraphBuilderStats.recoveryPendingTasks,
+      );
+      scheduledSlices += 1;
+      const cancelTask = scheduleRecoveryTask(() => {
+        neighborGraphBuilderStats.recoveryPendingTasks -= 1;
+        cancelScheduled = null;
+        run();
+      }, (scheduledSlices & 7) === 0);
+      cancelScheduled = () => {
+        neighborGraphBuilderStats.recoveryPendingTasks -= 1;
+        cancelTask();
+      };
+    };
+    const advance = () => {
+      if (!alive()) {
+        neighborGraphBuilderStats.recoveryCancelled += 1;
+        finish(null);
+        return;
+      }
+      const allowedMs = Math.max(0, Math.min(RECOVERY_SLICE_MS, budgetMs()));
+      if (allowedMs <= 0) {
+        neighborGraphBuilderStats.recoveryPendingTasks += 1;
+        neighborGraphBuilderStats.recoveryMaxPendingTasks = Math.max(
+          neighborGraphBuilderStats.recoveryMaxPendingTasks,
+          neighborGraphBuilderStats.recoveryPendingTasks,
+        );
+        const timer = setTimeout(() => {
+          neighborGraphBuilderStats.recoveryPendingTasks -= 1;
+          cancelScheduled = null;
+          advance();
+        }, 16);
+        cancelScheduled = () => {
+          neighborGraphBuilderStats.recoveryPendingTasks -= 1;
+          clearTimeout(timer);
+        };
+        return;
+      }
+      const started = performance.now();
+      const recordSlice = () => {
+        const elapsed = performance.now() - started;
+        neighborGraphBuilderStats.recoverySlices += 1;
+        neighborGraphBuilderStats.recoveryMaxSliceMs = Math.max(
+          neighborGraphBuilderStats.recoveryMaxSliceMs, elapsed,
+        );
+        spendMs(elapsed);
+      };
+      try {
+        while (performance.now() - started < allowedMs) {
+          if (graph === null) {
+            const stepStarted = performance.now();
+            const step = graphSteps.next();
+            neighborGraphBuilderStats.recoveryMaxStepMs = Math.max(
+              neighborGraphBuilderStats.recoveryMaxStepMs,
+              performance.now() - stepStarted,
+            );
+            if (!step.done) continue;
+            graph = step.value;
+            if (options.includePassive) {
+              passiveSteps = buildPassiveNeighborGraphSteps(graph, {
+                edgeBudget: options.passiveEdgeBudget,
+                coverageShare: options.passiveTuning?.coverageShare,
+                trunkShare: options.passiveTuning?.trunkShare,
+                twigShare: options.passiveTuning?.twigShare,
+                preferredEdges: options.preferredEdges,
+              });
+              continue;
+            }
+          }
+          if (passiveSteps !== null) {
+            const stepStarted = performance.now();
+            const step = passiveSteps.next();
+            neighborGraphBuilderStats.recoveryMaxStepMs = Math.max(
+              neighborGraphBuilderStats.recoveryMaxStepMs,
+              performance.now() - stepStarted,
+            );
+            if (!step.done) continue;
+            neighborGraphBuilderStats.recoveryCompleted += 1;
+            recordSlice();
+            finish({
+              graph: { adjacency: graph!.adjacency, eagerBase: new Map() },
+              passiveGraph: step.value,
+              passiveDelta: null,
+            });
+            return;
+          }
+          neighborGraphBuilderStats.recoveryCompleted += 1;
+          recordSlice();
+          finish({
+            graph: { adjacency: graph!.adjacency, eagerBase: new Map() },
+            passiveGraph: null,
+            passiveDelta: null,
+          });
+          return;
+        }
+        recordSlice();
+        schedule(advance);
+      } catch (error) {
+        recordSlice();
+        reject(error);
+      }
+    };
+    schedule(advance);
+  });
+  return {
+    promise,
+    cancel() {
+      if (settled) return;
+      settled = true;
+      cancelScheduled?.();
+      cancelScheduled = null;
+      graphSteps.return(undefined as never);
+      passiveSteps?.return(undefined as never);
+      neighborGraphBuilderStats.recoveryCancelled += 1;
+      resolveRun(null);
+    },
   };
 }
 
@@ -209,6 +394,10 @@ export function createNeighborGraphBuilder(
   let pendingSend: (() => void) | null = null;
   let nextRequestId = 1;
   let disposed = false;
+  let recoverySerial = 0;
+  let activeRecovery: RecoveryRun | null = null;
+  let workerRetryAfterMs = 0;
+  let workerRetryDelayMs = 1_000;
   /** Generation of the last worker response actually APPLIED on this side.
    * Incremental hints are trusted only when the next response chains from
    * it; a superseded/dropped response breaks the chain and downgrades one
@@ -245,12 +434,20 @@ export function createNeighborGraphBuilder(
     worker = null;
   };
 
+  const delayWorkerRetry = () => {
+    workerRetryAfterMs = performance.now() + workerRetryDelayMs;
+    workerRetryDelayMs = Math.min(30_000, workerRetryDelayMs * 2);
+  };
+
   // The worker survives across builds (its session retains the previous
   // graph so responses carry incremental hints, and per-build spawn + JIT
   // re-warm disappear). Superseding an in-flight request only abandons the
   // RESULT: responses are keyed by requestId, and a stale response advances
   // nothing on this side. Termination is reserved for dispose and failures.
   const cancel = () => {
+    recoverySerial += 1;
+    activeRecovery?.cancel();
+    activeRecovery = null;
     pendingSend = null;
     if (active) {
       active.resolve(null);
@@ -267,16 +464,15 @@ export function createNeighborGraphBuilder(
    * fallback and drop the worker (its queue and session die with it). */
   const failWorker = (reason: unknown) => {
     noteWorkerFallback(reason);
+    delayWorkerRetry();
     const current = active;
     active = null;
     pendingSend = null;
     terminateWorker();
     if (!current) return;
     try {
-      current.resolve(current.fallback());
-    } catch (error) {
-      current.reject(error);
-    }
+      current.fallback().then(current.resolve, current.reject);
+    } catch (error) { current.reject(error); }
   };
 
   /** Post a request with the transfer list its own buffers imply. */
@@ -418,6 +614,8 @@ export function createNeighborGraphBuilder(
       }
       const result: NeighborGraphBuildResult = { graph, passiveGraph, passiveDelta };
       lastAppliedGeneration = response.generation;
+      workerRetryAfterMs = 0;
+      workerRetryDelayMs = 1_000;
       active = null;
       current.resolve(result);
     } catch (error) {
@@ -437,14 +635,33 @@ export function createNeighborGraphBuilder(
       // request is actually needed.
       const canUseWorker = (
         cells.size >= minWorkerCells
+        && performance.now() >= workerRetryAfterMs
         && (
           builderOptions.workerFactory !== undefined
           || typeof Worker !== 'undefined'
         )
       );
-      const fallback = () => buildSynchronously(cells, options);
+      const recovery = recoverySerial;
+      const fallback = () => {
+        activeRecovery?.cancel();
+        const run = buildRecoverably(
+          options.recoveryCells ?? cells,
+          options, () => !disposed && recovery === recoverySerial,
+          builderOptions.recoveryBudgetMs ?? (() => RECOVERY_SLICE_MS),
+          builderOptions.recoverySpendMs ?? (() => {}),
+        );
+        activeRecovery = run;
+        void run.promise.then(() => {
+          if (activeRecovery === run) activeRecovery = null;
+        }, () => {
+          if (activeRecovery === run) activeRecovery = null;
+        });
+        return run.promise;
+      };
       if (!canUseWorker) {
-        neighborGraphBuilderStats.belowThresholdBuilds += 1;
+        if (cells.size < minWorkerCells) {
+          neighborGraphBuilderStats.belowThresholdBuilds += 1;
+        }
         // This build lands on the main thread, but the caller already
         // consumed its journal window for it — a window the surviving worker
         // session never sees. Keeping the chain would let the NEXT delta
@@ -452,7 +669,9 @@ export function createNeighborGraphBuilder(
         // ghost nodes until the next unrelated chain break), so the chain
         // restarts with a full pack.
         lastAppliedGeneration = 0;
-        return Promise.resolve().then(fallback);
+        return cells.size >= minWorkerCells
+          ? fallback()
+          : Promise.resolve().then(() => buildSynchronously(cells, options));
       }
 
       try {
@@ -467,8 +686,9 @@ export function createNeighborGraphBuilder(
         }
       } catch (error) {
         noteWorkerFallback(error);
+        delayWorkerRetry();
         terminateWorker();
-        return Promise.resolve().then(fallback);
+        return fallback();
       }
 
       const requestId = nextRequestId;

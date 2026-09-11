@@ -831,7 +831,7 @@ describe('inspection dialects read the HUD', () => {
   it('CellInspectionOverlay hands the occlusion rects to the constellation walk', () => {
     const source = readFileSync(join(COMPONENTS_DIR, 'CellInspectionOverlay.tsx'), 'utf8');
 
-    expect(source).toMatch(/commitConstellationFrame\([\s\S]*?\n\s*obstacles,/);
+    expect(source).toMatch(/advanceConstellationFrame\([\s\S]*?\n\s*obstacles,/);
   });
 
   it.each(INSPECTION_DIALECTS)('%s marks its layer so the card is not its own obstacle', (dialect) => {

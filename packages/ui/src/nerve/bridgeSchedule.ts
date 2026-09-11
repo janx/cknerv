@@ -10,8 +10,8 @@
 // That is no longer true, and it is not a regression but the point. The fabric
 // half of a landing now drains across the frames AFTER the build publishes its
 // version (`fabricLandingQueue`), so the commit that publishes `version` sees
-// a fabric one to three frames behind — and the selection is 5–23 ms of work
-// stacked on the very React task the drain exists to unload. So the commit
+// a fabric one to three frames behind — and the former synchronous selection
+// was 5–23 ms of work stacked on the React task the drain exists to unload. So the commit
 // only ARMS a slot, and this module is the whole of the rule that fires it.
 //
 // The rule, in the order it is asked:
@@ -46,6 +46,16 @@ export interface PendingBridgeBuild {
   readonly arm: number;
 }
 
+/** A React effect may run after a newer worker microtask has already replaced
+ * the shared immutable refs. Only arm when their atomic tag still matches the
+ * rendered version whose fabric/departure timing this build carries. */
+export function bridgeInputVersionMatches(
+  renderedVersion: number,
+  publishedInputVersion: number,
+): boolean {
+  return renderedVersion === publishedInputVersion;
+}
+
 /** The version the owner publishes before any build has landed: an empty
  *  graph, an empty staged Cell map, and no fabric at all. Its selection reads
  *  nothing and its only effect is to prime the anchor the next build compares
@@ -74,44 +84,41 @@ export function bridgeRunDecision(
   return landedVersion >= pending.version;
 }
 
-// ── The build itself, as three steps on three frames ────────────────────────
+// ── The build itself, as three resumable phases across frames ───────────────
 //
 // Moving the whole body out of the React commit (above) was only half of it.
 // The body still ran in ONE frame — 19.7 ms at the median, 33.2 at the worst,
 // measured on the frame right after a landing, which is also the frame the
 // fabric drain and the live-plan slice want. So the body is now a sequence,
-// one step per frame at most, each asking the frame budget before it starts:
+// one bounded slice per frame at most, each asking the budget before it starts:
 //
 //   A `sync`      — `syncBridgeHosts`: diff the persistent host registry
 //                   against the staged Cells and the drawn fabric. A build
 //                   that moved no host ends the sequence right here, which is
 //                   the steady state of a composed stage.
-//   B `select`    — `selectBridgeEdges`: the grain, 5–23 ms of coverage and
-//                   plan work over the anchor index.
+//   B `select`    — the canonical selector cursor: coverage and plan work over
+//                   the anchor index in wall-clock slices.
 //   C `reconcile` — `reconcileBridgeStrokes` + the build's boot report: the
 //                   selection becomes births, deaths and revivals, and the
 //                   admission pass LATER IN THE SAME FRAME CALLBACK takes
 //                   them, so a chosen stroke still reaches the GPU on the
 //                   frame it was chosen.
 //
-// ⚠️ Everything a step reads it reads at ITS OWN run time — the registry, the
-// staged map, the sim clock. A step is not a continuation of a snapshot taken
-// three frames ago; it is the same "read the world now" the single-frame body
-// always did, one frame later. What must never be mixed is two BUILDS, and
-// that is the owner's rule rather than this module's: a newer arm restarts the
-// sequence from step A.
+// ⚠️ The arm owns immutable Cells/edges tagged with its display version. The
+// registry persists, while selection and reconcile continue from that one
+// arm. A newer arm restarts the sequence from step A.
 
 /** Where a running bridge build stands. */
 export type BridgeBuildStep = 'sync' | 'select' | 'reconcile';
 
-/** What each step is expected to cost before it has ever run — the review's
- *  own split of the 19.7 ms median body. After a step runs, its LAST MEASURED
- *  cost is the estimate: the machine, the stage size and the quality tier all
- *  move this by more than any constant could predict. */
+/** What each resumable slice is expected to cost before it has ever run.
+ * Seeding this with the retired whole-step costs would make the 15 ms selector
+ * ineligible for a 12 ms frame and force every first build through starvation.
+ * After a slice runs, its measured wall time becomes the next estimate. */
 export const BRIDGE_STEP_ESTIMATE_MS: Readonly<Record<BridgeBuildStep, number>> = {
-  sync: 6,
-  select: 15,
-  reconcile: 3,
+  sync: 2,
+  select: 2,
+  reconcile: 2,
 };
 
 /** The step after this one, or `null` when the sequence is finished. */

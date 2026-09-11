@@ -3,12 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AssetKind, Cell, CellSemanticRecord, LockKind } from '@cknerv/types';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import * as THREE from 'three';
 import {
   createCellInspectionHandles,
   selectedCellScanAccent,
   useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
-import { CONSTELLATION_WIDTH } from '../../src/components/hud/cellConstellationFrame';
+import {
+  CONSTELLATION_WIDTH,
+  invalidateConstellationFrame,
+} from '../../src/components/hud/cellConstellationFrame';
+import { settleCellConstellationCameraMotion } from '../../src/components/hud/cellConstellationCameraMotion';
 import {
   cellScanFactAccent,
   type CellInspectionFacet,
@@ -131,11 +136,36 @@ describe('the constellation the cell dialect places', () => {
     expect(INSPECTION_OVERLAY_SOURCE).toContain('[cell.id, handles]');
   });
 
+  it('keeps the camera-motion window on the reused handle across a Cell key change', () => {
+    const handles = createCellInspectionHandles();
+    const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1_000);
+    const anchor = new THREE.Vector3();
+    camera.position.z = 100;
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    expect(settleCellConstellationCameraMotion(
+      handles.cameraMotion, camera, anchor, 1_080, 0,
+    )).toBe(false);
+
+    camera.position.x = 1;
+    camera.updateMatrixWorld(true);
+    expect(settleCellConstellationCameraMotion(
+      handles.cameraMotion, camera, anchor, 1_080, 16,
+    )).toBe(true);
+
+    // Both keyed anchors receive the same App-owned channel. Geometry resets
+    // for the new Cell, but the active damping window must not reset with it.
+    invalidateConstellationFrame(handles);
+    expect(settleCellConstellationCameraMotion(
+      handles.cameraMotion, camera, anchor, 1_080, 32,
+    )).toBe(true);
+  });
+
   it('projects once, and reads no layout inside the frame', () => {
     // One anchor, one projection, four boxes — and every measurement the walk
     // spends came from a ResizeObserver on a panel's own content, never from
     // the frame loop.
-    expect(INSPECTION_OVERLAY_SOURCE).toContain('commitConstellationFrame');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('advanceConstellationFrame');
     expect(INSPECTION_OVERLAY_SOURCE.match(/\.project\(camera\)/g)).toHaveLength(1);
     // The frame loop itself reads nothing: every `getBoundingClientRect` in the
     // file is inside the quarter-second dim sampler, which is allowed to trail

@@ -16,8 +16,10 @@ import {
   bridgeRenderStateInto,
   bridgeSymbolicDim,
   bridgeWidthScale,
+  createBridgeReconcileJob,
   makeBridgeStrokeState,
   reconcileBridgeStrokes,
+  stepBridgeReconcileJob,
   writeBridgeStroke,
   type BridgeStrokeState,
 } from '../../src/nerve/bridgeStroke';
@@ -326,6 +328,46 @@ describe('bridge stroke state', () => {
 });
 
 describe('reconcileBridgeStrokes', () => {
+  it('does not publish a partial cursor before its commit phase', () => {
+    const strokes = new Map<string, BridgeStrokeState>();
+    reconcileBridgeStrokes(strokes, [bridge()], 0);
+    const before = [...strokes.entries()];
+    const job = createBridgeReconcileJob(
+      strokes,
+      Array.from({ length: 40 }, (_unused, index) => bridge({
+        cellId: 2 ** 52 + index,
+        anchorIndex: 1000 + index,
+      })),
+      10,
+    );
+    expect(stepBridgeReconcileJob(job, 8).done).toBe(false);
+    expect([...strokes.entries()]).toEqual(before);
+    while (!stepBridgeReconcileJob(job, 8).done) {}
+    expect(job.changed).toBe(41);
+    expect(strokes.size).toBe(41);
+  });
+
+  it('re-admits a dying stroke reaped while the scan is suspended', () => {
+    const strokes = new Map<string, BridgeStrokeState>();
+    reconcileBridgeStrokes(strokes, [bridge()], 0);
+    reconcileBridgeStrokes(strokes, [], 5);
+    const reaped = strokes.get('4242#991')!;
+    const moved: BridgeStrokeState[] = [];
+    const job = createBridgeReconcileJob(strokes, [bridge()], 9, moved);
+    expect(stepBridgeReconcileJob(job, 1).done).toBe(false);
+
+    // The frame animation reaches the withdrawal endpoint between slices.
+    strokes.delete('4242#991');
+    reaped.slot = -1;
+    while (!stepBridgeReconcileJob(job, 1).done) {}
+
+    expect(job.changed).toBe(1);
+    expect(strokes.get('4242#991')).toBe(reaped);
+    expect(reaped.dyingAt).toBeNull();
+    expect(reaped.bornAt).toBe(0);
+    expect(moved).toEqual([reaped]);
+  });
+
   const strokeMap = (
     ...bridges: BridgeEdge[]
   ): Map<string, BridgeStrokeState> => {

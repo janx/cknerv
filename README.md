@@ -81,6 +81,9 @@ never submits transactions.
   than configurable.
 - [`docs/canvas-rendering.md`](docs/canvas-rendering.md): the normative Canvas
   visual, quality, performance, and acceptance contract.
+- [`docs/plans/2026-09-11-rendering-performance.md`](docs/plans/2026-09-11-rendering-performance.md):
+  the rendering performance optimization plan, implementation stages, and
+  verification targets.
 - [`docs/ckbadger.md`](docs/ckbadger.md): the optional enrichment source — its
   setup, trust boundary, capabilities, and limits.
 - [`docs/jukebox.md`](docs/jukebox.md): the dashboard's optional SoundCloud

@@ -9,7 +9,7 @@
 // component-stitch pass adds the minimum extra long fibres needed to
 // make the whole field one connected neural network.
 
-import { buildArborForest } from './arborForest';
+import { buildArborForestSteps } from './arborForest';
 
 /** Default k for the nearest-neighbour query. k=4 gives the main
  *  galaxy disc generous local connectivity while still feeling
@@ -140,6 +140,11 @@ export interface NeighborGraphCell {
   pos_seed: readonly [number, number, number];
 }
 
+/** Stable source surface shared by readonly Maps and immutable Cell arrays. */
+export interface NeighborGraphCells {
+  values(): IterableIterator<NeighborGraphCell>;
+}
+
 export function emptyNeighborGraph(): NeighborGraph {
   return { adjacency: new Map(), edges: [] };
 }
@@ -177,6 +182,35 @@ function edgeFromIds(
   return { from: lo, to: hi, d: Math.sqrt(distSq(a, b)) };
 }
 
+/** Stable resumable equivalent of Array.sort for recovery. */
+function* stableSortSteps<T>(
+  values: T[],
+  compare: (a: T, b: T) => number,
+): Generator<void, T[], void> {
+  const scratch = new Array<T>(values.length);
+  let moves = 0;
+  for (let width = 1; width < values.length; width *= 2) {
+    for (let left = 0; left < values.length; left += width * 2) {
+      const mid = Math.min(left + width, values.length);
+      const end = Math.min(left + width * 2, values.length);
+      let a = left;
+      let b = mid;
+      for (let out = left; out < end; out += 1) {
+        scratch[out] = b >= end || (a < mid && compare(values[a], values[b]) <= 0)
+          ? values[a++] : values[b++];
+        moves += 1;
+        if ((moves & 63) === 0) yield;
+      }
+    }
+    for (let index = 0; index < values.length; index += 1) {
+      values[index] = scratch[index];
+      moves += 1;
+      if ((moves & 63) === 0) yield;
+    }
+  }
+  return values;
+}
+
 /** Pack two integer bucket coords (after bucket-size division) into one
  *  number for use as a Map key. The previous string-key formulation
  *  (`${bx}\x00${bz}`) showed up as a hot allocation in profiling
@@ -202,9 +236,23 @@ function bucketKeyNum(bx: number, bz: number): number {
  * deltas leave the graph identical.
  */
 export function buildNeighborGraph(
-  cells: ReadonlyMap<number, NeighborGraphCell>,
+  cells: NeighborGraphCells,
   optionsOrK: NeighborGraphOptions | number = DEFAULT_K,
 ): NeighborGraph {
+  const steps = buildNeighborGraphSteps(cells, optionsOrK);
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+/** Canonical builder as a resumable cursor. The synchronous API above drains
+ * this exact algorithm; Worker-failure recovery advances it between browser
+ * tasks, so the two paths cannot drift in ties, ordering, or 53-bit ids. */
+export function* buildNeighborGraphSteps(
+  cells: NeighborGraphCells,
+  optionsOrK: NeighborGraphOptions | number = DEFAULT_K,
+): Generator<void, NeighborGraph, void> {
   const k =
     typeof optionsOrK === 'number'
       ? optionsOrK
@@ -216,7 +264,13 @@ export function buildNeighborGraph(
   // Dead-but-not-yet-gc'd cells (death_at_ms set, still in the map)
   // must contribute NO adjacency and NO edges: death retracts a cell's
   // fibres, and a later reconciliation rebuild must not resurrect them.
-  const cellArr = [...cells.values()].filter((c) => c.death_at_ms == null);
+  const cellArr: NeighborGraphCell[] = [];
+  let collected = 0;
+  for (const cell of cells.values()) {
+    if (cell.death_at_ms == null) cellArr.push(cell);
+    collected += 1;
+    if ((collected & 63) === 0) yield;
+  }
   // Build in id order, not Map-insertion order. The k-NN adjacency is already
   // order-invariant (top-k ranks by (dSq, id)), but the render-priority BFS
   // skeleton's root pick, the lifeline/component-stitch tie-breaks, and the
@@ -225,16 +279,19 @@ export function buildNeighborGraph(
   // cell SET, so a full-pack rebuild and a delta-patched worker session grow
   // the SAME tree over the same cells — a topology supersession then applies as
   // a small diff instead of flushing the whole fabric.
-  cellArr.sort((a, b) => a.id - b.id);
+  yield* stableSortSteps(cellArr, (a, b) => a.id - b.id);
   const n = cellArr.length;
   if (n === 0) return emptyNeighborGraph();
   if (n === 1) {
     return { adjacency: new Map([[cellArr[0].id, new Set()]]), edges: [] };
   }
 
-  const byId = new Map<number, NeighborGraphCell>(
-    cellArr.map((c) => [c.id, c]),
-  );
+  const byId = new Map<number, NeighborGraphCell>();
+  for (let index = 0; index < cellArr.length; index += 1) {
+    const cell = cellArr[index];
+    byId.set(cell.id, cell);
+    if ((index & 63) === 63) yield;
+  }
 
   // Bounded top-k, held in two parallel buffers kept sorted ascending by
   // (dSq, id). k is small (3-7 in every caller), so an insertion into a
@@ -267,6 +324,8 @@ export function buildNeighborGraph(
     if (x > maxX) maxX = x;
     if (z < minZ) minZ = z;
     if (z > maxZ) maxZ = z;
+    collected += 1;
+    if ((collected & 63) === 0) yield;
   }
   const spanX = maxX - minX;
   const spanZ = maxZ - minZ;
@@ -302,6 +361,8 @@ export function buildNeighborGraph(
     let arr = buckets.get(key);
     if (!arr) { arr = []; buckets.set(key, arr); }
     arr.push(c);
+    collected += 1;
+    if ((collected & 63) === 0) yield;
   }
 
   // 1. k-NN per cell against bucket neighbourhood, widening radius
@@ -366,13 +427,14 @@ export function buildNeighborGraph(
     const bz = Math.floor(a.pos_seed[2] / bucketSize);
     topN = 0;
 
-    const scanBucket = (gx: number, gz: number): void => {
+    const scanBucket = function* (gx: number, gz: number): Generator<void, void, void> {
       const arr = buckets.get(bucketKeyNum(gx, gz));
       if (!arr) return;
       for (let m = 0; m < arr.length; m++) {
         const c = arr[m];
         if (c.id === a.id) continue;
         consider(c.id, distSq(a, c));
+        if ((m & 63) === 63) yield;
       }
     };
 
@@ -384,16 +446,16 @@ export function buildNeighborGraph(
     // heuristic, and makes the bucket side a pure cost knob.
     for (let ring = 0; ring <= maxRing; ring++) {
       if (ring === 0) {
-        scanBucket(bx, bz);
+        yield* scanBucket(bx, bz);
       } else {
         // Perimeter only — the interior was scanned by earlier rings.
         for (let dx = -ring; dx <= ring; dx++) {
-          scanBucket(bx + dx, bz - ring);
-          scanBucket(bx + dx, bz + ring);
+          yield* scanBucket(bx + dx, bz - ring);
+          yield* scanBucket(bx + dx, bz + ring);
         }
         for (let dz = -ring + 1; dz <= ring - 1; dz++) {
-          scanBucket(bx - ring, bz + dz);
-          scanBucket(bx + ring, bz + dz);
+          yield* scanBucket(bx - ring, bz + dz);
+          yield* scanBucket(bx + ring, bz + dz);
         }
       }
       const covered = ring * bucketSize;
@@ -406,6 +468,7 @@ export function buildNeighborGraph(
       // Isolated cell still needs an entry so consumers can reason
       // about "this cell exists but has no neighbours."
       adjOf(a.id);
+      yield;
       continue;
     }
 
@@ -416,6 +479,7 @@ export function buildNeighborGraph(
       if (d > maxEdgeLength) continue;
       addEdge(a.id, topId[m], d);
     }
+    yield;
   }
 
   // 2. Lifeline pass. After k-NN any cell whose every candidate
@@ -438,6 +502,7 @@ export function buildNeighborGraph(
         bestDSq = dSq;
         bestId = cellArr[j].id;
       }
+      if ((j & 63) === 63) yield;
     }
     if (bestId < 0) continue;
     const d = Math.sqrt(bestDSq);
@@ -448,7 +513,11 @@ export function buildNeighborGraph(
   // two dense but far-apart clusters can both look locally healthy
   // while the whole field is still disconnected. Add one nearest-pair
   // bridge from each remaining component into the connected set.
-  const unvisited = new Set<number>(cellArr.map((c) => c.id));
+  const unvisited = new Set<number>();
+  for (let index = 0; index < cellArr.length; index += 1) {
+    unvisited.add(cellArr[index].id);
+    if ((index & 63) === 63) yield;
+  }
   const components: number[][] = [];
   while (unvisited.size > 0) {
     const start = unvisited.values().next().value as number;
@@ -466,17 +535,24 @@ export function buildNeighborGraph(
         unvisited.delete(nb);
         queue.push(nb);
       }
+      if ((head & 63) === 63) yield;
     }
     components.push(component);
   }
 
   if (components.length > 1) {
-    components.sort((a, b) => b.length - a.length || minId(a) - minId(b));
-    const stitched = new Set<number>(components[0]);
-    for (const component of components.slice(1)) {
+    yield* stableSortSteps(components, (a, b) => b.length - a.length || minId(a) - minId(b));
+    const stitched = new Set<number>();
+    for (let index = 0; index < components[0].length; index += 1) {
+      stitched.add(components[0][index]);
+      if ((index & 63) === 63) yield;
+    }
+    for (let componentIndex = 1; componentIndex < components.length; componentIndex += 1) {
+      const component = components[componentIndex];
       let bestFrom = -1;
       let bestTo = -1;
       let bestDSq = Infinity;
+      let comparisons = 0;
       for (const fromId of stitched) {
         const from = byId.get(fromId)!;
         for (const toId of component) {
@@ -487,12 +563,17 @@ export function buildNeighborGraph(
             bestFrom = fromId;
             bestTo = toId;
           }
+          comparisons += 1;
+          if ((comparisons & 63) === 0) yield;
         }
       }
       if (bestFrom >= 0 && bestTo >= 0) {
         addEdge(bestFrom, bestTo, Math.sqrt(bestDSq));
       }
-      for (const id of component) stitched.add(id);
+      for (let index = 0; index < component.length; index += 1) {
+        stitched.add(component[index]);
+        if ((index & 63) === 63) yield;
+      }
     }
   }
 
@@ -505,7 +586,9 @@ export function buildNeighborGraph(
   const skeletonKeys = new Set<string>();
   const visited = new Set<number>();
   const queue: number[] = [];
-  for (const c of cellArr) {
+  for (let cellIndex = 0; cellIndex < cellArr.length; cellIndex += 1) {
+    const c = cellArr[cellIndex];
+    if ((cellIndex & 63) === 63) yield;
     if (visited.has(c.id)) continue;
     visited.add(c.id);
     queue.length = 0;
@@ -513,14 +596,21 @@ export function buildNeighborGraph(
     for (let q = 0; q < queue.length; q++) {
       const id = queue[q];
       const origin = byId.get(id)!;
-      const neighbours = [...(adjacency.get(id) ?? [])]
-        .filter((nb) => !visited.has(nb))
-        .sort((a, b) => {
-          const da = distSq(origin, byId.get(a)!);
-          const db = distSq(origin, byId.get(b)!);
-          return da - db || a - b;
-        });
-      for (const nb of neighbours) {
+      const neighbours: number[] = [];
+      let neighbourScans = 0;
+      for (const nb of adjacency.get(id) ?? []) {
+        if (!visited.has(nb)) neighbours.push(nb);
+        neighbourScans += 1;
+        if ((neighbourScans & 63) === 0) yield;
+      }
+      yield* stableSortSteps(neighbours, (a, b) => {
+        const da = distSq(origin, byId.get(a)!);
+        const db = distSq(origin, byId.get(b)!);
+        return da - db || a - b;
+      });
+      for (let neighbourIndex = 0; neighbourIndex < neighbours.length; neighbourIndex += 1) {
+        const nb = neighbours[neighbourIndex];
+        if ((neighbourIndex & 63) === 63) yield;
         if (visited.has(nb)) continue;
         visited.add(nb);
         queue.push(nb);
@@ -528,21 +618,37 @@ export function buildNeighborGraph(
         skeletonKeys.add(key);
         skeletonEdges.push(edgeFromIds(id, nb, byId));
       }
+      if ((q & 127) === 127) yield;
     }
   }
 
-  const denseEdges = edges
-    .filter((e) => !skeletonKeys.has(edgeKey(e.from, e.to)))
-    .sort((a, b) => a.d - b.d || a.from - b.from || a.to - b.to);
-  const finalEdges = [...skeletonEdges, ...denseEdges];
+  const denseEdges: NeighborEdge[] = [];
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    if (!skeletonKeys.has(edgeKey(edge.from, edge.to))) denseEdges.push(edge);
+    if ((index & 63) === 63) yield;
+  }
+  yield* stableSortSteps(denseEdges, (a, b) => a.d - b.d || a.from - b.from || a.to - b.to);
+  const finalEdges: NeighborEdge[] = [];
+  for (let index = 0; index < skeletonEdges.length; index += 1) {
+    finalEdges.push(skeletonEdges[index]);
+    if ((index & 63) === 63) yield;
+  }
+  for (let index = 0; index < denseEdges.length; index += 1) {
+    finalEdges.push(denseEdges[index]);
+    if ((index & 63) === 63) yield;
+  }
 
   // Grown-arbor VISUAL overlay: weight the spanning-forest edges by subtree
   // size so the fabric's brightness hierarchy reads as real trunks→twigs.
   // Derives only — adjacency/connectivity above are already final.
-  const arborWeights = buildArborForest(byId, adjacency);
+  const arborWeights = yield* buildArborForestSteps(byId, adjacency);
+  collected = 0;
   for (const e of finalEdges) {
     const w = arborWeights.get(`${e.from}:${e.to}`);
     if (w !== undefined) e.w = w;
+    collected += 1;
+    if ((collected & 63) === 0) yield;
   }
   return { adjacency, edges: finalEdges };
 }

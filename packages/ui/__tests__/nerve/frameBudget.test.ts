@@ -1,17 +1,22 @@
-// The one rule above the three per-frame budgets: who may start, on a frame
+// The one rule above the per-frame budgets: who may start, on a frame
 // that has already spent. Everything here is arithmetic on an explicit ledger
 // — no clock, no component — because the whole module IS the arithmetic.
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  FRAME_BUDGET_PANEL_SOLVE,
   FRAME_BUDGET_BRIDGE_STEP,
   FRAME_BUDGET_FABRIC_DRAIN,
   FRAME_BUDGET_PLAN_SLICE,
   FRAME_HEAVY_BUDGET_MS,
   MAX_DEFER_FRAMES,
   beginFrameBudget,
+  announceFrameBudgetWork,
+  clearFrameBudgetWork,
   frameBudgetRemainingMs,
   mayStartFrameWork,
+  releaseFrameBudget,
+  reserveFrameBudget,
   resetFrameBudget,
   snapshotFrameBudget,
   spendFrameBudget,
@@ -23,12 +28,8 @@ describe('the frame budget', () => {
     beginFrameBudget();
   });
 
-  it('lets the first heavy consumer of a frame start, whatever it costs', () => {
-    // A frame cannot do better than one grain: refusing the first piece of
-    // work would only move it to a frame that is no emptier, and both of the
-    // budgets below this one already work that way (a zero budget still lands
-    // one drain step, and a slice always takes one planner step).
-    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 40)).toBe(true);
+  it('defers a first grain whose estimate already exceeds the shared budget', () => {
+    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 40)).toBe(false);
     expect(FRAME_HEAVY_BUDGET_MS).toBe(12);
   });
 
@@ -102,30 +103,23 @@ describe('the frame budget', () => {
     beginFrameBudget();
     const after = snapshotFrameBudget();
     expect(after.serial).toBe(before.serial + 1);
-    expect(after.spentMs).toEqual([0, 0, 0]);
+    expect(after.spentMs).toEqual([0, 0, 0, 0]);
     // The deferral streak deliberately SURVIVES the frame boundary: it is the
     // only thing that stops a consumer being held forever, and a new frame is
     // not a reason to forget one.
     expect(after.deferredFrames[FRAME_BUDGET_BRIDGE_STEP]).toBe(1);
-    // The same ask that was refused a moment ago now starts.
-    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 15)).toBe(true);
+    // A fresh frame clears spend, but an estimate larger than the entire
+    // budget still waits for the bounded starvation escape.
+    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 15)).toBe(false);
+    expect(snapshotFrameBudget().deferredFrames[FRAME_BUDGET_BRIDGE_STEP]).toBe(2);
   });
 
-  it('charges a consumer against its own precedence and everything above it', () => {
-    // ⭐ The ladder. The three consumers do not ask in the order they should
-    // be served — the drain rides the priority −1 frame and asks first, the
-    // live-plan slice has the only hard deadline and asks last — so a plain
-    // running total would let whatever asked first spend the deadline out of
-    // its own frame.
+  it('charges every consumer against the shared frame total', () => {
     spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 8);
     spendFrameBudget(FRAME_BUDGET_BRIDGE_STEP, 20);
-    // The bridge's 20 ms and the drain's 8 are invisible to the plan slice.
-    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 9)).toBe(true);
-    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 9);
-    // The drain sees the plan's 9 and its own 8, but not the bridge's 20.
+    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 9)).toBe(false);
     expect(frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN)).toBe(0);
     expect(mayStartFrameWork(FRAME_BUDGET_FABRIC_DRAIN, 3)).toBe(false);
-    // ...and the bridge, at the bottom, is charged for all three.
     expect(frameBudgetRemainingMs(FRAME_BUDGET_BRIDGE_STEP)).toBe(0);
 
     beginFrameBudget();
@@ -138,22 +132,74 @@ describe('the frame budget', () => {
       .toBe(FRAME_HEAVY_BUDGET_MS - 4);
   });
 
-  it('serves the three in precedence order when they all ask on one frame', () => {
-    // The frame after a landing, in the order the callbacks actually run:
-    // drain (priority −1), bridge step (a child's sim frame), plan slice.
-    expect(mayStartFrameWork(FRAME_BUDGET_FABRIC_DRAIN, 3)).toBe(true);
+  it('reserves a later plan slice before earlier callbacks spend the frame', () => {
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    expect(frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN)).toBe(8);
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 8);
+    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 3)).toBe(false);
+    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 4)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    const snapshot = snapshotFrameBudget();
+    expect(snapshot.totalSpentMs).toBe(12);
+    expect(snapshot.overspendMs).toBe(0);
+    expect(snapshot.reservedMs).toEqual([0, 0, 0, 0]);
+  });
+
+  it('reserves a pending panel cursor before block consumers on the next frame', () => {
+    announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, 2);
+    beginFrameBudget(42);
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    expect(frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN)).toBe(6);
+    expect(mayStartFrameWork(FRAME_BUDGET_FABRIC_DRAIN, 7)).toBe(false);
     spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 6);
-    // The bridge's selection would take the frame to three vsyncs: held.
-    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 15)).toBe(false);
-    // The deadline consumer is served anyway — that is what the ladder buys.
-    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 9)).toBe(true);
+    expect(mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, 2)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_PANEL_SOLVE, 2);
+    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 4)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    expect(snapshotFrameBudget().totalSpentMs).toBe(12);
+    clearFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE);
+    beginFrameBudget(43);
+    expect(snapshotFrameBudget().reservedMs[FRAME_BUDGET_PANEL_SOLVE]).toBe(0);
+  });
+
+  it('lets a standalone Lab and the scene owner open the same frame once', () => {
+    beginFrameBudget(77);
+    const serial = snapshotFrameBudget().serial;
+    spendFrameBudget(FRAME_BUDGET_PANEL_SOLVE, 2);
+    beginFrameBudget(77);
+    expect(snapshotFrameBudget().serial).toBe(serial);
+    expect(snapshotFrameBudget().spentMs[FRAME_BUDGET_PANEL_SOLVE]).toBe(2);
+  });
+
+  it('keeps a reserved deadline slice after an earlier estimate undershoots', () => {
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    expect(mayStartFrameWork(FRAME_BUDGET_FABRIC_DRAIN, 6)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 10);
+    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 4)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    const snapshot = snapshotFrameBudget();
+    expect(snapshot.totalSpentMs).toBe(14);
+    expect(snapshot.overspendMs).toBe(2);
+    expect(snapshot.forcedByReservation).toBe(1);
+    expect(snapshot.forcedByStarvation).toBe(0);
+    expect(snapshot.estimateOvershootMs).toBe(4);
+  });
+
+  it('releases and resets reservations that no longer have pending work', () => {
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    expect(frameBudgetRemainingMs(FRAME_BUDGET_BRIDGE_STEP)).toBe(8);
+    releaseFrameBudget(FRAME_BUDGET_PLAN_SLICE);
+    expect(frameBudgetRemainingMs(FRAME_BUDGET_BRIDGE_STEP)).toBe(12);
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 4);
+    beginFrameBudget();
+    expect(snapshotFrameBudget().reservedMs).toEqual([0, 0, 0, 0]);
   });
 
   it('ignores a reported cost that is not a positive number', () => {
     spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, Number.NaN);
     spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, -5);
     spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, Number.POSITIVE_INFINITY);
-    expect(snapshotFrameBudget().spentMs).toEqual([0, 0, 0]);
+    expect(snapshotFrameBudget().spentMs).toEqual([0, 0, 0, 0]);
     // A consumer with no measurement behind it (an estimate of NaN, a first
     // ask on a scene that never ran) is treated as costing nothing, never as
     // costing everything.
@@ -167,8 +213,14 @@ describe('the frame budget', () => {
     resetFrameBudget();
     expect(snapshotFrameBudget()).toEqual({
       serial: 0,
-      spentMs: [0, 0, 0],
-      deferredFrames: [0, 0, 0],
+      spentMs: [0, 0, 0, 0],
+      deferredFrames: [0, 0, 0, 0],
+      reservedMs: [0, 0, 0, 0],
+      totalSpentMs: 0,
+      overspendMs: 0,
+      forcedByReservation: 0,
+      forcedByStarvation: 0,
+      estimateOvershootMs: 0,
     });
   });
 });

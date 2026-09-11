@@ -42,7 +42,7 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
   // never rendered — 41% of sources on mainnet — so the invariant flipped from
   // "keep both fresh" to "there is only one".
   it('keeps exactly one neighbour graph, built over the staged subset', () => {
-    expect(NETWORK_SOURCE.match(/createNeighborGraphBuilder\(\)/g))
+    expect(NETWORK_SOURCE.match(/createNeighborGraphBuilder\(/g))
       .toHaveLength(1);
     // `graphRef` here is the deleted routing ref: `displayGraphRef` and
     // `passiveGraphRef` both capitalise the G, so this cannot match them.
@@ -277,24 +277,24 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(frameAt).toBeLessThan(
       NETWORK_SOURCE.indexOf('advanceConsensusMemoryRouteHopPulseClock(', frameAt),
     );
-    expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', frameAt))
+    expect(NETWORK_SOURCE.lastIndexOf('useFrame(({ clock }, rawDeltaSeconds) => {', frameAt))
       .toBeGreaterThan(-1);
   });
 
-  // T5b: three heavy block consumers, one shared per-frame ledger. Each asks
+  // T5b: block and inspection consumers, one shared per-frame ledger. Each asks
   // before it starts and reports what it spent; the ledger itself is opened by
   // the raw priority −1 frame, which is the first subscriber of every frame,
   // so nothing can read the previous frame's remains. The rule's own arithmetic
   // is unit-tested in frameBudget.test.ts; what is pinned here is the wiring.
-  it('opens one heavy-work ledger a frame and charges all three consumers to it', () => {
+  it('opens one heavy-work ledger a frame and charges the consumers to it', () => {
     // Opened beside T1's frame mark, in the first subscriber of the frame.
     const markAt = NETWORK_SOURCE.indexOf('blockFrameStats.markFrame();');
-    const beginAt = NETWORK_SOURCE.indexOf('beginFrameBudget();', markAt);
+    const beginAt = NETWORK_SOURCE.indexOf('beginFrameBudget(clock.elapsedTime);', markAt);
     expect(beginAt).toBeGreaterThan(markAt);
     expect(beginAt).toBeLessThan(
       NETWORK_SOURCE.indexOf('advanceConsensusMemoryRouteHopPulseClock(', markAt),
     );
-    expect(NETWORK_SOURCE.match(/beginFrameBudget\(\)/g)).toHaveLength(1);
+    expect(NETWORK_SOURCE.match(/beginFrameBudget\(clock\.elapsedTime\)/g)).toHaveLength(1);
 
     // Both of this file's consumers ask before they start and report after.
     const drainAsk = NETWORK_SOURCE.indexOf(
@@ -361,7 +361,7 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
       'landingQueue.items.length > 0\n      && handles\n',
       drainAt,
     )).toBeGreaterThan(-1);
-    expect(NETWORK_SOURCE.lastIndexOf('useFrame((_, rawDeltaSeconds) => {', drainAt))
+    expect(NETWORK_SOURCE.lastIndexOf('useFrame(({ clock }, rawDeltaSeconds) => {', drainAt))
       .toBeGreaterThan(NETWORK_SOURCE.lastIndexOf('useFrame((_state, delta) => {', drainAt));
     expect(drainAt).toBeLessThan(
       NETWORK_SOURCE.indexOf('stepLivePulseQueue(queue, livePlanStep)'),

@@ -1,17 +1,64 @@
 import {
   constellationLayout,
+  constellationLayoutHardValid,
+  constellationLayoutCursor,
+  constellationLockedLayoutCursor,
+  observeConstellationCursorCancel,
+  observeConstellationCursorLanding,
+  observeConstellationProvisionalFrame,
+  observeConstellationCursorSlice,
+  observeConstellationCursorStart,
   createConstellationLock,
+  revalidateConstellationLayoutForAnchor,
   CONSTELLATION_RETICLE_PX,
   type ConstellationLayout,
   type ConstellationLock,
   type ConstellationPanel,
   type ConstellationPlacement,
   type ConstellationSlot,
+  type ConstellationInput,
 } from '../../derives/cellConstellation.derive';
 import type { HudOcclusionRect } from '../hudOcclusion';
+import {
+  FRAME_BUDGET_PANEL_SOLVE,
+  announceFrameBudgetWork,
+  beginFrameBudget,
+  clearFrameBudgetWork,
+  frameBudgetRemainingMs,
+  mayStartFrameWork,
+  spendFrameBudget,
+} from '../../nerve/frameBudget';
+import {
+  PERFORMANCE_PROBE_LABELS,
+  beginCpuProbe,
+  endCpuProbe,
+} from '../../tweaks/performanceProbeStore';
+
+const PANEL_SLICE_BUDGET = 1.6;
+const PANEL_FIRST_PAINT_DEADLINE_FRAMES = 3;
+
+interface ConstellationFrameRequest {
+  connectorKey: string;
+  layoutKey: string;
+  /** Panel/content identity for safely validating a presentation across a
+   * viewport or HUD-rail change. The validator still checks every current
+   * bound, obstacle, route and label before anything is shown. */
+  panelKey: string;
+  chipX: number;
+  chipY: number;
+  input: ConstellationInput;
+}
+
+interface ConstellationLayoutJob {
+  request: ConstellationFrameRequest;
+  cursor: Generator<void, ConstellationLayout | null>;
+  lockedOnly: boolean;
+}
 
 export interface ConstellationPanelHandle {
   host: HTMLDivElement | null;
+  /** The exact DOM host that has received a complete, valid placement. */
+  positionedHost: HTMLDivElement | null;
   fallbackLabel: HTMLElement | null;
   width: number;
   height: number;
@@ -47,6 +94,21 @@ export interface CellConstellationHandles {
   lastSpecimen: ConstellationPlacement | null;
   quadrant: { [slot: string]: string | undefined };
   quadrantListeners: Set<() => void>;
+  layoutJob: ConstellationLayoutJob | null;
+  desiredRequest: ConstellationFrameRequest | null;
+  layoutPendingFrames: number;
+  appliedAnchorX: number;
+  appliedAnchorY: number;
+  provisionalBaseLayout: ConstellationLayout | null;
+  provisionalBaseLayoutKey: string;
+  provisionalBasePanelKey: string;
+  provisionalBaseAnchorX: number;
+  provisionalBaseAnchorY: number;
+  provisionalVisible: boolean;
+  /** Panel or SVG attributes differ from the last canonical layout. */
+  presentationDirty: boolean;
+  /** Camera motion has hidden routes while retaining the latest panel seats. */
+  motionSuspended: boolean;
 }
 
 export const CONSTELLATION_SLOTS: readonly ConstellationSlot[] = [
@@ -62,7 +124,8 @@ export function createCellConstellationHandles(): CellConstellationHandles {
   const leaders: { [slot: string]: ConstellationLeaderHandle } = {};
   for (const slot of CONSTELLATION_SLOTS) {
     panels[slot] = {
-      host: null, fallbackLabel: null, width: CONSTELLATION_WIDTH[slot] ?? 408,
+      host: null, positionedHost: null, fallbackLabel: null,
+      width: CONSTELLATION_WIDTH[slot] ?? 408,
       height: 0, present: false,
     };
     leaders[slot] = {
@@ -76,6 +139,14 @@ export function createCellConstellationHandles(): CellConstellationHandles {
     visible: false, leaving: false, frameKey: '', layoutKey: '', connectorKey: '',
     placementKey: '', maskKey: '',
     lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
+    layoutJob: null, desiredRequest: null,
+    layoutPendingFrames: 0,
+    appliedAnchorX: Number.NaN, appliedAnchorY: Number.NaN,
+    provisionalBaseLayout: null,
+    provisionalBaseLayoutKey: '',
+    provisionalBasePanelKey: '',
+    provisionalBaseAnchorX: Number.NaN, provisionalBaseAnchorY: Number.NaN,
+    provisionalVisible: false, presentationDirty: false, motionSuspended: false,
   };
 }
 
@@ -120,6 +191,14 @@ function layoutSignature(stageWidth: number, stageHeight: number, safeTop: numbe
   return key + `|c${bucket(handles.chipWidth)},${bucket(handles.chipHeight)}|h${obstacleVersion}`
     + rectKey(obstacles);
 }
+function panelSignature(panels: readonly ConstellationPanel[],
+  handles: CellConstellationHandles): string {
+  let key = '';
+  for (const panel of panels) {
+    key += `|${panel.slot}:${bucket(panel.width)}:${bucket(panel.height)}:${bucket(panel.labelWidth ?? 0)}:${bucket(panel.labelHeight ?? 0)}`;
+  }
+  return key + `|c${bucket(handles.chipWidth)},${bucket(handles.chipHeight)}`;
+}
 function pathData(points: readonly { x: number; y: number }[]): string {
   return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
 }
@@ -149,12 +228,72 @@ function writeMasks(handles: CellConstellationHandles, masks: readonly HudOcclus
 function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<string>): void {
   for (const slot of CONSTELLATION_SLOTS) {
     if (present.has(slot)) continue;
+    const panel = handles.panels[slot];
+    if (panel.host) panel.host.style.visibility = 'hidden';
+    panel.positionedHost = null;
     const leader = handles.leaders[slot];
     leader.under?.setAttribute('d', '');
     leader.over?.setAttribute('d', '');
     if (leader.dot) leader.dot.style.display = 'none';
     if (leader.label) leader.label.style.display = 'none';
     writeFallback(handles.panels[slot].fallbackLabel, false);
+  }
+}
+
+function panelHostIsPositioned(panel: ConstellationPanelHandle): boolean {
+  return panel.host !== null
+    && panel.positionedHost === panel.host
+    && panel.host.style.visibility !== 'hidden';
+}
+
+function writePanelPlacement(
+  panel: ConstellationPanelHandle,
+  placement: ConstellationPlacement,
+  placementChanged: boolean,
+): void {
+  const host = panel.host;
+  if (!host) return;
+  // A new selection or reopened slot owns fresh DOM even when its dimensions
+  // happen to reproduce the previous placement signature. It is not seated
+  // until this exact host receives every placement field.
+  if (placementChanged || panel.positionedHost !== host) {
+    host.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
+    host.style.width = `${placement.width}px`;
+    host.style.height = `${placement.height}px`;
+    host.dataset.cellPanelCapped = placement.capped ? 'true' : 'false';
+    host.dataset.cellPanelQuadrant = placement.quadrant;
+  }
+  panel.positionedHost = host;
+  host.style.visibility = 'visible';
+}
+
+function currentSpecimenPlacement(
+  handles: CellConstellationHandles,
+  placement: ConstellationPlacement | null = handles.lastSpecimen,
+): ConstellationPlacement | null {
+  return placement?.slot === 'specimen'
+    && handles.panels.specimen.present
+    && panelHostIsPositioned(handles.panels.specimen)
+    ? placement
+    : null;
+}
+
+function allPresentPanelHostsPositioned(handles: CellConstellationHandles): boolean {
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    if (panel.present && panel.height > 0 && !panelHostIsPositioned(panel)) return false;
+  }
+  return true;
+}
+function setLeadersVisible(handles: CellConstellationHandles, visible: boolean): void {
+  const visibility = visible ? '' : 'hidden';
+  for (const slot of CONSTELLATION_SLOTS) {
+    const leader = handles.leaders[slot];
+    if (leader.under) leader.under.style.visibility = visibility;
+    if (leader.over) leader.over.style.visibility = visibility;
+    if (leader.dot) leader.dot.style.visibility = visibility;
+    if (leader.label) leader.label.style.visibility = visibility;
+    if (!visible) writeFallback(handles.panels[slot].fallbackLabel, false);
   }
 }
 function writeFallback(label: HTMLElement | null, visible: boolean): void {
@@ -166,7 +305,45 @@ function writeFallback(label: HTMLElement | null, visible: boolean): void {
   label.style.borderWidth = visible ? '1px' : '0';
 }
 
-export function commitConstellationFrame(
+function cloneLock(lock: ConstellationLock): ConstellationLock {
+  const placements: ConstellationLock['placements'] = {};
+  for (const slot of Object.keys(lock.placements)) {
+    const panel = lock.placements[slot];
+    if (panel) placements[slot] = { ...panel, route: undefined };
+  }
+  return {
+    quadrant: { ...lock.quadrant },
+    template: lock.template,
+    placements,
+    geometryKey: lock.geometryKey,
+    anchorX: lock.anchorX,
+    anchorY: lock.anchorY,
+  };
+}
+
+function publishLock(target: ConstellationLock, source: ConstellationLock): void {
+  resetLockObject(target);
+  target.template = source.template;
+  target.geometryKey = source.geometryKey;
+  target.anchorX = source.anchorX;
+  target.anchorY = source.anchorY;
+  Object.assign(target.quadrant, source.quadrant);
+  for (const slot of Object.keys(source.placements)) {
+    const panel = source.placements[slot];
+    if (panel) target.placements[slot] = { ...panel, route: undefined };
+  }
+}
+
+function resetLockObject(lock: ConstellationLock): void {
+  for (const slot of Object.keys(lock.quadrant)) delete lock.quadrant[slot];
+  for (const slot of Object.keys(lock.placements)) delete lock.placements[slot];
+  lock.template = null;
+  lock.geometryKey = '';
+  lock.anchorX = 0;
+  lock.anchorY = 0;
+}
+
+function prepareRequest(
   handles: CellConstellationHandles,
   anchorX: number,
   anchorY: number,
@@ -175,10 +352,9 @@ export function commitConstellationFrame(
   safeTop: number,
   edge: number,
   obstacles: readonly HudOcclusionRect[],
-  obstacleVersion = 0,
-): ConstellationPlacement | null {
-  const panels = collectPanels(handles, stageWidth, edge);
-  scratchReserved.length = 0;
+  obstacleVersion: number,
+): ConstellationFrameRequest {
+  const panels = collectPanels(handles, stageWidth, edge).map((panel) => ({ ...panel }));
   const chipX = handles.chipWidth > 0
     ? Math.max(edge + handles.chipWidth / 2,
       Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
@@ -187,27 +363,126 @@ export function commitConstellationFrame(
   const chipY = chipBelow + handles.chipHeight <= stageHeight - edge
     ? chipBelow
     : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+  const reserved: HudOcclusionRect[] = [];
   if (handles.chipWidth > 0 && handles.chipHeight > 0) {
-    chipBox.left = chipX - handles.chipWidth / 2;
-    chipBox.right = chipX + handles.chipWidth / 2;
-    chipBox.top = chipY;
-    chipBox.bottom = chipBox.top + handles.chipHeight;
-    scratchReserved.push(chipBox);
+    reserved.push({
+      left: chipX - handles.chipWidth / 2,
+      right: chipX + handles.chipWidth / 2,
+      top: chipY,
+      bottom: chipY + handles.chipHeight,
+    });
   }
-  const nextLayoutKey = layoutSignature(
-    stageWidth, stageHeight, safeTop, edge, panels, handles, obstacles, obstacleVersion,
+  const frozenObstacles = obstacles.map((rect) => ({ ...rect }));
+  const layoutKey = layoutSignature(
+    stageWidth, stageHeight, safeTop, edge, panels, handles, frozenObstacles, obstacleVersion,
   );
-  const nextConnectorKey = `${bucket(anchorX)},${bucket(anchorY)}|${nextLayoutKey}`;
-  if (nextConnectorKey === handles.connectorKey) return handles.lastSpecimen;
+  const connectorKey = `${bucket(anchorX)},${bucket(anchorY)}|${layoutKey}`;
+  return {
+    connectorKey,
+    layoutKey,
+    panelKey: panelSignature(panels, handles),
+    chipX,
+    chipY,
+    input: {
+      anchorX, anchorY, stageWidth, stageHeight, panels,
+      obstacles: frozenObstacles, reserved, safeTop, edge,
+      lock: cloneLock(handles.lock),
+    },
+  };
+}
 
-  const layout = constellationLayout({
-    anchorX, anchorY, stageWidth, stageHeight, panels, obstacles,
-    reserved: scratchReserved, safeTop, edge, lock: handles.lock,
+function writeMovingMarks(
+  handles: CellConstellationHandles,
+  anchorX: number,
+  anchorY: number,
+  chipX: number,
+  chipY: number,
+): void {
+  if (handles.reticle) {
+    const half = CONSTELLATION_RETICLE_PX / 2;
+    handles.reticle.style.transform =
+      `translate3d(${anchorX - half}px, ${anchorY - half}px, 0)`;
+  }
+  if (handles.chip) {
+    handles.chip.style.transform =
+      `translate3d(${chipX}px, ${chipY}px, 0) translateX(-50%)`;
+  }
+}
+
+function cancelLayoutJob(handles: CellConstellationHandles): void {
+  handles.layoutJob?.cursor.return({
+    status: 'unavailable', template: null, placements: [], masks: [],
   });
-  handles.frameKey = nextConnectorKey;
-  handles.connectorKey = nextConnectorKey;
-  handles.layoutKey = nextLayoutKey;
+  if (handles.layoutJob) observeConstellationCursorCancel();
+  handles.layoutJob = null;
+  handles.desiredRequest = null;
+  handles.layoutPendingFrames = 0;
+  clearFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE);
+}
+
+/**
+ * Keep the selected Cell's marks and completed panel seats usable while its
+ * camera moves, but remove every leader stroke, endpoint and label. No request
+ * is prepared and no route is revalidated here, so motion consumes none of the
+ * panel solve budget. Clearing only the connector signature forces the first
+ * settled frame through current geometry validation even when the anchor has
+ * returned to the same half-pixel bucket.
+ */
+export function suspendConstellationFrame(
+  handles: CellConstellationHandles,
+  anchorX: number,
+  anchorY: number,
+  stageWidth: number,
+  stageHeight: number,
+  edge: number,
+): ConstellationPlacement | null {
+  const chipX = handles.chipWidth > 0
+    ? Math.max(edge + handles.chipWidth / 2,
+      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
+    : anchorX;
+  const chipBelow = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+  const chipY = chipBelow + handles.chipHeight <= stageHeight - edge
+    ? chipBelow
+    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+  writeMovingMarks(handles, anchorX, anchorY, chipX, chipY);
+  if (!handles.motionSuspended) {
+    cancelLayoutJob(handles);
+    handles.frameKey = '';
+    handles.connectorKey = '';
+    handles.presentationDirty = true;
+    handles.provisionalVisible = false;
+    handles.motionSuspended = true;
+  }
+  setLeadersVisible(handles, false);
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    if (panel.host && !panelHostIsPositioned(panel)) panel.host.style.visibility = 'hidden';
+  }
+  // The reticle and identity chip remain useful even when a first selection or
+  // a newly opened slot has no legal panel seat yet.
+  setConstellationVisible(handles, true);
+  if (handles.root) handles.root.dataset.cellConstellationMotion = 'moving';
+  return currentSpecimenPlacement(handles);
+}
+
+function applyLayout(handles: CellConstellationHandles,
+  request: ConstellationFrameRequest, layout: ConstellationLayout): ConstellationPlacement | null {
+  handles.frameKey = request.connectorKey;
+  handles.connectorKey = request.connectorKey;
+  handles.layoutKey = request.layoutKey;
   handles.lastLayout = layout;
+  handles.appliedAnchorX = request.input.anchorX;
+  handles.appliedAnchorY = request.input.anchorY;
+  handles.provisionalBaseLayout = layout;
+  handles.provisionalBaseLayoutKey = request.layoutKey;
+  handles.provisionalBasePanelKey = request.panelKey;
+  handles.provisionalBaseAnchorX = request.input.anchorX;
+  handles.provisionalBaseAnchorY = request.input.anchorY;
+  handles.provisionalVisible = false;
+  handles.presentationDirty = false;
+  setConstellationVisible(handles, true);
+  setLeadersVisible(handles, true);
+  publishLock(handles.lock, request.input.lock as ConstellationLock);
   const nextPlacementKey = placementSignature(layout.placements);
   const placementChanged = nextPlacementKey !== handles.placementKey;
   handles.placementKey = nextPlacementKey;
@@ -230,13 +505,7 @@ export function commitConstellationFrame(
       handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
-    if (placementChanged && panel.host) {
-      panel.host.style.transform = `translate3d(${current.x}px, ${current.y}px, 0)`;
-      panel.host.style.width = `${current.width}px`;
-      panel.host.style.height = `${current.height}px`;
-      panel.host.dataset.cellPanelCapped = current.capped ? 'true' : 'false';
-      panel.host.dataset.cellPanelQuadrant = current.quadrant;
-    }
+    writePanelPlacement(panel, current, placementChanged);
     const route = current.route;
     const leader = handles.leaders[current.slot];
     if (!route || !leader) continue;
@@ -259,17 +528,325 @@ export function commitConstellationFrame(
     writeFallback(panel.fallbackLabel, route.label.inPanel);
   }
   if (maskChanged) writeMasks(handles, layout.masks);
-  if (handles.reticle) {
-    const half = CONSTELLATION_RETICLE_PX / 2;
-    handles.reticle.style.transform = `translate3d(${anchorX - half}px, ${anchorY - half}px, 0)`;
-  }
-  if (handles.chip) {
-    handles.chip.style.transform =
-      `translate3d(${chipX}px, ${chipY}px, 0) translateX(-50%)`;
-  }
   handles.lastSpecimen = specimen;
   if (quadrantsMoved) notifyQuadrants(handles);
-  return specimen;
+  return currentSpecimenPlacement(handles, specimen);
+}
+
+/** Write a geometry-validated presentation route without publishing its
+ * signatures or lock. The canonical cursor remains the only state commit. */
+function applyProvisionalRoutes(
+  handles: CellConstellationHandles,
+  layout: ConstellationLayout,
+  provisional = true,
+): ConstellationPlacement | null {
+  setConstellationVisible(handles, true);
+  setLeadersVisible(handles, true);
+  const nextPlacementKey = placementSignature(layout.placements);
+  const placementChanged = nextPlacementKey !== handles.placementKey;
+  handles.placementKey = nextPlacementKey;
+  const nextMaskKey = rectKey(layout.masks);
+  if (nextMaskKey !== handles.maskKey) {
+    handles.maskKey = nextMaskKey;
+    writeMasks(handles, layout.masks);
+  }
+  if (handles.root) {
+    handles.root.dataset.cellConstellationStatus = layout.status;
+    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
+    else delete handles.root.dataset.cellConstellationTemplate;
+  }
+  let specimen: ConstellationPlacement | null = null;
+  let quadrantsMoved = false;
+  const present = new Set(layout.placements.map((panel) => panel.slot));
+  clearAbsent(handles, present);
+  for (const current of layout.placements) {
+    if (current.slot === 'specimen') specimen = current;
+    const route = current.route;
+    const panel = handles.panels[current.slot];
+    if (handles.quadrant[current.slot] !== current.quadrant) {
+      handles.quadrant[current.slot] = current.quadrant;
+      quadrantsMoved = true;
+    }
+    writePanelPlacement(panel, current, placementChanged);
+    const leader = handles.leaders[current.slot];
+    if (!route || !leader) continue;
+    const d = pathData(route.points);
+    leader.under?.setAttribute('d', d);
+    leader.over?.setAttribute('d', d);
+    const end = route.points[route.points.length - 1];
+    if (leader.dot) {
+      leader.dot.style.display = '';
+      leader.dot.setAttribute('cx', `${end.x}`);
+      leader.dot.setAttribute('cy', `${end.y}`);
+    }
+    if (leader.label) {
+      leader.label.style.display = route.label.inPanel ? 'none' : '';
+      if (!route.label.inPanel) {
+        leader.label.style.transform =
+          `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
+      }
+    }
+    writeFallback(panel.fallbackLabel, route.label.inPanel);
+  }
+  handles.provisionalVisible = provisional;
+  handles.presentationDirty = provisional;
+  if (quadrantsMoved) notifyQuadrants(handles);
+  return currentSpecimenPlacement(handles, specimen);
+}
+
+/** Publish only already-completed panel geometry while its leaders cannot be
+ * reconnected safely to the current anchor. The caller has run hardValid for
+ * the current request first. This keeps the dossier and portrait available on
+ * a very low-frame-rate renderer without ever exposing a stale route. */
+function applyPanelPresentation(
+  handles: CellConstellationHandles,
+  layout: ConstellationLayout,
+): ConstellationPlacement | null {
+  setConstellationVisible(handles, true);
+  setLeadersVisible(handles, false);
+  handles.provisionalVisible = false;
+  handles.presentationDirty = true;
+  const nextPlacementKey = placementSignature(layout.placements);
+  const placementChanged = nextPlacementKey !== handles.placementKey;
+  handles.placementKey = nextPlacementKey;
+  if (handles.root) {
+    handles.root.dataset.cellConstellationStatus = layout.status;
+    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
+    else delete handles.root.dataset.cellConstellationTemplate;
+  }
+  const present = new Set(layout.placements.map((panel) => panel.slot));
+  clearAbsent(handles, present);
+  let specimen: ConstellationPlacement | null = null;
+  let quadrantsMoved = false;
+  for (const current of layout.placements) {
+    if (current.slot === 'specimen') specimen = current;
+    const panel = handles.panels[current.slot];
+    if (handles.quadrant[current.slot] !== current.quadrant) {
+      handles.quadrant[current.slot] = current.quadrant;
+      quadrantsMoved = true;
+    }
+    writePanelPlacement(panel, current, placementChanged);
+  }
+  if (quadrantsMoved) notifyQuadrants(handles);
+  return currentSpecimenPlacement(handles, specimen);
+}
+
+function showValidatedProvisional(
+  handles: CellConstellationHandles,
+  request: ConstellationFrameRequest,
+): ConstellationPlacement | null | undefined {
+  const base = handles.provisionalBaseLayout;
+  if (!base || request.panelKey !== handles.provisionalBasePanelKey
+    || !Number.isFinite(handles.provisionalBaseAnchorX)) return undefined;
+  const validated = revalidateConstellationLayoutForAnchor(
+    request.input, base, handles.provisionalBaseAnchorX, handles.provisionalBaseAnchorY,
+  );
+  if (!validated) return undefined;
+  // Advance the safe presentation seed with the moving anchor. That keeps
+  // ordinary one-pixel orbit frames on the cheap translated-leg check instead
+  // of reconnecting an ever-growing delta from the last canonical landing.
+  handles.provisionalBaseLayout = validated;
+  handles.provisionalBaseAnchorX = request.input.anchorX;
+  handles.provisionalBaseAnchorY = request.input.anchorY;
+  return applyProvisionalRoutes(handles, validated);
+}
+
+export function commitConstellationFrame(
+  handles: CellConstellationHandles,
+  anchorX: number,
+  anchorY: number,
+  stageWidth: number,
+  stageHeight: number,
+  safeTop: number,
+  edge: number,
+  obstacles: readonly HudOcclusionRect[],
+  obstacleVersion = 0,
+): ConstellationPlacement | null {
+  const request = prepareRequest(
+    handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
+    obstacles, obstacleVersion,
+  );
+  writeMovingMarks(
+    handles,
+    request.input.anchorX,
+    request.input.anchorY,
+    request.chipX,
+    request.chipY,
+  );
+  if (request.connectorKey === handles.connectorKey && allPresentPanelHostsPositioned(handles)) {
+    return currentSpecimenPlacement(handles);
+  }
+  const layout = constellationLayout(request.input);
+  return applyLayout(handles, request, layout);
+}
+
+function startLayoutJob(
+  request: ConstellationFrameRequest,
+  lockedOnly = false,
+): ConstellationLayoutJob {
+  observeConstellationCursorStart(lockedOnly);
+  return {
+    request,
+    cursor: lockedOnly
+      ? constellationLockedLayoutCursor(request.input)
+      : constellationLayoutCursor(request.input),
+    lockedOnly,
+  };
+}
+
+/**
+ * Advance the canonical layout under the shared per-frame ledger.
+ *
+ * Geometry changes cancel immediately. Anchor-only changes are coalesced: the
+ * active cursor finishes to produce a valid lock seed, then the latest anchor
+ * starts from that seed. This prevents continuous camera drift from restarting
+ * an expensive first solve forever. Only a result for the latest connector key
+ * is published, so a partial or stale route never reaches the DOM.
+ */
+export function advanceConstellationFrame(
+  handles: CellConstellationHandles,
+  anchorX: number,
+  anchorY: number,
+  stageWidth: number,
+  stageHeight: number,
+  safeTop: number,
+  edge: number,
+  obstacles: readonly HudOcclusionRect[],
+  obstacleVersion = 0,
+  frameToken?: number,
+  now: () => number = () => performance.now(),
+): ConstellationPlacement | null {
+  handles.motionSuspended = false;
+  if (handles.root) delete handles.root.dataset.cellConstellationMotion;
+  beginFrameBudget(frameToken);
+  const desired = prepareRequest(
+    handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
+    obstacles, obstacleVersion,
+  );
+  writeMovingMarks(
+    handles,
+    desired.input.anchorX,
+    desired.input.anchorY,
+    desired.chipX,
+    desired.chipY,
+  );
+  handles.desiredRequest = desired;
+  if (desired.connectorKey === handles.connectorKey && allPresentPanelHostsPositioned(handles)) {
+    cancelLayoutJob(handles);
+    setConstellationVisible(handles, true);
+    if (handles.lastLayout && handles.presentationDirty) {
+      handles.provisionalBaseLayout = handles.lastLayout;
+      handles.provisionalBaseLayoutKey = handles.layoutKey;
+      handles.provisionalBasePanelKey = desired.panelKey;
+      handles.provisionalBaseAnchorX = handles.appliedAnchorX;
+      handles.provisionalBaseAnchorY = handles.appliedAnchorY;
+      applyProvisionalRoutes(handles, handles.lastLayout, false);
+    } else setLeadersVisible(handles, true);
+    return handles.lastSpecimen;
+  }
+
+  const geometryPending = desired.layoutKey !== handles.layoutKey;
+  const provisionalGeometryValid = handles.provisionalBaseLayout !== null
+    && desired.panelKey === handles.provisionalBasePanelKey
+    && constellationLayoutHardValid(desired.input, handles.provisionalBaseLayout);
+  let provisional = showValidatedProvisional(handles, desired);
+  let panelPresentation: ConstellationPlacement | null | undefined;
+  if (provisional === undefined) {
+    if (provisionalGeometryValid) {
+      panelPresentation = applyPanelPresentation(
+        handles, handles.provisionalBaseLayout as ConstellationLayout,
+      );
+    } else {
+      setLeadersVisible(handles, false);
+      handles.provisionalVisible = false;
+      setConstellationVisible(handles, false);
+    }
+  }
+
+  let job = handles.layoutJob;
+  if (job && job.request.layoutKey !== desired.layoutKey) {
+    job.cursor.return({
+      status: 'unavailable', template: null, placements: [], masks: [],
+    });
+    observeConstellationCursorCancel();
+    job = null;
+    handles.layoutJob = null;
+  }
+  if (!job) {
+    job = startLayoutJob(desired, handles.lastLayout !== null && !geometryPending);
+    handles.layoutJob = job;
+  }
+  announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
+  handles.layoutPendingFrames += 1;
+  if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) {
+    if (handles.provisionalVisible) observeConstellationProvisionalFrame();
+    return provisional !== undefined || panelPresentation !== undefined
+      ? (provisional ?? panelPresentation ?? null)
+      : (geometryPending || !provisionalGeometryValid ? null : handles.lastSpecimen);
+  }
+
+  const started = now();
+  const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.inspectionLayoutSlice);
+  const available = frameBudgetRemainingMs(FRAME_BUDGET_PANEL_SOLVE);
+  // A first/full solve may consume the larger reserved slice after three
+  // frames. Anchor-only routing stays on the steady interaction budget while
+  // its independently validated presentation route remains visible.
+  const allowance = !job.lockedOnly
+    && handles.layoutPendingFrames >= PANEL_FIRST_PAINT_DEADLINE_FRAMES
+    ? Math.max(PANEL_SLICE_BUDGET, Math.min(8, available))
+    : Math.min(PANEL_SLICE_BUDGET, available || PANEL_SLICE_BUDGET);
+  let landed: ConstellationPlacement | null | undefined;
+  while (true) {
+    let step = job.cursor.next();
+    while (!step.done && now() - started < allowance) {
+      step = job.cursor.next();
+    }
+    if (!step.done) break;
+
+    handles.layoutJob = null;
+    const completedRequest = job.request;
+    // Always retain the private canonical lock. A stale first solve becomes
+    // the seed for the latest anchor instead of being regenerated from zero.
+    if (step.value === null) {
+      // The bounded locked deadline path could not route the current geometry.
+      // Continue with a normal resumable solve on the following frame; never
+      // drain its candidate fallback inside this deadline callback.
+      job = startLayoutJob(completedRequest);
+      handles.layoutJob = job;
+      break;
+    }
+    publishLock(handles.lock, completedRequest.input.lock as ConstellationLock);
+    handles.provisionalBaseLayout = step.value;
+    handles.provisionalBaseLayoutKey = completedRequest.layoutKey;
+    handles.provisionalBasePanelKey = completedRequest.panelKey;
+    handles.provisionalBaseAnchorX = completedRequest.input.anchorX;
+    handles.provisionalBaseAnchorY = completedRequest.input.anchorY;
+    const latest = handles.desiredRequest as ConstellationFrameRequest;
+    if (completedRequest.connectorKey === latest.connectorKey) {
+      landed = applyLayout(handles, completedRequest, step.value);
+      clearFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE);
+      handles.layoutPendingFrames = 0;
+      break;
+    }
+
+    provisional = showValidatedProvisional(handles, latest);
+    latest.input.lock = cloneLock(handles.lock);
+    job = startLayoutJob(latest, true);
+    handles.layoutJob = job;
+    announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
+    if (now() - started >= allowance) break;
+  }
+  const elapsed = now() - started;
+  spendFrameBudget(FRAME_BUDGET_PANEL_SOLVE, elapsed);
+  observeConstellationCursorSlice(elapsed, false);
+  endCpuProbe(sliceProbe);
+  if (landed !== undefined) observeConstellationCursorLanding();
+  else if (handles.provisionalVisible) observeConstellationProvisionalFrame();
+  return landed === undefined
+    ? (provisional !== undefined || panelPresentation !== undefined
+      ? (provisional ?? panelPresentation ?? null)
+      : (geometryPending || !provisionalGeometryValid ? null : handles.lastSpecimen))
+    : landed;
 }
 
 export function setConstellationVisible(handles: CellConstellationHandles, visible: boolean): void {
@@ -278,9 +855,22 @@ export function setConstellationVisible(handles: CellConstellationHandles, visib
   if (handles.root) handles.root.style.opacity = visible ? '1' : '0';
 }
 export function invalidateConstellationFrame(handles: CellConstellationHandles): void {
+  cancelLayoutJob(handles);
   handles.frameKey = '';
   handles.layoutKey = '';
   handles.connectorKey = '';
   handles.placementKey = '';
   handles.maskKey = '';
+  handles.appliedAnchorX = Number.NaN;
+  handles.appliedAnchorY = Number.NaN;
+  handles.provisionalBaseLayout = null;
+  handles.provisionalBaseLayoutKey = '';
+  handles.provisionalBasePanelKey = '';
+  handles.provisionalBaseAnchorX = Number.NaN;
+  handles.provisionalBaseAnchorY = Number.NaN;
+  handles.provisionalVisible = false;
+  handles.presentationDirty = false;
+  if (!handles.motionSuspended && handles.root) {
+    delete handles.root.dataset.cellConstellationMotion;
+  }
 }

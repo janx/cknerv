@@ -348,13 +348,63 @@ draws leaders below the plates and masks every plate, the name chip, and
 visible HUD rectangles; this includes the transparent specimen window, so a
 line cannot show through the main-Canvas portrait.
 
-The frame writer locks valid plate coordinates while the projected Cell drifts
-and updates only the reticle, chip, routes, and portrait scissor origin. Stage,
-font or content measurements, open slots, and HUD geometry versions invalidate
-the relevant cached output. Closing one plate removes only its slot, mask, and
-leader; changing the selected Cell resets those per-Cell closures. The portrait
-continues to use the existing renderer, portal scene, scissor pass, and pointer
-capture path.
+The frame writer locks valid plate coordinates while the projected Cell drifts.
+Its canonical candidate and route solver is a resumable cursor: candidate
+generation, route orders, endpoint pairs and orthogonal grids yield under the
+shared frame ledger. A request owns copies of its panels, HUD rectangles, chip
+claim and lock; geometry changes cancel it, while anchor-only changes coalesce
+behind the current cursor. Partial and stale results are never published. Old
+plates and leaders may remain visible while the cursor catches up only after a
+presentation validator checks the current panel identities and dimensions,
+stage bounds, endpoints, orthogonal segments, HUD/chip/reticle clearance,
+inter-route clearance, labels, and masks. A viewport or HUD change can therefore
+retain a still-valid presentation while canonical work continues; an invalid
+panel hides the whole root and clears the portrait scissor, while a route-only
+failure hides the leaders. The cursor never drains synchronously to meet that
+presentation deadline. Stage, font or content measurements, open slots, and HUD
+geometry versions invalidate the canonical output. SVG, reticle, and mask refs
+are stable across ordinary React renders so an accent or quality update does not
+masquerade as a geometry change and cancel the cursor. Hidden/unmounted
+inspectors cancel their cursor and release its reservation. Closing one plate
+removes only its slot, mask, and leader; changing the selected Cell resets those
+per-Cell closures. The portrait continues to use the existing renderer, portal
+scene, scissor pass, and pointer capture path. Its OrbitControls owner retains
+the event root used at connection time and removes both the permanent keydown
+listener and the temporary held-Control keyup listener before normal disposal;
+cleanup therefore remains correct even if React has already detached the DOM
+portrait. The plate geometry, texture, and material also have explicit owners
+because R3F does not recursively dispose the subtree below a primitive camera.
+
+Camera motion has a narrower presentation rule. The selected Cell keeps its
+reticle and clamped name chip on the latest projected anchor, and its completed
+plates remain open, but every leader stroke, endpoint dot, route label, and
+in-panel fallback label is hidden. The frame writer cancels any pending layout
+cursor and does not prepare, revalidate, or solve routes while the camera moves.
+`CellInspectionAnchor` detects the camera itself rather than depending on App
+gesture events: world position and orientation are converted to a conservative
+CSS-pixel drift at the selected Cell's distance, and the projection matrix is
+compared directly. This covers orbit dragging, its damping tail, wheel/dolly,
+route flights, resize/FOV changes, and standalone Labs. Motion starts once
+accumulated drift exceeds 0.1 CSS px. Rest requires at least three frames and
+80 ms whose accumulated drift is no more than 0.02 CSS px; this lower threshold absorbs the
+remaining 0.92 damping tail without flashing leaders back on. A still-held
+pointer does not count as camera motion. The first settled frame clears the old
+connector signature and resumes the bounded canonical cursor against the latest
+anchor, viewport, open panels and HUD geometry. Thus returning to an identical
+connector bucket cannot leave leaders hidden, and a resize, new selection or
+closed plate cannot revive an unvalidated old route. The portrait keeps the
+last completed specimen seat during motion and clears it immediately if that
+plate closes. The tracker lives on the shared inspection handles so changing
+the selected Cell does not reset an active damping window.
+
+Panel placement belongs to a specific DOM host. A fresh or reopened host stays
+hidden until a canonical, validated provisional, or panel-only presentation
+writes its complete placement; a matching previous placement signature alone
+does not make the replacement host ready. During motion, already positioned
+hosts remain visible, while fresh hosts wait and the reticle/name chip continue
+tracking the Cell. The portrait origin is available only while the current
+specimen host is present, positioned, and visible. Unmounting or removing a
+panel releases its positioned-host reference.
 
 ## 6. Visual Language
 
@@ -425,6 +475,15 @@ List position is not GPU identity. `syncCellSlots` maintains an ID-to-slot map:
 - removals create holes or swap a tail entry into a freed slot;
 - additions fill reusable slots; and
 - only affected ranges become dirty.
+
+An adjacent `CellRenderSetUpdate` supplies `previousCells`, removals and
+upserts to an atomic incremental slot sync. The journal is fully validated
+before the slot map changes; an invalid or skipped generation falls back to
+the canonical full sync without leaving a half-applied hint. Overlay entries
+and exit-hold records use that canonical path because their membership is not
+the stage journal alone. The working array is mutable, while every published
+array remains an owned immutable snapshot; a real change still pays that
+explicit O(N) copy.
 
 This keeps ordinary update cost proportional to churn instead of field size
 and prevents list reordering from making the whole galaxy flicker or upload.
@@ -616,10 +675,17 @@ The pipeline is latest-only:
   yields the selection delta the fabric grows and kills from, `removed` being
   the very records the list dropped. Any generation gap sends the whole list;
   and
-- worker creation or execution failure falls back to the same synchronous pure
-  builder and records the fallback in diagnostics
-  (`neighborGraphBuilderStats` also counts patched, whole, unchained applies
-  and stale resends, and the passive selection's patched and whole applies).
+- worker creation, execution, message or watchdog failure enters cooperative
+  main-thread recovery over the same canonical generators. Cell collection,
+  k-nearest buckets, lifelines, component stitching, arbor construction,
+  passive ranking and graph packing yield between bounded groups under the
+  shared frame ledger. Recovery reads the immutable render-set publication
+  captured for its generation, publishes only the complete graph, and is
+  cancelled immediately on supersession or disposal, including its pending
+  timer or MessageChannel task. Worker reconstruction backs off from 1 to 30
+  seconds. Diagnostics record fallback reason, slices, maximum slice/step,
+  completions, cancellations and pending tasks in addition to patched, whole,
+  unchained and stale applies.
 
 A topology supersession — two generations requested inside one worker build, as
 a block burst can cause — takes the same safe path as any broken generation
@@ -1319,8 +1385,12 @@ geometry the instanced wrapper would read one cohort's stamp for the first
 ninety-sixth of the colony's motes and garbage after it. Same VALUES, two widths,
 written by the same two walks — the plan's and the pulse's. The motes' geometry
 is allocated once at `COHORT_MARK_CAP` (6,144 points) and never rebuilt, since a
-rebuild would drop every live stamp; a retired cohort is a strength of zero
-written over its slots, and an unwritten slot draws nothing by arithmetic.
+rebuild would drop every live stamp. Its draw range is committed with the mark
+lanes before paint: `marks × 96`, including zero when no mark is active. A
+retired cohort is still cleared by strength, while tail capacity no longer
+reaches rasterization. After the initial GPU allocation, each dynamic attribute
+marks only its cohort ranges; touching ranges merge and Three's first-upload
+callback clears the initialization range before later `bufferSubData` updates.
 
 RENDER ORDER IS PART OF THE DESIGN HERE, and this is the only layer in the colony
 where it is. The lens is NORMALLY blended with premultiplied alpha, because a
@@ -1548,7 +1618,7 @@ not an expensive topology rebuild.
   from the pointer-down raycast and reports a click that hit nothing as a
   miss, so a click on a Cell during motion still selects it and
   `onPointerMissed` behaves exactly as at rest.
-- Motion is detected in `App`, not inferred from the camera: `changeOrbit-
+- Picker and adaptive-quality motion is detected in `App`: `changeOrbit-
   Interaction` latches "camera changed" (`noteOrbitCameraChange`),
   `CameraMotionSentinel` settles the latch once per frame after the controls'
   update (`settleOrbitCameraFrame`), and `ConsensusRouteCamera` publishes
@@ -1557,6 +1627,13 @@ not an expensive topology rebuild.
   (`orbitPickingSuspendedRef`); the adaptive-quality sampler consumes the
   same OR widened by the un-moved press (`orbitInMotion` →
   `cameraMotionActiveRef`) and drops those frames from its sample (§13).
+- Selected-Cell leaders use their own actual camera pose/projection detector
+  (§5.3). They hide for the complete drag/damping/flight window without route
+  work, while the reticle, name chip and still-mounted plates with completed
+  seats remain available. A fresh selection or newly opened plate stays hidden
+  until that exact DOM host receives a valid seat; after the bounded stable
+  window, current geometry is revalidated and the resumable layout cursor
+  restores every valid leader.
 - The scissored Cell portrait owns pointer input within its DOM rectangle and
   disables main Galaxy controls until release.
 - Pointer miss and Escape clear inspection only when no other gesture owns the
@@ -1808,7 +1885,7 @@ has.
 | Default active pulses | 256 before quality multiplier | `nerve/NeuralNetwork.tsx` |
 | Spike object pool | 1,024 | `nerve/NeuralNetwork.tsx` |
 | Planned pulses per link / batch | 6 / 128 | `nerve/pulseRunner.ts`, `nerve/pulseBatch.ts` |
-| Heavy main-thread work per frame | 12 ms shared by the plan slice, the fabric drain and one bridge step, charged per precedence, at most 3 consecutive deferrals | `nerve/frameBudget.ts` |
+| Heavy main-thread work per frame | 12 ms shared total by the reserved plan slice, fabric drain, bridge and topology-recovery slices; at most 3 consecutive deferrals | `nerve/frameBudget.ts` |
 | Live-plan slice | 12 % of the last frame interval, 2 ms floor, at least one step | `nerve/livePulseQueue.ts` |
 | Fabric landing drain | 25 % of the last frame interval, 3 ms floor, 256-edge grow chunks | `nerve/fabricLandingQueue.ts` |
 | Origin entry grid build | 2,048 graph nodes a step | `geometry/originEntry.ts` |
@@ -1895,18 +1972,47 @@ current staged structure.
      fabric that was provably behind. The slot carries an arm SERIAL rather than
      a version, because a re-anchored halo placement re-selects at the same
      version and would otherwise look like a build that had already run; a
-     superseded arm is replaced, not queued, and loses nothing, since the body
-     reads the registry and the drawn fabric at RUN time.
-- **The bridge body is itself three steps, one a frame** — host sync, selection,
-  stroke reconcile (`BRIDGE_STEP_ESTIMATE_MS` 6 / 15 / 3) — because moving a
-  33 ms body out of the React commit and into one frame is not moving it out of
-  the frame: measured as a frame body it was p50 19.7 / max 33.2 ms, and as
-  steps `bridgeStepMaxMs` max 20.7–27.3. The anchor a build selected against is
+     superseded arm is replaced, not queued. Each arm captures the immutable
+     Cell and passive-edge pair tagged with its display version, so a later
+     Worker landing cannot change a sync waiting for the fabric drain.
+- **The bridge body is three resumable jobs** — host sync, selection and stroke
+  reconcile. Each frame advances small operation quanta until a 2 ms wall
+  slice is spent; sync swaps its private next-host map only when complete,
+  selection bounds anchor-bucket scans and retains only the globally best 32
+  anchors in a max-heap before sorting that bounded prefix, and reconcile commits
+  its O(churn) actions atomically. Cells and passive edges are immutable copies
+  captured for the same landed generation. The anchor a build selected against is
   written by the RECONCILE step, not the selection, so a sequence a newer arm
   replaces between the two cannot make the next build's host-sync skip fire
   against a selection that never reached a stroke; the strokes the reconcile
-  moves still reach the admission pass on that same frame. A restart carries the
-  spend, so the build that finishes owns what the class paid getting there.
+  moves still reach the admission pass on the commit frame. Reconcile rebases a
+  revival on the live stroke map in case animation reaped it between slices. A
+  restart carries the spend, so the build that finishes owns what the class paid
+  getting there.
+- **Inspection layout is a canonical resumable job.** Stage/panel/HUD geometry
+  and the moving anchor have separate signatures. A geometry change cancels
+  the old cursor; anchor drift coalesces onto its latest request, while the
+  cursor keeps a private lock seed and only a latest canonical result publishes
+  signatures. Full candidate work yields between construction/search units and
+  requests up to the reserved 8 ms slice after three pending frames; an atomic
+  generator grain may overrun and is recorded. A locked
+  route keeps the 1.6 ms interaction slice and is never synchronously drained.
+  While an at-rest geometry change catches up, the last route is re-anchored
+  and displayed only after
+  its panel seats, endpoints, orthogonality, reticle/chip/HUD clearance, route
+  separation and labels validate against the current request. The validated
+  presentation route may differ temporarily; it never mutates the canonical
+  lock, and a stopped input settles to the synchronous canonical result. If
+  panel geometry fails validation the complete old plate, including its
+  portrait scissor origin, is hidden; if only routing fails the static panels
+  remain and their leaders hide until a safe answer exists. Actual camera
+  motion is deliberately cheaper: all leaders and their labels hide, pending
+  layout work is cancelled, and no route request or validation consumes the
+  ledger until the camera has held its CSS-pixel settle window. Reticle/name
+  chip tracking and already-positioned panel/portrait presentation continue.
+  Fresh panel hosts remain hidden, and publish no portrait scissor origin,
+  until a valid placement is written to that exact host. The latest stopped
+  geometry then restarts the same bounded canonical cursor.
 - The bridge layer's host registry decides whether a build changed anything
   its selection reads: an unchanged host set runs no selection, and a changed
   one writes only the strokes that moved — a birth into a parked hole or the
@@ -1914,24 +2020,21 @@ current staged structure.
   kept for the knob repaint and an allocation overflow.
 - **One heavy-work ledger a frame arbitrates what survives that split**
   (`nerve/frameBudget.ts`). The owner's priority −1 frame opens it
-  (`beginFrameBudget`); the fabric drain, a bridge step and the live-plan slice
-  each ask before starting and report what they spent, against
+  (`beginFrameBudget`); the inspection layout cursor, fabric drain, bridge step
+  and live-plan slice each ask before starting and report what they spent, against
   `FRAME_HEAVY_BUDGET_MS` 12 — a vsync less the frame's ordinary work. The
-  charge is per PRECEDENCE and not one running total: the plan slice ranks
-  first because it alone carries a departure deadline, the drain second, a
-  bridge step last, and a consumer is charged against its own rank and every
-  rank above it. The three do not ASK in that order — the drain rides the
-  owner's priority −1 frame and asks first, a bridge step rides a child's sim
-  frame, the plan slice asks last — so one running total would have let the
-  drain and the bridge spend the plan out of its own frame and raise
-  `forcedByDeadline`. The first heavy grain of a frame always starts whatever it
-  costs (the selection's own estimate exceeds the budget), and a consumer held
-  `MAX_DEFER_FRAMES` 3 frames in a row runs on the fourth: a deferral means
-  "not on a frame that is already busy", never "never". In practice the bridge
-  step is the only one that yields. The ledger is a module singleton with no
-  owner-independent reset, so any scene mounting a consumer without
-  `NeuralNetwork`'s priority −1 frame must call `beginFrameBudget` once a frame
-  or that consumer reads one endless frame and holds itself.
+  ledger uses one running total. A pending deadline-carrying plan reserves its
+  measured slice before lower-priority work asks. A pending inspection cursor
+  announces its bounded slice across frames so the next frame reserves it
+  before block consumers run; both release unused reservation when finished.
+  The reserved consumer may still start when an
+  earlier job underestimated its actual cost; the ledger records that forced
+  start, estimate overshoot and total budget overspend separately. A consumer
+  held `MAX_DEFER_FRAMES` 3 frames runs its already-bounded next grain on the
+  fourth. `beginFrameBudget(frameToken)` is idempotent for a render frame, so
+  `NeuralNetwork` remains the priority −1 owner while a standalone inspection
+  Lab can open the same ledger itself. Hidden/unmounted work clears its
+  cross-frame demand.
 - Live route planning is sliced across frames (§9.1): a link batch opens the
   instant its delta arrives and its searches run from a FIFO queue on an
   epoch-stamped typed-array scratch under a wall-relative budget (12 % of the

@@ -95,12 +95,12 @@ describe('the bridge layer stays inside its own budget', () => {
   it('selects only for a build whose hosts moved, and walks only to repaint or compact', () => {
     // The registry is exact about what the selection reads, so a build it
     // reports as unmoved skips the selection and the reconcile alike — the
-    // gate sits in front of `selectBridgeEdges`, not behind it.
-    expect(LAYER_CODE).toContain('const moved = syncBridgeHosts(');
+    // gate sits in front of the resumable selector, not behind it.
+    expect(LAYER_CODE).toContain('running.syncJob ??= createBridgeHostSyncJob(');
     expect(LAYER_CODE)
-      .toContain('if (!moved && selectedAgainstRef.current === anchorIndex) {');
-    expect(LAYER_CODE.indexOf('if (!moved &&'))
-      .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
+      .toContain('&& !running.syncJob.moved');
+    expect(LAYER_CODE.indexOf('&& !running.syncJob.moved'))
+      .toBeLessThan(LAYER_CODE.indexOf('createBridgeSelectionJob('));
     // A selection that moved reaches the layer as the LIST of strokes it
     // moved, which the next frame admits into spans of their own. It never
     // arms a walk.
@@ -116,7 +116,7 @@ describe('the bridge layer stays inside its own budget', () => {
     // selecting path it is not behind any movement test.
     expect(LAYER_CODE.match(/reportBootBridgeSelected\(/g)).toHaveLength(2);
     expect(LAYER_CODE.indexOf('reportBootBridgeSelected('))
-      .toBeLessThan(LAYER_CODE.indexOf('selectBridgeEdges('));
+      .toBeLessThan(LAYER_CODE.indexOf('createBridgeSelectionJob('));
   });
 
   it('arms the selection in the commit and runs it a step at a time on frames', () => {
@@ -143,9 +143,12 @@ describe('the bridge layer stays inside its own budget', () => {
     // body — including T1's gauge — has left it.
     expect(arming).toContain('pendingBuildRef.current = {');
     for (const work of [
-      'syncBridgeHosts(',
-      'selectBridgeEdges(',
-      'reconcileBridgeStrokes(',
+      'createBridgeHostSyncJob(',
+      'runBridgeHostSyncJobSlice(',
+      'createBridgeSelectionJob(',
+      'runBridgeSelectionJobSlice(',
+      'createBridgeReconcileJob(',
+      'runBridgeReconcileJobSlice(',
       'reportBootBridgeSelected(',
       'bridgeStats.observeBuild(',
       'blockFrameStats.observeBridge(',
@@ -170,13 +173,13 @@ describe('the bridge layer stays inside its own budget', () => {
     // newer arm replaced between the selection and the reconcile chose bridges
     // that never reached a stroke, so the anchor it selected against is
     // written by the reconcile step and never beside the selection.
-    const select = body.indexOf('selectBridgeEdges(');
-    const reconcile = body.indexOf('reconcileBridgeStrokes(');
+    const select = body.indexOf('createBridgeSelectionJob(');
+    const reconcile = body.indexOf('createBridgeReconcileJob(');
     expect(select).toBeGreaterThan(-1);
     expect(body.indexOf('selectedAgainstRef.current = anchorIndex;'))
       .toBeGreaterThan(select);
     expect(body.indexOf('selectedAgainstRef.current = anchorIndex;'))
-      .toBeLessThan(reconcile);
+      .toBeGreaterThan(reconcile);
 
     // The frame asks the rule before it does anything else, so the strokes a
     // selection moves still reach the admission pass on the same frame — and

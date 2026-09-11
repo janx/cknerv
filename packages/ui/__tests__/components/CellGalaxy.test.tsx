@@ -994,7 +994,7 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).toContain('const renderUpdate = renderNeedsSync');
     expect(source).toContain('? syncCellRenderSet(');
     // Uploads are driven by the stable-slot sync, not list positions.
-    expect(source).toContain('syncCellSlots(cellSlotStateRef.current');
+    expect(source).toMatch(/syncCellSlots\(\s*cellSlotStateRef\.current,/);
     expect(source).toContain(
       'const cellBufferRanges = slotSync?.ranges',
     );

@@ -1090,7 +1090,63 @@ export function buildCohortMotesGeometry(capacity: number): THREE.BufferGeometry
     'aMass',
     new THREE.BufferAttribute(new Float32Array(count).fill(1), 1),
   );
+  // WebGLAttributes uploads a new buffer with bufferData and does not consume
+  // updateRanges on that path. Clear the ranges after the first upload so the
+  // next one-cohort stamp cannot inherit the initialization prefix.
+  for (const name of [
+    'position', 'aOrigin', 'aSeed', 'aStrength', 'aGulp', 'aMass',
+  ]) {
+    const attribute = geometry.getAttribute(name) as THREE.BufferAttribute;
+    attribute.onUpload(() => attribute.clearUpdateRanges());
+  }
+  // Capacity and submitted work are separate. The owner opens this prefix only
+  // after it has committed every lane for the corresponding cohorts, so an
+  // empty plan never sends 6,144 vertex invocations through the mote shader.
+  geometry.setDrawRange(0, 0);
   return geometry;
+}
+
+/** Merge one component range into a BufferAttribute's pending upload ranges.
+ * Three clears these ranges after `bufferSubData`, so this also coalesces
+ * several cohort writes made before the next render without retaining stale
+ * ranges into the following frame. */
+export function markCohortAttributeRange(
+  attribute: THREE.BufferAttribute,
+  offset: number,
+  count: number,
+): void {
+  if (count <= 0) return;
+  let from = offset;
+  let to = offset + count;
+  const ranges = attribute.updateRanges;
+  for (let index = ranges.length - 1; index >= 0; index -= 1) {
+    const range = ranges[index];
+    const rangeFrom = range.start;
+    const rangeTo = range.start + range.count;
+    if (rangeTo < from || rangeFrom > to) continue;
+    from = Math.min(from, rangeFrom);
+    to = Math.max(to, rangeTo);
+    ranges.splice(index, 1);
+  }
+  attribute.addUpdateRange(from, to - from);
+  attribute.needsUpdate = true;
+}
+
+/** Commit the valid cohort prefix while preserving the allocation for all 64
+ * stable slots. The count is vertices, not cohorts. */
+export function setCohortMotesDrawCount(
+  geometry: THREE.BufferGeometry,
+  cohortCount: number,
+): void {
+  const capacity = geometry.hasAttribute('aSeed')
+    ? geometry.getAttribute('aSeed').count / COHORT_MOTES_PER_COHORT
+    : 0;
+  if (!Number.isInteger(cohortCount) || cohortCount < 0 || cohortCount > capacity) {
+    throw new Error(
+      `cohort motes: draw count ${cohortCount} is outside a capacity of ${capacity}`,
+    );
+  }
+  geometry.setDrawRange(0, cohortCount * COHORT_MOTES_PER_COHORT);
 }
 
 /** The slice of the buffers that belongs to cohort `index`. */
@@ -1142,11 +1198,11 @@ export function writeCohortMotes(
   massLane: number,
 ): void {
   const { from, to } = cohortSlice(geometry, index);
-  const position = geometry.getAttribute('position');
-  const origin = geometry.getAttribute('aOrigin');
-  const seeds = geometry.getAttribute('aSeed');
-  const strengths = geometry.getAttribute('aStrength');
-  const masses = geometry.getAttribute('aMass');
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const origin = geometry.getAttribute('aOrigin') as THREE.BufferAttribute;
+  const seeds = geometry.getAttribute('aSeed') as THREE.BufferAttribute;
+  const strengths = geometry.getAttribute('aStrength') as THREE.BufferAttribute;
+  const masses = geometry.getAttribute('aMass') as THREE.BufferAttribute;
   for (let mote = from; mote < to; mote += 1) {
     position.setXYZ(mote, seat.x, seat.y, seat.z);
     origin.setXYZ(mote, seat.x, seat.y, seat.z);
@@ -1154,11 +1210,13 @@ export function writeCohortMotes(
     strengths.setX(mote, strength);
     masses.setX(mote, massLane);
   }
-  position.needsUpdate = true;
-  origin.needsUpdate = true;
-  seeds.needsUpdate = true;
-  strengths.needsUpdate = true;
-  masses.needsUpdate = true;
+  markCohortAttributeRange(position, from * position.itemSize,
+    (to - from) * position.itemSize);
+  markCohortAttributeRange(origin, from * origin.itemSize,
+    (to - from) * origin.itemSize);
+  markCohortAttributeRange(seeds, from, to - from);
+  markCohortAttributeRange(strengths, from, to - from);
+  markCohortAttributeRange(masses, from, to - from);
 }
 
 /**
@@ -1181,11 +1239,9 @@ export function writeCohortMotesMass(
   massLane: number,
 ): void {
   const { from, to } = cohortSlice(geometry, index);
-  const masses = geometry.getAttribute('aMass');
+  const masses = geometry.getAttribute('aMass') as THREE.BufferAttribute;
   for (let mote = from; mote < to; mote += 1) masses.setX(mote, massLane);
-  // The whole lane goes up, exactly as the stamp's does — and only on the
-  // frames a mass actually moved, which the caller is what gates.
-  masses.needsUpdate = true;
+  markCohortAttributeRange(masses, from, to - from);
 }
 
 /**
@@ -1202,9 +1258,7 @@ export function stampCohortMotes(
   simSecond: number,
 ): void {
   const { from, to } = cohortSlice(geometry, index);
-  const gulp = geometry.getAttribute('aGulp');
+  const gulp = geometry.getAttribute('aGulp') as THREE.BufferAttribute;
   for (let mote = from; mote < to; mote += 1) gulp.setX(mote, simSecond);
-  // The whole lane goes up: 576 floats for a six-cohort colony is 2.3 kB, which
-  // is cheaper to upload than a partial range is to reason about.
-  gulp.needsUpdate = true;
+  markCohortAttributeRange(gulp, from, to - from);
 }

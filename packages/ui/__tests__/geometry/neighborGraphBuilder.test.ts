@@ -231,6 +231,87 @@ describe('createNeighborGraphBuilder', () => {
     builder.dispose();
   });
 
+  it('recovers a construction failure behind a real task boundary', async () => {
+    const before = snapshotNeighborGraphBuilderStats();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => { throw new Error('constructor failed'); },
+    });
+    let settled = false;
+    const pending = builder.build(cells(), {
+      topology: { k: 2 }, includePassive: true, passiveEdgeBudget: 3,
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await Promise.resolve();
+    // Promise microtasks cannot drain the recovery; at least one browser task
+    // boundary is crossed before canonical work starts.
+    expect(settled).toBe(false);
+    const result = await pending;
+    expect(result?.graph.adjacency.size).toBe(6);
+    expect(result?.passiveGraph?.edges).toHaveLength(3);
+    expect(snapshotNeighborGraphBuilderStats().recoveryCompleted)
+      .toBe(before.recoveryCompleted + 1);
+    builder.dispose();
+  });
+
+  it('cancels a sliced recovery when a newer generation replaces it', async () => {
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => { throw new Error('constructor failed'); },
+    });
+    const first = builder.build(cells(), { topology: { k: 2 } });
+    const second = builder.build(cells(10), { topology: { k: 2 } });
+    expect(await first).toBeNull();
+    expect([...(await second)!.graph.adjacency.keys()])
+      .toEqual([11, 12, 13, 14, 15, 16]);
+    expect(snapshotNeighborGraphBuilderStats().recoveryCancelled).toBeGreaterThan(0);
+    builder.dispose();
+  });
+
+  it('retains only one paused recovery task across supersede and dispose', async () => {
+    const before = snapshotNeighborGraphBuilderStats();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => { throw new Error('constructor failed'); },
+      recoveryBudgetMs: () => 0,
+    });
+    const first = builder.build(cells(), { topology: { k: 2 } });
+    expect(snapshotNeighborGraphBuilderStats().recoveryPendingTasks)
+      .toBe(before.recoveryPendingTasks + 1);
+    const second = builder.build(cells(10), { topology: { k: 2 } });
+    expect(await first).toBeNull();
+    expect(snapshotNeighborGraphBuilderStats().recoveryPendingTasks)
+      .toBe(before.recoveryPendingTasks + 1);
+    builder.dispose();
+    expect(await second).toBeNull();
+    const after = snapshotNeighborGraphBuilderStats();
+    expect(after.recoveryPendingTasks).toBe(before.recoveryPendingTasks);
+    expect(after.recoveryMaxPendingTasks).toBeLessThanOrEqual(
+      Math.max(before.recoveryMaxPendingTasks, before.recoveryPendingTasks + 1),
+    );
+  });
+
+  it('recovers from the immutable cells captured for the requested generation', async () => {
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => { throw new Error('constructor failed'); },
+    });
+    const staged = cells();
+    const recoveryCells = [...staged.values()];
+    const pending = builder.build(staged, {
+      topology: { k: 2 }, recoveryCells,
+    });
+    // The next cache message patches the stage Map before the recovery task
+    // gets CPU time. Its older requested generation must remain coherent.
+    staged.delete(6);
+    staged.set(7, cellAt(7, 6));
+    expect([...(await pending)!.graph.adjacency.keys()])
+      .toEqual([1, 2, 3, 4, 5, 6]);
+    builder.dispose();
+  });
+
   it('threads reuseFrom into the deserializer so unchanged Sets survive', async () => {
     const worker = new FakeWorker();
     const builder = createNeighborGraphBuilder({
@@ -617,18 +698,17 @@ describe('createNeighborGraphBuilder (coalesced sends)', () => {
     workers[0].onerror?.(new ErrorEvent('error'));
 
     expect(await first).toBeNull();
-    // The newest build still completes — synchronously, off the dead worker.
+    // The newest build still completes cooperatively off the dead worker.
     const result = await second;
     expect(result?.graph.adjacency.size).toBe(6);
     expect(workers[0].terminated).toBe(true);
     expect(workers[0].posted).toHaveLength(1);
 
-    // The cleared queue stays cleared: the next build gets a fresh worker
-    // and dispatches immediately.
+    // The cleared queue stays cleared. A bounded retry backoff keeps the next
+    // delta on canonical recovery instead of reconstructing a worker in a
+    // failure loop.
     const third = builder.build(cells(20), { topology: { k: 2 } });
-    expect(workers).toHaveLength(2);
-    expect(workers[1].posted).toHaveLength(1);
-    workers[1].complete();
+    expect(workers).toHaveLength(1);
     expect((await third)?.graph.adjacency.size).toBe(6);
     builder.dispose();
   });
@@ -793,14 +873,11 @@ describe('createNeighborGraphBuilder (worker session chain integrity)', () => {
       expect(workers[0].posted).toHaveLength(1);
       expect(neighborGraphBuilderStats.workerTimeouts).toBe(timeoutsBefore + 1);
 
-      // A later build is served by a fresh worker, and the watchdog it arms
-      // is cleared by the answer.
+      // The immediate next build stays on recovery during retry backoff.
       const third = builder.build(cells(20), topologyOptions);
-      expect(workers).toHaveLength(2);
-      workers[1].complete();
+      expect(workers).toHaveLength(1);
       expect((await third)?.graph.adjacency.size).toBe(6);
       vi.advanceTimersByTime(TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS * 2);
-      expect(workers[1].terminated).toBe(false);
       expect(neighborGraphBuilderStats.workerTimeouts).toBe(timeoutsBefore + 1);
       builder.dispose();
     } finally {

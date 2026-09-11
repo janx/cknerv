@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -78,6 +78,38 @@ function makePlateMaterial(): THREE.MeshBasicMaterial {
 const SCRATCH_SIZE = new THREE.Vector2();
 const SCRATCH_RECT: CellPortraitScissorRect = { x: 0, y: 0, width: 0, height: 0 };
 
+type ConnectedOrbitControls = OrbitControls & {
+  /** Three r169 installs this native listener on domElement.getRootNode(). */
+  _interceptControlDown: EventListener;
+  /** Installed temporarily while Control is held during a pointer gesture. */
+  _interceptControlUp: EventListener;
+};
+
+/**
+ * OrbitControls r169 looks up the event root again during dispose. Once React
+ * has detached the portrait element, getRootNode() returns the element itself,
+ * leaving its keydown listener (and a keyup listener while Control is held) on
+ * the original document. Keep that root and remove the exact installed
+ * listeners before Three performs its normal cleanup.
+ */
+export function disposePortraitOrbitControls(
+  controls: OrbitControls,
+  eventRoot: EventTarget,
+): void {
+  const connected = controls as ConnectedOrbitControls;
+  eventRoot.removeEventListener(
+    'keydown',
+    connected._interceptControlDown,
+    { capture: true },
+  );
+  eventRoot.removeEventListener(
+    'keyup',
+    connected._interceptControlUp,
+    { capture: true },
+  );
+  controls.dispose();
+}
+
 /**
  * Renders the selected Cell's braid with the MAIN renderer: after the Galaxy
  * pass it scissors the portrait square and draws the braid scene through its
@@ -105,17 +137,26 @@ export default function CellPortraitInset({
   }, []);
   const plateMaterial = useMemo(makePlateMaterial, []);
   const plateSize = portraitPlateSize(PORTRAIT_FOV_DEG, PLATE_DISTANCE);
+  // The plate lives below a primitive camera. R3F deliberately leaves a
+  // primitive's subtree alone on unmount, so this geometry has one explicit
+  // owner just like the material below.
+  const plateGeometry = useMemo(
+    () => new THREE.PlaneGeometry(plateSize, plateSize),
+    [plateSize],
+  );
   // Injected portal size feeds LineMaterial.resolution and the Html labels;
   // it follows the measured square, which only changes on layout flips.
   const [portalSize, setPortalSize] = useState({ width: 260, height: 260 });
 
   useEffect(() => () => {
+    plateGeometry.dispose();
     plateMaterial.map?.dispose();
     plateMaterial.dispose();
-  }, [plateMaterial]);
+  }, [plateGeometry, plateMaterial]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!element) return;
+    const eventRoot = element.getRootNode();
     const controls = new OrbitControls(braidCamera, element);
     controls.enableDamping = !reduced;
     controls.dampingFactor = 0.08;
@@ -136,7 +177,7 @@ export default function CellPortraitInset({
     return () => {
       controls.removeEventListener('start', handleStart);
       controls.removeEventListener('end', handleEnd);
-      controls.dispose();
+      disposePortraitOrbitControls(controls, eventRoot);
       controlsRef.current = null;
       onInteractionChange?.(false);
     };
@@ -245,7 +286,7 @@ export default function CellPortraitInset({
           the user orbits, exactly like the DOM plate it replaces. */}
       <primitive object={braidCamera}>
         <mesh position={[0, 0, -PLATE_DISTANCE]} renderOrder={-10}>
-          <planeGeometry args={[plateSize, plateSize]} />
+          <primitive object={plateGeometry} attach="geometry" />
           <primitive object={plateMaterial} attach="material" />
         </mesh>
       </primitive>

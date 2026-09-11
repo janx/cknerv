@@ -591,8 +591,9 @@ describe('the mass lane is the week, eased into place', () => {
     // neither buffer is written and neither is flagged.
     expect(slew).toContain('if (Math.abs(mass[index] - value) <= 1e-4) continue;');
     expect(slew).toContain('writeCohortMotesMass(motesGeometry, index, value);');
-    expect(slew).toContain('if (moved) lanes.mass.needsUpdate = true;');
-    expect([...slew.matchAll(/lanes\.mass\.needsUpdate = true;/g)]).toHaveLength(1);
+    expect(slew).toContain('markCohortAttributeRange(lanes.mass, 0, marks.length);');
+    expect([...slew.matchAll(/markCohortAttributeRange\(lanes\.mass, 0, marks\.length\);/g)])
+      .toHaveLength(1);
     // …and no closure in the walk: `forEach` here would allocate one per frame.
     expect(slew).toContain('for (let index = 0; index < marks.length; index += 1) {');
   });
@@ -611,7 +612,7 @@ describe('the mass lane is the week, eased into place', () => {
     expect(cohorts).toContain('cohortMassRelay(\n      marks,\n      massNowRef.current,');
     expect(cohorts.indexOf('cohortMassRelay('))
       .toBeLessThan(cohorts.indexOf('mistShareFactor(share[index] ?? 0, shareMaxRef.current),'));
-    expect(cohorts).toContain('lanes.mass.needsUpdate = true;');
+    expect(cohorts).toContain('markCohortAttributeRange(lanes.mass, 0, marks.length);');
   });
 
   it('writes the lens lane through the PACK and through nothing else', () => {
@@ -709,7 +710,7 @@ describe('the motes carry the same two lanes, ninety-six copies wide', () => {
     // Two stamps in the file and no more: the re-lay under a plan and the write
     // on a pulse, which are exactly the two places the instanced lane moves.
     expect([...cohorts.matchAll(/stampCohortMotes\(/g)]).toHaveLength(2);
-    expect([...cohorts.matchAll(/lanes\.gulp\.needsUpdate = true;/g)])
+    expect([...cohorts.matchAll(/markCohortAttributeRange\(lanes\.gulp,/g)])
       .toHaveLength(2);
   });
 

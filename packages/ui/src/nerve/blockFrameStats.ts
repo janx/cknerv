@@ -86,7 +86,8 @@ interface BlockFrameStatsState {
    *  request, a response the caller's guards rejected. */
   discardLanding(): void;
   /** End of the fabric commit: the landing task is over. Ignored when no
-   *  start mark is open (the synchronous fallback resolves without one). */
+   *  start mark is open (cooperative main-thread recovery has no Worker
+   *  message-handler landing task). */
   observeLanding(atMs?: number): void;
   /** One finished bridge sequence: the sum of its steps, and its longest
    *  single step (defaulting to the sum, which is what a one-step build

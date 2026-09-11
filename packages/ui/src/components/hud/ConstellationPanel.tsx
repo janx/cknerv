@@ -78,6 +78,10 @@ export default function ConstellationPanel({
     const handle = handles.panels[slot];
     if (!host || !head || !content || !handle) return undefined;
     handle.host = host;
+    // A fresh host has no screen-space seat. Keep it out of the first paint
+    // until a canonical or geometry-validated presentation places this exact
+    // DOM node; old handle geometry may belong to another selected Cell.
+    if (handle.positionedHost !== host) host.style.visibility = 'hidden';
     handle.present = true;
     const measure = () => {
       // ⚠️ THE HEAD AND THE HAIRLINES COUNT, AND THEY WERE MISSED.
@@ -103,7 +107,8 @@ export default function ConstellationPanel({
     };
     measure();
     const detach = () => {
-      handle.host = null;
+      if (handle.host === host) handle.host = null;
+      if (handle.positionedHost === host) handle.positionedHost = null;
       handle.present = false;
       handle.height = 0;
       invalidateConstellationFrame(handles);
@@ -134,6 +139,7 @@ export default function ConstellationPanel({
         pointerEvents: 'auto',
         userSelect: 'text',
         willChange: 'transform',
+        visibility: 'hidden',
         zIndex: 3,
         color: HUD_COLORS.ink,
         fontFamily: HUD_FONTS.mono,

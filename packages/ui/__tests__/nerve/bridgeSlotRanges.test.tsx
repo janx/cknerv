@@ -24,6 +24,7 @@ import {
   BRIDGE_ANCHOR_PREFIX,
   BRIDGE_BUDGET,
   buildBridgeAnchorIndex,
+  createBridgeSelectionJob,
   selectBridgeEdges,
   type BridgeHostCell,
 } from '../../src/geometry/bridgeEdges';
@@ -90,7 +91,10 @@ vi.mock('../../src/geometry/bridgeEdges', async (importOriginal) => {
   const actual = await importOriginal<
     typeof import('../../src/geometry/bridgeEdges')
   >();
-  return { ...actual, selectBridgeEdges: vi.fn(actual.selectBridgeEdges) };
+  return {
+    ...actual,
+    createBridgeSelectionJob: vi.fn(actual.createBridgeSelectionJob),
+  };
 });
 
 type BridgeEdgesModule = typeof import('../../src/geometry/bridgeEdges');
@@ -301,9 +305,6 @@ function writtenBlocks(buffers: BridgeBuffers): string[] {
     .sort();
 }
 
-/** Frames one build takes: `bridgeSchedule`'s three steps, one per frame. */
-const BRIDGE_BUILD_FRAMES = 3;
-
 const cellsRef = { current: new Map<number, Cell>() };
 const passiveGraphRef = { current: emptyNeighborGraph() };
 let view: RenderResult | null = null;
@@ -332,9 +333,10 @@ function busyFrame(atSec: number): void {
 /** A completed topology build — the staged Cells change and the version bumps,
  *  which is the one thing that re-selects — followed by the frames it takes.
  *
- *  ⭐ THREE frames, all at `atSec`: the body is `bridgeSchedule`'s sync →
- *  select → reconcile, one step per frame at most, so a build is finished on
- *  the third. They share one clock, so the build's strokes are still born (or
+ *  ⭐ At least three frames, all at `atSec`: the body is `bridgeSchedule`'s
+ *  sync → select → reconcile, one step per frame at most, and any one of those
+ *  steps may now span more frames under its wall-clock slice. They share one
+ *  clock, so the build's strokes are still born (or
  *  start dying) at exactly `atSec`, which is what a replay through the pure
  *  functions has to assume. The renderer clears an attribute's ranges as it
  *  uploads them, so the harness does the same between the frames — every
@@ -355,11 +357,12 @@ function build(cells: readonly number[] | Map<number, Cell>, atSec: number): voi
   );
   if (view === null) view = render(element);
   else view.rerender(element);
-  for (let step = 1; step < BRIDGE_BUILD_FRAMES; step += 1) {
+  const buildsBefore = bridgeStats.builds;
+  for (let step = 1; bridgeStats.builds === buildsBefore && step < 10_000; step += 1) {
     frame(atSec);
-    consumeUploads(bridgeBuffers());
+    if (bridgeStats.builds === buildsBefore) consumeUploads(bridgeBuffers());
   }
-  frame(atSec);
+  expect(bridgeStats.builds).toBeGreaterThan(buildsBefore);
 }
 
 const SETTLED_SEC = (GROWTH_MS / 1000) + 0.3;
@@ -377,7 +380,7 @@ beforeEach(() => {
   resetSimClock();
   resetBridgeStats();
   resetFrameBudget();
-  vi.mocked(selectBridgeEdges).mockClear();
+  vi.mocked(createBridgeSelectionJob).mockClear();
   setPopulationPlacement(placementFixture());
 });
 
@@ -492,9 +495,9 @@ describe('the bridge layer rewrites the strokes that moved, not the layer', () =
     // ⚠️ A build that re-selected the same hosts is NOT where the debt is
     // paid, and it costs nothing: the registry reports no movement, so no
     // selection runs, nothing is reconciled, nothing is marked.
-    const selections = vi.mocked(selectBridgeEdges).mock.calls.length;
+    const selections = vi.mocked(createBridgeSelectionJob).mock.calls.length;
     build([1], SETTLED_SEC + REAPED_SEC + 0.2);
-    expect(vi.mocked(selectBridgeEdges).mock.calls.length).toBe(selections);
+    expect(vi.mocked(createBridgeSelectionJob).mock.calls.length).toBe(selections);
     expect(buffers.geometry.instanceCount).toBe(both);
     expect(buffers.positions.updateRanges).toEqual([]);
     expect(stable()).toEqual(stableBefore);
@@ -636,7 +639,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
   }
 
   it('holds the whole build until the drain lands the fabric it picks hosts by', () => {
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     const landed = { current: -1 };
     commit([1], 0, landed);
 
@@ -685,7 +688,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
   });
 
   it('runs the newest build only, when one supersedes another mid-drain', () => {
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     const landed = { current: -1 };
     commit([1], 0, landed);
     frame(0.01);
@@ -702,7 +705,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     expect(select).toHaveBeenCalledTimes(1);
     frame(0.04);
     expect(bridgeStats.builds).toBe(1);
-    expect(select.mock.results[0].value.bridges.some(
+    expect(select.mock.results[0].value.result!.bridges.some(
       (bridge: { cellId: number }) => bridge.cellId === 2,
     )).toBe(true);
   });
@@ -712,7 +715,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     // selection taken over one build's hosts and reconciled onto another
     // build's strokes is a layer of two versions. So a newer arm does not
     // resume where the older sequence stood — it starts again at step A.
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     const landed = { current: -1 };
     commit([1], 0, landed);
     landed.current = 1;
@@ -730,7 +733,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     // the newer build's hosts.
     frame(0.03);
     expect(select).toHaveBeenCalledTimes(1);
-    expect(select.mock.results[0].value.bridges.some(
+    expect(select.mock.results[0].value.result!.bridges.some(
       (bridge: { cellId: number }) => bridge.cellId === 2,
     )).toBe(true);
     frame(0.04);
@@ -742,7 +745,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
     // The measured block frame: the drain and the live-plan slice have
     // already taken the frame's heavy budget, and the class's step is what
     // would turn it into three vsyncs. It waits — but not forever.
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     const landed = { current: -1 };
     commit([1], 0, landed);
     landed.current = 1;
@@ -765,7 +768,7 @@ describe('the bridge layer selects on a frame, never in the commit', () => {
 
 describe('the bridge layer runs the selection only for a build that moved a host', () => {
   it('skips the selection and the reconcile when nothing it reads moved', () => {
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     build([1], 0);
     expect(select).toHaveBeenCalledTimes(1);
     const buffers = bridgeBuffers();
@@ -794,7 +797,7 @@ describe('the bridge layer runs the selection only for a build that moved a host
   });
 
   it('re-selects for a moved host and lands where a from-scratch selection would', () => {
-    const select = vi.mocked(selectBridgeEdges);
+    const select = vi.mocked(createBridgeSelectionJob);
     build([1], 0);
     frame(SETTLED_SEC);
 
@@ -805,7 +808,7 @@ describe('the bridge layer runs the selection only for a build that moved a host
     const fresh = () => actualBridgeEdges.selectBridgeEdges(
       hostsOf(cellsRef.current, passiveGraphRef.current), index,
     ).bridges;
-    expect(select.mock.results[1].value.bridges).toEqual(fresh());
+    expect(select.mock.results[1].value.result!.bridges).toEqual(fresh());
 
     // A host's drawn-fabric degree moves: it is the same Cell, and the
     // selection reads it differently.
@@ -815,7 +818,7 @@ describe('the bridge layer runs the selection only for a build that moved a host
     };
     build([1, 2], SETTLED_SEC + 0.1);
     expect(select).toHaveBeenCalledTimes(3);
-    expect(select.mock.results[2].value.bridges).toEqual(fresh());
+    expect(select.mock.results[2].value.result!.bridges).toEqual(fresh());
     // ...and the same fabric again is the steady state again.
     build([1, 2], SETTLED_SEC + 0.2);
     expect(select).toHaveBeenCalledTimes(3);
@@ -825,8 +828,8 @@ describe('the bridge layer runs the selection only for a build that moved a host
     const dead = { ...HOSTS.get(2)!, death_at_ms: 1 };
     build(new Map([[1, HOSTS.get(1)!], [2, dead]]), SETTLED_SEC + 0.3);
     expect(select).toHaveBeenCalledTimes(4);
-    expect(select.mock.results[3].value.bridges).toEqual(fresh());
-    expect(select.mock.results[3].value.bridges.every(
+    expect(select.mock.results[3].value.result!.bridges).toEqual(fresh());
+    expect(select.mock.results[3].value.result!.bridges.every(
       (bridge: { cellId: number }) => bridge.cellId === 1,
     )).toBe(true);
   });

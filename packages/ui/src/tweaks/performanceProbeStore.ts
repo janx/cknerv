@@ -92,6 +92,7 @@ export const PERFORMANCE_PROBE_LABELS = {
   topologyCommit: 'cpu.topology.commit',
   bridgeHostsSync: 'cpu.bridge.sync-hosts',
   bridgeSelect: 'cpu.bridge.select',
+  inspectionLayoutSlice: 'cpu.inspection.layout-slice',
   colonyTopology: 'cpu.colony.topology',
   colonyFlood: 'cpu.colony.flood',
 } as const;
