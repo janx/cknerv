@@ -1529,17 +1529,23 @@ function scoreCandidate(input: ConstellationInput, candidate: Candidate): number
  * `filter().sort(score).slice(0, cap)`. Scoring each candidate once avoids
  * thousands of repeated score/map walks on a cold four-panel solve while
  * retaining generation order as the tie-break. Geometry enumeration stays
- * exhaustive; this is the gate on how many seat sets are ever ROUTED. */
-function bestCandidates(
+ * exhaustive; this is the gate on how many seat sets are ever ROUTED.
+ *
+ * It yields every 32 candidates because it is the longest unbroken stretch the
+ * solve has: a four-plate bucket presents 271 seat sets and validating and
+ * scoring all of them was measured at 7.4 ms in one generator step, which the
+ * Canvas has no way to fit inside a frame. */
+function* bestCandidatesSteps(
   input: ConstellationInput,
   candidates: readonly Candidate[],
   gap: number,
-): Candidate[] {
+): Generator<void, Candidate[]> {
   const best: Array<{ candidate: Candidate; score: number; ordinal: number }> = [];
   let dropped = false;
   for (let ordinal = 0; ordinal < candidates.length; ordinal += 1) {
     const candidate = candidates[ordinal];
     constellationWorkStats.candidatesValidated += 1;
+    if ((ordinal & 31) === 31) yield;
     if (!hardValid(input, candidate.placements, gap)) continue;
     const entry = { candidate, score: scoreCandidate(input, candidate), ordinal };
     let at = best.length;
@@ -1670,7 +1676,7 @@ function* solveLayoutSteps(
         if ((encoded & 31) === 31) yield;
       }
       constellationWorkStats.candidatesBuilt += candidates.length;
-      const feasible = bestCandidates(input, candidates, gap);
+      const feasible = yield* bestCandidatesSteps(input, candidates, gap);
       if (feasible.length > 0) seatedAtThisSqueeze = true;
       for (const candidate of feasible) {
         if (!withRoutes) { best = candidate; bestMasks = []; break; }
