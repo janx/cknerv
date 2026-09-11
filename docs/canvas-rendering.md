@@ -335,10 +335,30 @@ does not move the camera.
 `CELL SCAN`, `SCAN·01`, `SCAN·02`, and the optional `SCAN·03` are independent
 plates with independent measured heights and close controls. A bounded pure
 geometry solve places the open set as one constellation, using side columns or
-folded shelves. It rejects candidates that cross the stage edge, another
-plate, the selection reticle, or the clamped Cell name chip. Scrollable text
-plates may receive a finite height; the specimen plate always preserves its
-full square window.
+folded shelves. Geometry alone decides the seats: a candidate is rejected only
+when it crosses the stage edge, another plate, the selection reticle, or the
+clamped Cell name chip's claim. Scrollable text plates may receive a finite
+height; the specimen plate always preserves its full square window.
+Compression is escalated only when no candidate at the current rung seats, so
+a 16 px gap is always tried before any height is taken back and a leader that
+cannot be drawn is never a reason to compress a plate. The ladder has six
+rungs: 1, 0.76, 0.56, 0.4 and 0.16 of the asked height at the
+`CONSTELLATION_MIN_HEIGHT_PX` 168 px readable floor, then 0.16 again at the
+`CONSTELLATION_STACK_MIN_PX` 120 px floor of last resort, so a stage may be
+asked to re-compose before an instrument is cut below what can be read, and no
+stage can lose its constellation to the higher floor. A stage at least
+`CONSTELLATION_FIELD_MIN_STAGE_PX` (1280 px) wide also keeps a proportional
+keep-out field around the Cell; below it the instruments stand at the
+reticle's own clearance.
+
+`status` is a statement about room, never about lines. `unavailable` means no
+seat set exists on this stage, and it is published like any other layout: the
+root stays visible with the reticle and name chip tracking the Cell, the plates
+hidden, no blink and no re-solve loop. An `unavailable` verdict is re-derived
+at once when the layout key changes — a viewport, a rail, a panel height — and
+otherwise only after the anchor has moved `CONSTELLATION_UNAVAILABLE_RESOLVE_PX`
+(24 px) from the anchor it was answered at. `unavailableHolds` counts the
+frames it was kept instead of re-derived.
 
 The same result owns orthogonal leader paths, route labels, and the SVG mask.
 Leaders use ordered reticle outlets, avoid visible HUD remnants and all plate
@@ -347,6 +367,123 @@ clear route segment or appears once in its plate heading. The full-stage SVG
 draws leaders below the plates and masks every plate, the name chip, and
 visible HUD rectangles; this includes the transparent specimen window, so a
 line cannot show through the main-Canvas portrait.
+
+A leader never vetoes a seat. Where the canonical orthogonal router cannot
+reach a seated plate, that plate keeps its seat and takes a DEGRADED leader:
+the straight line from the reticle ring to the nearest point of the plate,
+snapped to two orthogonal legs where that is clear of the plate body and the
+ring, with its label in the plate heading. `route.degraded` says which route it
+is, `layout.leaders` reads `degraded` when any leader in the layout is one, and
+the writer marks that leader's group `data-cell-leader-degraded="true"`; the
+injected sheet dashes the rose over-stroke `4 3` on that attribute while the
+near-black under-stroke stays solid, so a fallback reads as a fallback and
+nothing re-renders to switch it. Because the inspection layer stands above the
+HUD, a degraded leader that starts under a rail is cut by the same mask as any
+other and is invisible until it leaves the rail: the rail is standing on the
+Cell, not the Cell on the rail. `degradedRoutes` counts the fallback leaders a
+reader actually saw.
+
+The router is bounded, at two efforts. `first` owns first paint: the preferred
+route order for the panel count plus one retry that moves the first unreachable
+plate to the front (`ROUTE_ORDER_CAP` 2), the best `ROUTE_CANDIDATE_CAP` (12)
+seat sets by score, a `ROUTE_SEARCH_MARGIN_PX` (640 px) corridor around the
+straight line that also selects which obstacles are considered,
+`ROUTE_GRID_PAIR_CAP` (13) start–end pairs of a plate into the orthogonal grid
+search — chosen by their Manhattan lower bound — and `ROUTE_GRID_POINT_CAP`
+(1,600) points per pair. Geometry enumeration itself stays exhaustive. A plate
+past a cap degrades, and `routeCapHits` and `routeGridPoints` say what the caps
+cost. `refine` runs behind a constellation that is already on screen and may
+spend what first paint may not: the whole permutation set
+(`ROUTE_REFINE_ORDER_CAP` 24), `ROUTE_REFINE_GRID_PAIR_CAP` (41) pairs, and one
+total `ROUTE_REFINE_POINT_BUDGET` of 320,000 grid points for the whole
+refinement, after which the best attempt found is kept. The writer starts a
+refinement only after a canonical landing whose `leaders` is `degraded` and
+while no layout job is pending; it is a cursor at the same 1.6 ms interaction
+slice, shared with a locked solve on a drifting frame and never the first-paint
+allowance. It survives drift while the seats hold, and re-anchors its routes to
+the live anchor as it lands. A layout-key change, a seat change, a started full
+solve, camera motion, invalidation, the `unavailable` hold and the frame commit
+all cancel it. A refinement applies routes, labels, masks and the lock's held
+routes and never moves a seat; when the placements have moved under it the
+whole result is dropped. `refineStarts`, `refineLandings`, `refineUpgrades` and
+`refineDropped` are its ledger, and a landed picture is re-refined only when a
+new landing clears `refinedKey`.
+
+The name chip yields rather than unseat an instrument. `constellationChip` is
+the one statement of where it stands, choosing from an ordered list: centred
+below the reticle, centred above, below and shifted horizontally by the
+smallest offset that clears the offending plate inside the stage clamp, above
+and shifted likewise. The layout carries the chosen rectangle, so the frame
+writer and the motion-suspend path write the same one. A fresh solve reserves
+the preferred position exactly as before and seats its plates around it, which
+is what keeps first paint unchanged; only the held paths — the locked reuse,
+the presentation re-anchor, and the hard-validity question behind a stale
+picture — relocate the chip, and the lock breaks only when no listed position
+is clear. `chipRelocations` counts the spells it spends off its preferred
+position.
+
+A re-solve keeps the seats the reader is already reading. While the lock holds
+the same slot set, the candidate set gains three held candidates — the held
+seats verbatim, the held group translated by the anchor delta, and each held
+plate repaired by the smallest single-axis move that makes it legal again — all
+offered back only while every plate still stands outside the Cell's keep-out
+field, not merely outside the reticle's own clearance. Scoring gains a
+continuity term, `Σ min(CONSTELLATION_CONTINUITY_CAP_PX, |seat − reference|)`
+at `CONSTELLATION_CONTINUITY_PX_WEIGHT` (2 pt/px, capped at 400 px a plate),
+and the template bonus is gone, because seats subsume it. The reference is the
+held seat while the anchor is within `CONSTELLATION_HOLD_RADIUS_PX` (160 px) of
+the anchor the seats were solved at, and the held seat plus the anchor delta
+beyond it. In words: the constellation stands still while the reader reads,
+then steps after the Cell as a group about every 160 px, each plate moving the
+anchor's own travel and no more; a side flip happens only when the held side
+has no legal room left, so an instrument may stand over the right-hand rails —
+which the inspection layer is allowed to draw over — rather than cross the
+stage.
+
+A content height change extends a plate in place instead of re-composing
+around it. For the same slot set the locked path keeps every plate's x and top
+and grows it downward to the asked height; failing that it keeps the bottom
+edge and grows upward; failing that one neighbour in the same column slides
+once along the column by the minimum that clears; and failing all three the
+plate keeps its seat, takes the room it has and scrolls the rest. The rule
+between those moves is that moving a plate's top is worth it to stop an
+instrument scrolling and is not worth it to scroll a little less. The answer is
+validated like any other, and only then does the full solve run, with the
+continuity term against the verbatim seats. Nothing hides while that re-solve
+is pending: every host stays at its seat with the new height clamped to the
+room its landed neighbours leave it (`constellationHeldRoomPx`),
+`data-cell-panel-capped` follows the clamp, the leaders are carried across as a
+set when they can be and hidden as a set when they cannot, and only a plate
+whose seat the current anchor has entered, or one off-stage, is withdrawn.
+
+Carrying a proven leader across a small move judges it `REVALIDATE_TOLERANCE_PX`
+(3 px) more kindly than drawing a new one, and may slide the leg that follows
+the translated head by up to the same three to clear something; the target
+plate and the reticle stay exact, so a line never enters the plate it points at
+or the ring it leaves from. A prior route is an obstacle only where it runs
+outside both reticle rings, because near the ring the eight outlets fan out and
+the leaders cross each other by design. The canonical router never sees the
+tolerance.
+
+A seat that moved on an already-positioned host is travelled to, not written.
+Any write whose seat moves at least `CONSTELLATION_SEAT_TRAVEL_MIN_PX` (16 px,
+the minimum gap this composition leaves between two instruments) starts a
+journey, and `advanceConstellationFrame` steps every active journey each frame
+over `HUD_MOTION.seat` (240 ms) on the HUD's enter ease, sampled from the same
+bezier the stylesheet transitions with. x, y and height travel together, so a
+plate that grew upward keeps its bottom edge on every frame; width and the cut
+are written at once, and a grow-down — same x, same top — is not a journey at
+all. The specimen's interpolated seat feeds the portrait origin, so the scissor
+travels with the plate. Every leader stroke, endpoint dot and route label is
+hidden for the whole journey and restored with its final routes on the frame it
+ends, because a line drawn to where a plate is going points at nothing while it
+is on the way; the in-panel fallback label is not hidden, because it is the
+instrument's own name and travels with the plate. A landing mid-journey
+retargets from the interpolated position, camera motion snaps every journey to
+its end, a first paint never travels, and a new Cell's instruments arrive with
+the overlay's own entrance rather than flying from the seats of the Cell just
+closed. Reduced motion writes the final transform at once. `seatTweens` counts
+one per animated seat change, not one per plate.
 
 The frame writer locks valid plate coordinates while the projected Cell drifts.
 Its canonical candidate and route solver is a resumable cursor: candidate
@@ -358,9 +495,13 @@ plates and leaders may remain visible while the cursor catches up only after a
 presentation validator checks the current panel identities and dimensions,
 stage bounds, endpoints, orthogonal segments, HUD/chip/reticle clearance,
 inter-route clearance, labels, and masks. A viewport or HUD change can therefore
-retain a still-valid presentation while canonical work continues; an invalid
-panel hides the whole root and clears the portrait scissor, while a route-only
-failure hides the leaders. The cursor never drains synchronously to meet that
+retain a still-valid presentation while canonical work continues; a plate whose
+seat the current anchor has entered, or one off-stage, is withdrawn on its own
+and clears the portrait scissor with it, while a route-only failure hides the
+leaders. The root itself is never hidden because a solve is pending — only for
+an off-screen anchor and for the exit — and the early return that keeps a
+finished picture accepts an `unavailable` layout as a complete answer. The
+cursor never drains synchronously to meet that
 presentation deadline. Stage, font or content measurements, open slots, and HUD
 geometry versions invalidate the canonical output. SVG, reticle, and mask refs
 are stable across ordinary React renders so an accent or quality update does not
@@ -404,7 +545,13 @@ does not make the replacement host ready. During motion, already positioned
 hosts remain visible, while fresh hosts wait and the reticle/name chip continue
 tracking the Cell. The portrait origin is available only while the current
 specimen host is present, positioned, and visible. Unmounting or removing a
-panel releases its positioned-host reference.
+panel releases its positioned-host reference. A dossier rendered with no frame
+writer takes the DETACHED channel instead
+(`createCellConstellationHandles({ detached: true })`, which is what
+`CellDetailPanel` uses when no handles arrive): its plates stand in flow and
+visible rather than waiting hidden for a writer that will never come. That is
+the channel the Labs and the component tests mount; the live channel is
+unchanged by it.
 
 ## 6. Visual Language
 
@@ -2297,6 +2444,7 @@ Canvas results.
 | Idle field | Resting nerves remain abundant without new blocks |
 | Network, carrier, commit, settled stages | Flood, carrier handoff, active route, terminal write, and retained evidence remain legible and correctly ordered |
 | Selection and orbit | Correct pick, no accidental deselect after drag, overlay visibility, stable nested portrait controls |
+| Cell inspection constellation | The capture contract in `ui-app/VISUAL_REVIEW.md` under "Production Cell Inspection Layout": seats, leaders (clean or degraded), the quiet `unavailable`, seat continuity under drift, grow-in-place, and the seat travel |
 | Memory and causal inspection | Exact retained endpoints, graph-bounded route, readable DOM evidence |
 | Reorg | Invalid pulses and recall disappear before real replacement births; echo shows only the prune witness |
 | Backfill | No live pulse storm and no adaptive-quality downgrade caused by replay |
@@ -2469,6 +2617,25 @@ router's own cache-cliff count, which the pulse reset deliberately leaves alone)
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;
 production is exact.
+
+`__constellationWorkStats()` is the Cell inspection layout's own ledger, with
+`__constellationWorkStatsReset()` beside it. Alongside the solve scalars
+(`fullSolves`, `lockedReuses`, `candidatesBuilt`, `candidatesValidated`,
+`routeOrders`, `fastRouteAttempts`, `searchedRouteAttempts`) and the cursor
+scalars (`cursorSlices`, `cursorMaxSliceMs`, `cursorPending`, `cursorCancels`,
+`cursorForcedCatchUps`, `cursorFullStarts`, `cursorLockedStarts`,
+`cursorLandings`, `cursorProvisionalFrames`) it carries what the 2026-09-12
+repair added: `degradedRoutes`, the fallback leaders a reader saw;
+`routeGridPoints` and `routeCapHits`, what the router's caps searched and where
+they bit; `unavailableHolds`, the frames a roomless stage was held rather than
+re-asked; `refineStarts`, `refineLandings`, `refineUpgrades` and
+`refineDropped`, the background refinement's ledger — an upgrade is a leader
+that went from degraded to clean, a drop is a refinement whose seats moved
+under it; `chipRelocations`, the spells the name chip spent off its preferred
+position; and `seatTweens`, seat changes the frame writer travelled to instead
+of writing at once — one per change, not one per plate. The library stays
+window-free: `ui-app/src/pulse-stats-hook.ts` attaches the snapshot function
+itself, so no enumeration anywhere lists the keys.
 
 `__blockFrameStats()` is the exception to "integer counters": a bounded ring of
 32 wall-clock readings, one per landed topology build, plus the all-time maxima
@@ -2676,6 +2843,7 @@ Before merging a Canvas change, answer:
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
+| Where the open instruments stand, how each reaches its Cell, and the frame that writes them | `packages/ui/src/derives/cellConstellation.derive.ts`, `packages/ui/src/components/hud/cellConstellationFrame.ts`, `packages/ui/src/components/hud/CellConstellationMarks.tsx`, `packages/ui/src/components/hud/ConstellationPanel.tsx`, `packages/ui/src/components/CellInspectionOverlay.tsx` |
 | HUD wall clock | `packages/ui/src/components/hud/hudClock.tsx` |
 | Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx`, `packages/ui/src/tweaks/performanceProbeStore.ts`, `packages/ui/src/tweaks/gpuTimerQuery.ts`, `packages/ui/src/tweaks/nonEmptyGpuProbeCallbacks.ts`, `packages/ui/src/tweaks/gpuUploadLedger.ts`, `packages/ui/src/components/hud/RenderStatsPanel.tsx` |
 | Always-on churn counters and their window hook | `packages/ui/src/nerve/fabricStats.ts`, `packages/ui/src/nerve/blockFrameStats.ts`, `packages/ui/src/nerve/bridgeStats.ts`, `packages/ui/src/geometry/neighborGraphBuilderStats.ts`, `packages/ui/src/derives/colonyStats.ts`, `packages/ui/src/geometry/cellPickStats.ts`, `packages/ui/src/derives/producerOriginStats.ts`, `packages/ui/src/nerve/pulseStats.ts`, `ui-app/src/pulse-stats-hook.ts` |

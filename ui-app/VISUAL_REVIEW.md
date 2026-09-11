@@ -119,3 +119,59 @@ visible through its transparent square, while leader underlays, glows, dots,
 and labels do not enter it. HUD plates continue to dim per actual inspection
 panel rectangle. The specimen window must remain
 square and inside its plate at every compressed layout.
+
+### The signals a capture reads
+
+Read these off the DOM rather than off the picture; the screenshot illustrates
+the report, it is not the report.
+
+| Signal | Where | Says |
+|---|---|---|
+| `data-cell-constellation-status` | `[data-cell-inspection-overlay]` | `normal`, `compressed`, or `unavailable` — a statement about room, never about lines |
+| `data-cell-constellation-leaders` | same | `clean` or `degraded` for the whole layout |
+| `data-cell-constellation-template` | same | absent while `unavailable` |
+| `data-cell-constellation-motion` | same | `moving` on a frame the camera gate owns; every seat journey is snapped to its end there |
+| root `opacity` | same | `1` except for an off-screen anchor and the exit. A solve, a height change, or a roomless stage must never take it off `1` |
+| `data-cell-panel-capped` | `[data-cell-constellation-panel="<slot>"]` | the plate is cut and scrolls |
+| `style.transform` / `style.height` | same | the live seat; both change on every frame of a journey |
+| `data-cell-leader-degraded` | `[data-cell-leader="<slot>"]` | `true` is the straight fallback; the sheet dashes its `[data-cell-leader-stroke="over"]` `4 3`. A journey never changes it |
+| `style.visibility` | the leader group's two strokes, its endpoint circle, and `[data-cell-leader-label="<slot>"]` | `hidden` for the whole of a seat journey and during camera motion |
+| `[data-cell-panel-route-label="<slot>"]` | inside the plate | the in-panel fallback label. It is not a leader and is NOT hidden by a journey |
+| `window.__constellationWorkStats()` | page | `fullSolves`, `degradedRoutes`, `routeGridPoints`, `routeCapHits`, `unavailableHolds`, `refineStarts` / `refineLandings` / `refineUpgrades` / `refineDropped`, `chipRelocations`, `seatTweens`, `cursorMaxSliceMs`. `window.__constellationWorkStatsReset()` zeroes them before a scenario |
+
+Record per capture: viewport, DPR, Cell id, anchor (the reticle rect's centre),
+the four status attributes, every plate rectangle with its `capped` flag and
+its scroller's `clientHeight`/`scrollHeight`, every leader's `d`, visibility and
+degraded flag, the leader-label and mask rectangles, the chip rectangle, the
+root opacity, which HUD rails carry `data-hud-dim="true"`, the counters, and the
+console. A valid capture also has no plate overlapping another, nothing
+off-stage, no route point strictly inside a plate it does not point at, no
+route point inside the reticle, and no leader label over a plate.
+
+For anything measured per frame — drift, a seat journey, a growing plate —
+record from a page-side `requestAnimationFrame` loop into an array and dump it
+once. A round trip per frame measures the driver.
+
+### Capture contract
+
+| # | Scenario | Pass criterion |
+|---|---|---|
+| 1 | 1920×1080 with rails; a Cell selected, then carried under a rail by an orbit or by the canopy's own turn | Every plate keeps its seat; `status` never becomes `unavailable`; the leaders under the rail are cut by the mask, not withdrawn; a fallback among them carries `data-cell-leader-degraded="true"` and is dashed; root opacity never leaves `1` |
+| 2 | 1920×1080 and 1180×663 with MEMORY TRACE armed (the register's `recall causal path` control, enabled once `data-memory-identity-complete="true"`), four plates | The fourth plate is seated within 3 rAF of mounting; `cursorMaxSliceMs` ≤ 8 ms; root opacity never leaves `1` |
+| 3 | 1024×600 and 800×600 | Either three seated plates or a quiet `unavailable` with the reticle and chip still tracking; at most one `fullSolves` increment per second while the Cell drifts |
+| 4 | 10 s or more of canopy drift at 1440×900 and 1920×1080 with three plates and no input | Seat changes ≤ 2 per 160 px of anchor travel and `seatTweens` equal to them; each journey ~15 frames at 60 Hz; no leader visible on any frame where a plate's transform changed; `chipRelocations` counted |
+| 5 | Enrichment arriving on a bare Cell, and the reader loading on a Cell with bytes | Root opacity never leaves `1`; the grown plate keeps its x and its top (or its bottom if it grew upward); no other plate moves |
+| 6 | Reduced motion (`prefers-reduced-motion: reduce`), and High/Med/Low (`?quality=`, read back as `data-quality-effective`) | The same seats; under reduced motion `seatTweens` is 0 and a seat change appears between two consecutive frames with no intermediate transform |
+| 7 | DPR 2, and WebKit where a build exists | The same report. Geometry stays in CSS pixels |
+
+Two captures want a human eye rather than a predicate: 820×1078 with three
+plates, where a full-height instrument is preferred to a compressed one with a
+solid leader; and 1920×1080 with the rails at the 0.22 and 0.78 anchors, where
+three leaders stay dashed after refinement and the register stands over the
+right-hand rails after a rightward drift instead of crossing the stage.
+
+⚠️ A headless browser on a software rasterizer renders this scene at about one
+frame a second, which is not enough to resolve a 240 ms journey or to let
+OrbitControls' per-frame damping tail come to rest. Record the measured frame
+interval with every per-frame capture, and read the counters rather than the
+frames where the two disagree.
