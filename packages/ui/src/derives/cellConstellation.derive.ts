@@ -80,7 +80,9 @@ export const ROUTE_GRID_POINT_CAP = 1600;
  * matrix layouts the winning pair's rank reaches 12 at the 91st percentile
  * (and 40 once), so a cap of 4 as the plan proposed moved 49 layouts while 13
  * moves 7. Lower it and more plates take the fallback leader; raise it and the
- * four-panel tail goes back over the interaction budget.
+ * four-panel tail goes back over the interaction budget — which is why the
+ * background refinement, which is not on the interaction path, raises it to
+ * `ROUTE_REFINE_GRID_PAIR_CAP` and loses none of them.
  */
 export const ROUTE_GRID_PAIR_CAP = 13;
 
@@ -92,7 +94,9 @@ export const ROUTE_GRID_PAIR_CAP = 13;
  * route in; when it leaves a plate unreachable, that plate is tried first
  * instead, which is the single change that can help it. Beyond those two the
  * permutations are a search over 6 or 24 orders for a layout that has already
- * said it is crowded, and the review measured it at seconds per solve.
+ * said it is crowded, and the review measured it at seconds per solve. This
+ * bounds the `first` effort only; the background refinement walks those
+ * permutations behind `ROUTE_REFINE_ORDER_CAP`, where the latency is nobody's.
  */
 export const ROUTE_ORDER_CAP = 2;
 
@@ -144,12 +148,16 @@ export const ROUTE_REFINE_GRID_PAIR_CAP = 41;
  * refinement — every pair, of every plate, in every order it tries. It is the
  * only bound on a `refine` pass that cannot be defeated by presenting it with
  * more work, and it is what makes "the refinement costs at most N" a statement
- * rather than a hope. 250,000 points is roughly a tenth of a second of search
- * on this machine, spent 1.6 ms at a time, so about a second of wall clock
- * behind a constellation that is already on screen. Measured over the twelve
- * layouts P2's caps cost a canonical leader, the dearest refinement spends far
- * less than this; it is a ceiling, not a target. When it runs out the best
- * attempt so far is kept, which is never worse than the picture that is up.
+ * rather than a hope. 320,000 is a measurement, not a round number. The plan
+ * proposed 250,000, and at that value two of the twelve leaders P2's caps cost
+ * ran out of budget several orders short of the line that rescues them. Over
+ * the whole matrix the dearest refinement that SUCCEEDS spends 270,219 points
+ * and about 100 ms of search, so 320,000 clears the worst measured success with
+ * room — and still stops the one case that would otherwise walk 585,057 points
+ * to find nothing (1180x663 at 0.78, 0.25 with four plates). Spent 1.6 ms at a
+ * time that is about a second of wall clock behind a constellation the reader
+ * already has. When the budget runs out the best attempt so far is kept, which
+ * is never worse than the picture that is up.
  */
 export const ROUTE_REFINE_POINT_BUDGET = 320_000;
 
