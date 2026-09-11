@@ -96,6 +96,7 @@ import {
   useCellScanStepLit,
   SCAN_TICK_MS,
 } from './cellScanClock';
+
 import {
   deriveCellConsensusIdentity,
   type CellWriteEvidence,
@@ -149,6 +150,8 @@ import {
   semanticObjectReadout,
   type CellSemanticsPhase,
 } from './CellSemanticsReadout';
+
+const EMPTY_CLOSED_SLOTS: ReadonlySet<ConstellationSlot> = new Set();
 
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
 /** One empty list, for a record that decoded nothing. A fresh `[]` on every
@@ -1323,7 +1326,6 @@ function CellDetailPanel({
   accent = CELL_CARD_ACCENT,
   onSlotsChange,
   portraitStandalone = false,
-  onClose,
   style,
 }: CellDetailPanelProps) {
   const reduced = useReducedMotion();
@@ -1794,17 +1796,36 @@ function CellDetailPanel({
     detachedHandles.current = createCellConstellationHandles();
   }
   const panelHandles = handles ?? detachedHandles.current;
+  const [closedState, setClosedState] = useState<{
+    cellId: number;
+    slots: ReadonlySet<ConstellationSlot>;
+  }>(() => ({ cellId: cell.id, slots: new Set() }));
+  const closedSlots = closedState.cellId === cell.id ? closedState.slots : EMPTY_CLOSED_SLOTS;
+  useEffect(() => {
+    setClosedState((previous) => previous.cellId === cell.id
+      ? previous
+      : { cellId: cell.id, slots: new Set() });
+  }, [cell.id]);
+  const closeSlot = useCallback((slot: ConstellationSlot) => {
+    setClosedState((previous) => {
+      const next = previous.cellId === cell.id ? new Set(previous.slots) : new Set<ConstellationSlot>();
+      next.add(slot);
+      return { cellId: cell.id, slots: next };
+    });
+  }, [cell.id]);
 
   // Which instruments this Cell opened, and nothing else about where they go.
   // The walk owns the geometry; this owns the census — and it is the census the
   // overlay needs, because there is one leader per instrument and a Cell with
   // no bytes must grow no line to a reader that is not there.
   const openSlots = useMemo<ConstellationSlot[]>(() => {
-    const slots: ConstellationSlot[] = ['analysis', 'specimen'];
-    if (hasBytes) slots.push('reader');
-    if (showTracePlate && traceReadout) slots.push('trace');
+    const slots: ConstellationSlot[] = [];
+    if (!closedSlots.has('analysis')) slots.push('analysis');
+    if (!closedSlots.has('specimen')) slots.push('specimen');
+    if (hasBytes && !closedSlots.has('reader')) slots.push('reader');
+    if (showTracePlate && traceReadout && !closedSlots.has('trace')) slots.push('trace');
     return slots;
-  }, [hasBytes, showTracePlate, traceReadout]);
+  }, [closedSlots, hasBytes, showTracePlate, traceReadout]);
   useEffect(() => {
     onSlotsChange?.(openSlots);
   }, [onSlotsChange, openSlots]);
@@ -2005,17 +2026,17 @@ function CellDetailPanel({
         *
         * The masthead is gone from this plate too: the Cell's id, its outpoint
         * and its state are on the chip under the reticle now, because they are
-        * facts about the specimen and not about the register. And the module
-        * tags are gone from the heads, because each one rides its own leader —
-        * said once, on the thing that is the relationship. */}
-      <ConstellationPanel
+        * facts about the specimen and not about the register. Module tags ride
+        * their leaders when a clear segment exists; a tight route falls back
+        * to the corresponding head, still exactly once. */}
+      {!closedSlots.has('analysis') ? <ConstellationPanel
         slot="analysis"
         handles={panelHandles}
         accent={accent}
         title="CKBYTES ANALYSIS"
         status={<CellScanStatusReadout landmarks={order.length} />}
-        onClose={onClose}
-        closeTitle="Close CKBYTES ANALYSIS · ESC closes the Cell"
+        onClose={() => closeSlot('analysis')}
+        closeTitle="Close CKBYTES ANALYSIS"
         attributes={{
           'data-cell-detail-module': 'ckbytes',
           'data-cell-detail-scan-field': 'true',
@@ -2521,14 +2542,14 @@ function CellDetailPanel({
           ) : null}
         </div>
       </section>
-      </ConstellationPanel>
+      </ConstellationPanel> : null}
 
       {/* CELL SCAN — the specimen, its own instrument. The window is the whole
         * of it: a head, then a 280 px square that is a hole through the DOM
         * onto the scene, because the braid renders on the MAIN canvas beneath
         * (`CellPortraitInset`). Nothing stands under it any more waiting for a
         * column to end, so there is no leftover for it to leave. */}
-      <ConstellationPanel
+      {!closedSlots.has('specimen') ? <ConstellationPanel
         slot="specimen"
         handles={panelHandles}
         title="CELL SCAN"
@@ -2543,8 +2564,8 @@ function CellDetailPanel({
             <DragAxisMark />
           </span>
         )}
-        onClose={onClose}
-        closeTitle="Close CELL SCAN · ESC closes the Cell"
+        onClose={() => closeSlot('specimen')}
+        closeTitle="Close CELL SCAN"
         windowed
         attributes={{ 'data-cell-detail-module': 'specimen' }}
       >
@@ -2559,6 +2580,7 @@ function CellDetailPanel({
         data-cell-portrait-frame
         style={{
           position: 'relative',
+          boxSizing: 'border-box',
           width: '100%',
           aspectRatio: '1 / 1',
           overflow: 'hidden',
@@ -2601,7 +2623,7 @@ function CellDetailPanel({
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
-      </ConstellationPanel>
+      </ConstellationPanel> : null}
 
       {/* CKBYTES, under the CELL SCAN square, for every Cell that holds a byte
         * (the user's directions of 2026-09-05: 「hex reader 应该总是展示，可以把
@@ -2653,7 +2675,7 @@ function CellDetailPanel({
         * by `readerOpen === (request.cellId === cell.id)`, and an always-on
         * zone has no such unmount. Without the key, a selection made on one
         * Cell would point at a byte of the next. */}
-      {hasBytes ? (
+      {hasBytes && !closedSlots.has('reader') ? (
         <ConstellationPanel
           slot="reader"
           handles={panelHandles}
@@ -2664,8 +2686,8 @@ function CellDetailPanel({
               字节元
             </span>
           )}
-          onClose={onClose}
-          closeTitle="Close CKBYTES · ESC closes the Cell"
+          onClose={() => closeSlot('reader')}
+          closeTitle="Close CKBYTES"
           attributes={{ 'data-cell-detail-module': 'reader' }}
         >
         <CellScanReaderPlate readingPx={readingLayout.heightPx}>
@@ -2697,10 +2719,11 @@ function CellDetailPanel({
         </ConstellationPanel>
       ) : null}
 
-      {/* Growth is strictly vertical: an arming trace appends a full-width
-        * row below both columns instead of splitting one, and the analysis
-        * plate's own geometry never moves. */}
-      {showTracePlate && traceReadout ? (
+      {/* An armed trace joins the same whole-group solve as the other
+        * instruments. It keeps its own height, close control and route while
+        * the solver may use a side column or a folded shelf to keep all four
+        * modules clear. */}
+      {showTracePlate && traceReadout && !closedSlots.has('trace') ? (
         <ConstellationPanel
           slot="trace"
           handles={panelHandles}
@@ -2711,8 +2734,8 @@ function CellDetailPanel({
               LIVE EVIDENCE
             </span>
           )}
-          onClose={onClose}
-          closeTitle="Close MEMORY TRACE · ESC closes the Cell"
+          onClose={() => closeSlot('trace')}
+          closeTitle="Close MEMORY TRACE"
           attributes={{ 'data-cell-detail-module': 'trace' }}
         >
           <section

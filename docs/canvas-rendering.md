@@ -327,9 +327,34 @@ portal scene through the existing renderer after the main scene, using a
 scissor rectangle and its own camera. This preserves the renderer's program
 cache and avoids the resource and compatibility costs of a second Canvas.
 
-The HUD and Cell inspection panel remain DOM siblings. A small R3F anchor
-projects the selected Cell into screen space so the DOM inspector can stay
-tethered without turning text and controls into scene textures.
+The HUD and Cell inspection instruments remain DOM siblings. A small R3F
+anchor projects the selected Cell into screen space so the DOM inspector can
+stay tethered without turning text and controls into scene textures. Selection
+does not move the camera.
+
+`CELL SCAN`, `SCAN·01`, `SCAN·02`, and the optional `SCAN·03` are independent
+plates with independent measured heights and close controls. A bounded pure
+geometry solve places the open set as one constellation, using side columns or
+folded shelves. It rejects candidates that cross the stage edge, another
+plate, the selection reticle, or the clamped Cell name chip. Scrollable text
+plates may receive a finite height; the specimen plate always preserves its
+full square window.
+
+The same result owns orthogonal leader paths, route labels, and the SVG mask.
+Leaders use ordered reticle outlets, avoid visible HUD remnants and all plate
+interiors, and do not cross each other outside the reticle. A label uses a
+clear route segment or appears once in its plate heading. The full-stage SVG
+draws leaders below the plates and masks every plate, the name chip, and
+visible HUD rectangles; this includes the transparent specimen window, so a
+line cannot show through the main-Canvas portrait.
+
+The frame writer locks valid plate coordinates while the projected Cell drifts
+and updates only the reticle, chip, routes, and portrait scissor origin. Stage,
+font or content measurements, open slots, and HUD geometry versions invalidate
+the relevant cached output. Closing one plate removes only its slot, mask, and
+leader; changing the selected Cell resets those per-Cell closures. The portrait
+continues to use the existing renderer, portal scene, scissor pass, and pointer
+capture path.
 
 ## 6. Visual Language
 

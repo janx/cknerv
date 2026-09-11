@@ -88,3 +88,34 @@ The GPU-independent golden contract lives at
 the representative geometry, encoded evidence, event frame, label placement,
 color, and typography tokens under ordinary `pnpm test`. Update it only with an
 intentional visual-language change and a matching browser review.
+
+## Production Cell Inspection Layout
+
+Review this behavior on the production dashboard route with a real snapshot;
+the proof Labs do not mount the production constellation. Wait for
+`#cknerv-startup` to disappear and `document.fonts.ready`, select a real Cell,
+then wait for the analysis instrument's `data-cellular-scan-state="locked"`.
+Record the Cell id, viewport, DPR, constellation status/template, reticle and
+name-chip rectangles, each open plate rectangle, route path, route-label
+rectangle, and the specimen window rectangle.
+
+Use the viewport set `1920×1080`, `1920×920`, `1440×900`, `1280×800`,
+`1180×663`, and `820×1078`. Cover a centered Cell and positions near each edge;
+repeat one desktop capture at DPR 2 and the tablet shapes in Safari/WebKit when
+those engines are available. The geometry must remain in CSS pixels. A valid
+capture has a full-stage leader SVG, no route through a plate, name, reticle,
+visible HUD remnant, or another leader, and no label over those obstacles.
+
+For long analysis content, scroll
+`[data-cell-panel-scroller="analysis"]` to the bottom and record its
+`scrollTop`, `clientHeight`, and `scrollHeight`. Confirm CAPACITY, DATA, and the
+provenance footer remain reachable. Close one plate and confirm the selection,
+other plates, portrait, and scan clock stay mounted while the removed leader
+and mask disappear. Resize the same selected Cell where possible so the test
+also covers cache invalidation without changing data or camera state.
+
+Inspect the specimen over a bright part of the galaxy: the portrait remains
+visible through its transparent square, while leader underlays, glows, dots,
+and labels do not enter it. HUD plates continue to dim per actual inspection
+panel rectangle. The specimen window must remain
+square and inside its plate at every compressed layout.

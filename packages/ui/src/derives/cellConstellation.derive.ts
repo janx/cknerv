@@ -1,85 +1,84 @@
-// Where the three instruments stand when they stand apart.
-//
-// The cell card was one grid holding CELL SCAN, SCAN·01 and SCAN·02 in three
-// tracks, and every complaint about it came from the same mechanism: side by
-// side, ONE column decides the height and the others are left with a
-// remainder. The remainder was a transparent hole enclosed by plates (21 % of
-// the bare card's box), or bordered emptiness under the reader's foot line
-// (58 % of that plate on a one-row payload), or — on an 11" iPad in landscape
-// Safari, where the docked row squeezed to 236 px — a 280 px specimen square
-// overflowing its row into the reader plate by 35.5 measured pixels.
-//
-// Unwelded there is no shared height to fight over: each instrument is exactly
-// as tall as what it has to say. What replaces the grid is this — a pure
-// placement over the stage, run once per frame, that puts each instrument in
-// its own quadrant around the cell and keeps all of them off the cell itself.
-//
-// Pure and scalar on purpose. It runs inside the frame loop sixty times a
-// second, so it may not allocate per call beyond the one result object the
-// caller owns and re-uses; and it lives here rather than in the overlay so a
-// test can drive every stage this instrument has ever been read on without a
-// browser.
-
 import type { HudOcclusionRect } from '../components/hudOcclusion';
 
-/** The four rooms around a cell. A quadrant is a DIAGONAL: the instrument's
- *  corner nearest the cell is the corner that sits on the keep-out ring, which
- *  is what makes the leader a straight run from the reticle to that corner and
- *  nothing else. */
 export type ConstellationQuadrant = 'tl' | 'tr' | 'bl' | 'br';
-
-/** The instruments, in the order they are placed. The order is a priority and
- *  not a preference: the widest and tallest surface picks its room first,
- *  because a register that has to settle for what three smaller panels left it
- *  is the one that ends up half off the stage. */
 export type ConstellationSlot = 'analysis' | 'specimen' | 'reader' | 'trace';
+export type ConstellationTemplate = 'split-left' | 'split-right' | 'expand-left'
+  | 'expand-right' | 'fold-above' | 'fold-below' | 'distributed';
 
 export const CONSTELLATION_ORDER: readonly ConstellationSlot[] = [
-  'analysis',
-  'specimen',
-  'reader',
-  'trace',
+  'analysis', 'specimen', 'reader', 'trace',
 ];
+export const CONSTELLATION_RETICLE_PX = 92;
+export const CONSTELLATION_MIN_GAP_PX = 16;
+export const CONSTELLATION_PREFERRED_GAP_PX = 24;
+export const CONSTELLATION_MIN_HEIGHT_PX = 168;
+export const CONSTELLATION_STACK_MIN_PX = 120;
+export const CONSTELLATION_HOLD_MARGIN_PX = 96;
+export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
+export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
 
 export interface ConstellationPanel {
   slot: ConstellationSlot;
   width: number;
   height: number;
+  labelWidth?: number;
+  labelHeight?: number;
 }
-
+export interface ConstellationPoint { x: number; y: number }
+export interface ConstellationLabelPlacement {
+  x: number; y: number; width: number; height: number; inPanel: boolean;
+}
+export interface ConstellationRoute {
+  points: readonly ConstellationPoint[];
+  label: ConstellationLabelPlacement;
+}
 export interface ConstellationPlacement {
   slot: ConstellationSlot;
   quadrant: ConstellationQuadrant;
-  x: number;
-  y: number;
-  width: number;
-  /** What the panel may actually stand in. Equal to its asked height wherever
-   *  the band allows; capped at the band where it does not, and the panel
-   *  scrolls inside the difference. Only the register ever reaches this. */
-  height: number;
-  /** The band could not hold this panel's content — it is showing part of
-   *  itself and owes the reader a scrollbar. */
+  x: number; y: number; width: number; height: number;
   capped: boolean;
+  route?: ConstellationRoute;
+}
+export interface ConstellationLayout {
+  status: 'normal' | 'compressed' | 'unavailable';
+  template: ConstellationTemplate | null;
+  placements: ConstellationPlacement[];
+  masks: HudOcclusionRect[];
+}
+interface Box { x: number; y: number; width: number; height: number }
+interface Candidate { template: ConstellationTemplate; placements: ConstellationPlacement[] }
+
+export interface ConstellationLock {
+  quadrant: { [slot: string]: ConstellationQuadrant | undefined };
+  template: ConstellationTemplate | null;
+  placements: { [slot: string]: ConstellationPlacement | undefined };
+  geometryKey: string;
+  anchorX: number;
+  anchorY: number;
+}
+export function createConstellationLock(): ConstellationLock {
+  return { quadrant: {}, template: null, placements: {}, geometryKey: '', anchorX: 0, anchorY: 0 };
+}
+export function resetConstellationLock(lock: ConstellationLock): void {
+  for (const key of Object.keys(lock.quadrant)) delete lock.quadrant[key];
+  for (const key of Object.keys(lock.placements)) delete lock.placements[key];
+  lock.template = null;
+  lock.geometryKey = '';
+  lock.anchorX = 0;
+  lock.anchorY = 0;
 }
 
-/**
- * The clear field the cell keeps, in px of radius.
- *
- * LAW 1, and the one guarantee the welded card could not make: the thing being
- * inspected is never covered by the thing inspecting it. A card is placed
- * BESIDE its cell and is routinely wider than the gap to it, so at 1920 the
- * 728 px dossier stands on the neighbourhood its own tether comes from.
- *
- * Scaled off the SHORT side of the stage, because the disc is a hole in the
- * composition and a hole is judged against the smaller dimension: 120 px is a
- * seventh of a 1080 desktop and would be a fifth of an iPad's 688 band. The
- * floor is the reticle plus a finger — a disc smaller than the mark inside it
- * is not a clear field, it is a halo.
- */
-export function constellationKeepoutPx(
-  stageWidth: number,
-  stageHeight: number,
-): number {
+export interface ConstellationInput {
+  anchorX: number; anchorY: number;
+  stageWidth: number; stageHeight: number;
+  panels: readonly ConstellationPanel[];
+  obstacles?: readonly HudOcclusionRect[];
+  reserved?: readonly HudOcclusionRect[];
+  safeTop: number; edge: number;
+  lock?: ConstellationLock;
+}
+
+export function constellationKeepoutPx(stageWidth: number, stageHeight: number): number {
   const short = Math.min(
     Number.isFinite(stageWidth) ? stageWidth : 0,
     Number.isFinite(stageHeight) ? stageHeight : 0,
@@ -87,717 +86,809 @@ export function constellationKeepoutPx(
   return Math.round(Math.max(92, Math.min(120, short * 0.16)));
 }
 
-/**
- * The reticle's own box.
- *
- * A fixed measure rather than the cell's screen footprint × some factor, which
- * is what a viewfinder normally is. Two reasons, and the second is the one
- * that decides it: a staged cell is a point sprite whose footprint is one to
- * three pixels at the overview pose (measured: the pick disc reads +1 px in x
- * and 0 in y), so a proportional reticle would be a proportional nothing; and
- * the mark is also the thing a finger aims at when it wants the cell back from
- * under a panel, so its floor is `TOUCH_TARGET_MIN_PX` and its resting size is
- * comfortably over it.
- */
-export const CONSTELLATION_RETICLE_PX = 92;
-
-/** What a second instrument in the same quadrant costs.
- *
- * Not a bar. Three panels want three rooms and a cell in a corner of the stage
- * has two, so exclusivity is a rule that cannot always be kept — and a rule
- * that cannot be kept becomes an overlap, which is the one thing this layout
- * exists to prevent. Sharing a quadrant is what the iPad landscape case does:
- * the specimen and the reader stack on the right of the cell, staggered by the
- * separation step so they still read as two instruments. */
-const CONSTELLATION_SHARE_PX = 90;
-
-/** What must stand between two instruments before they read as two. The user's
- *  direction was 「三个panel相互分开，不挨着」 — apart, NOT touching — and a
- *  seam of a few pixels is exactly what "touching" looks like: the eye reads
- *  two plates with a hairline between them as one plate with a rule in it. */
-export const CONSTELLATION_MIN_GAP_PX = 16;
-
-/** The least an instrument may be shrunk to before shrinking stops being an
- *  answer. A head, a rule and a few rows: under this a capped panel is a
- *  scrollbar with a title on it, and moving it somewhere else — even somewhere
- *  worse — is the better trade. */
-export const CONSTELLATION_MIN_HEIGHT_PX = 168;
-
-/** …and what it may be shrunk to when it is SHARING a room, where the
- *  alternative is not a shorter instrument but two in the same place. */
-export const CONSTELLATION_STACK_MIN_PX = 120;
-
-/** Which instruments may give height back.
- *
- *  The register and the reader scroll, so a short stage takes it out of them.
- *  The specimen may not: it is a window at a fixed scale, and a capped window
- *  is a clipped braid — the one thing 280 px of width is there to prevent. The
- *  trace is a ledger and scrolls like the rest. */
-function cappable(slot: ConstellationSlot): boolean {
-  return slot !== 'specimen';
-}
-
-/** How far past the keep-out ring an instrument's near corner is set, before
- *  anything is clamped or settled. Enough that the leader is a line and not a
- *  join. */
-const CONSTELLATION_LEADER_PX = 26;
-
-/** Quadrant preferences, as a penalty rather than a rule.
- *
- * The specimen wants to be up and the reader wants to be down — that is the
- * order the card is read in, and it is the order the scan walks: what the thing
- * is, then what it holds. But it is a preference and not a law, because a cell
- * near the top edge of the stage has no upper quadrant to give, and an
- * instrument placed by preference into a room it does not fit is worse than one
- * placed by room into a room it does. So it is worth a quarter of a fit.
- */
-function quadrantBias(slot: ConstellationSlot, quadrant: ConstellationQuadrant): number {
-  const top = quadrant === 'tl' || quadrant === 'tr';
-  if (slot === 'specimen') return top ? 0 : 0.25;
-  if (slot === 'reader') return top ? 0.25 : 0;
-  return 0;
-}
-
-interface Box { x: number; y: number; width: number; height: number }
-
-function intersectionArea(a: Box, b: Box): number {
+const clamp = (value: number, low: number, high: number): number => (
+  high < low ? low : Math.max(low, Math.min(high, value))
+);
+const boxOf = (p: ConstellationPlacement): Box => ({
+  x: p.x, y: p.y, width: p.width, height: p.height,
+});
+const rectBox = (r: HudOcclusionRect): Box => ({
+  x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top,
+});
+const rectOf = (b: Box): HudOcclusionRect => ({
+  left: b.x, top: b.y, right: b.x + b.width, bottom: b.y + b.height,
+});
+const intersectionArea = (a: Box, b: Box): number => {
   const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
   const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
   return w > 0 && h > 0 ? w * h : 0;
-}
-
-function obstacleArea(box: Box, obstacle: HudOcclusionRect): number {
-  return intersectionArea(box, {
-    x: obstacle.left,
-    y: obstacle.top,
-    width: obstacle.right - obstacle.left,
-    height: obstacle.bottom - obstacle.top,
-  });
-}
-
-/** How far the box reaches INTO the cell's clear field, in px. Zero is the
- *  only acceptable answer and the scorer treats it as such; the number matters
- *  only for choosing the least bad room when every room is bad. */
-function keepoutBite(box: Box, cx: number, cy: number, radius: number): number {
-  const nx = Math.max(box.x, Math.min(cx, box.x + box.width));
-  const ny = Math.max(box.y, Math.min(cy, box.y + box.height));
-  const distance = Math.hypot(nx - cx, ny - cy);
-  return distance >= radius ? 0 : radius - distance;
-}
-
-function clamp(value: number, low: number, high: number): number {
-  return high < low ? low : Math.max(low, Math.min(high, value));
-}
-
-export interface ConstellationLock {
-  /** The quadrant each instrument is standing in, held across frames.
-   *
-   *  ⚠️ MUTATED IN PLACE by the solver, exactly as `SceneInspectorPlacementLock`
-   *  is: this runs in the frame loop and a fresh object per frame is a fresh
-   *  allocation sixty times a second. The caller owns it and clears it when the
-   *  selection changes — a different cell may open anywhere on screen and owes
-   *  nobody the rooms the last one chose.
-   */
-  quadrant: { [slot: string]: ConstellationQuadrant | undefined };
-}
-
-export function createConstellationLock(): ConstellationLock {
-  return { quadrant: {} };
-}
-
-export function resetConstellationLock(lock: ConstellationLock): void {
-  for (const key of Object.keys(lock.quadrant)) lock.quadrant[key] = undefined;
-}
-
-/**
- * What a better room has to be worth before an instrument moves to it.
- *
- * The galaxy turns under the cell about half a pixel a frame, so every scored
- * quantity here drifts continuously and two quadrants' penalties cross
- * sooner or later. Without a margin the register changes corners mid-read,
- * which is the same failure `settleInspectorSide` exists for one rank up.
- * Measured against the drift: 96 px of penalty is about two minutes of turn at
- * the overview pose, and no ordinary re-frame gets near it.
- */
-export const CONSTELLATION_HOLD_MARGIN_PX = 96;
-
-export interface ConstellationInput {
-  anchorX: number;
-  anchorY: number;
-  stageWidth: number;
-  stageHeight: number;
-  /** The instruments to place, in any order — `CONSTELLATION_ORDER` decides
-   *  who picks first, not the caller's array. */
-  panels: readonly ConstellationPanel[];
-  obstacles?: readonly HudOcclusionRect[];
-  /** Boxes that are not rails and not instruments, and that nothing may stand
-   *  on: the name chip under the reticle is the whole population today.
-   *
-   *  ⚠️ NOT AN OBSTACLE. A rail is worth `area ÷ 900` — a 131 × 25 crossing
-   *  costs 3.6 px of regret, which never moved anything, and the chip carrying
-   *  the Cell's own id spent the first live run printed across the reader's
-   *  header. A reserved box is separated from exactly as another instrument is,
-   *  and scored as heavily. */
-  reserved?: readonly HudOcclusionRect[];
-  /** The HUD's own two reservations, handed in rather than imported so the
-   *  derive stays free of the component that owns them. */
-  safeTop: number;
-  edge: number;
-  /** Held quadrants, mutated in place. Omit for a one-shot answer. */
-  lock?: ConstellationLock;
-}
-
-interface SettleContext {
-  anchorX: number;
-  anchorY: number;
-  keepout: number;
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-  placed: readonly ConstellationPlacement[];
-  reserved: readonly Box[];
-}
-
-/**
- * Bring one box to rest: inside the stage, outside the cell's field, off every
- * instrument already standing.
- *
- * A fixpoint rather than one pass of each, because the three constraints move
- * each other — a box pushed off a neighbour lands outside the stage, the clamp
- * puts it back, and back is onto the neighbour. Six rounds is well past what
- * any stage this instrument runs on needs (measured: two, worst case, at
- * 820 × 1103 with three panels), and the loop exits the moment nothing moved.
- *
- * ⭐ THE KEEP-OUT IS CLEARED ON ONE AXIS AT A TIME, by the WHOLE radius. A box
- * placed on the diagonal clears the disc by `reach × √2` and needs none of
- * this; a box that has since been clamped or folded is somewhere the diagonal
- * never put it, and the only escape that is true regardless of where the other
- * axis ended up is to take the box fully past the disc in one of them.
- */
-function settleBox(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  quadrant: ConstellationQuadrant,
-  ctx: SettleContext,
-): { x: number; y: number } {
-  const left = quadrant === 'tl' || quadrant === 'bl';
-  const above = quadrant === 'tl' || quadrant === 'tr';
-  let px = x;
-  let py = y;
-  for (let round = 0; round < 6; round += 1) {
-    let moved = false;
-    const cx = clamp(px, ctx.minX, ctx.maxX - width);
-    const cy = clamp(py, ctx.minY, ctx.maxY - height);
-    if (cx !== px || cy !== py) { px = cx; py = cy; moved = true; }
-
-    const box: Box = { x: px, y: py, width, height };
-    if (keepoutBite(box, ctx.anchorX, ctx.anchorY, ctx.keepout) > 0.5) {
-      const wantX = left
-        ? ctx.anchorX - ctx.keepout - width
-        : ctx.anchorX + ctx.keepout;
-      const wantY = above
-        ? ctx.anchorY - ctx.keepout - height
-        : ctx.anchorY + ctx.keepout;
-      const fitsX = wantX >= ctx.minX && wantX + width <= ctx.maxX;
-      const fitsY = wantY >= ctx.minY && wantY + height <= ctx.maxY;
-      const costX = Math.abs(wantX - px);
-      const costY = Math.abs(wantY - py);
-      const takeX = fitsX && (!fitsY || costX <= costY);
-      if (takeX) { px = wantX; moved = true; } else if (fitsY) { py = wantY; moved = true; } else if (costX <= costY) { px = wantX; moved = true; } else { py = wantY; moved = true; }
-    }
-
-    for (const other of [...ctx.placed, ...ctx.reserved]) {
-      const gap = CONSTELLATION_MIN_GAP_PX;
-      const oL = other.x - gap;
-      const oT = other.y - gap;
-      const oR = other.x + other.width + gap;
-      const oB = other.y + other.height + gap;
-      if (px >= oR || px + width <= oL || py >= oB || py + height <= oT) continue;
-      // ⭐ FOUR WAYS OUT, TRIED IN THE PANEL'S OWN DIRECTION FIRST.
-      //
-      // The cheapest escape is the wrong rule and it deadlocks: a reader in the
-      // upper-right of a cell at (400, 300) is cheapest to push LEFT, which
-      // puts the cell inside its box, which the keep-out then pushes right
-      // again — 26,730 px² of overlap after six rounds of that. A panel leans
-      // away from the cell by construction, so the first thing to try is
-      // further that way, and the last thing is back across the cell.
-      const outward: Array<[number, number]> = left
-        ? [[oL - width, py], [px, above ? oT - height : oB], [px, above ? oB : oT - height], [oR, py]]
-        : [[oR, py], [px, above ? oT - height : oB], [px, above ? oB : oT - height], [oL - width, py]];
-      const holds = (nx: number, ny: number) => nx >= ctx.minX && nx + width <= ctx.maxX
-        && ny >= ctx.minY && ny + height <= ctx.maxY;
-      let pick: [number, number] | null = null;
-      for (const option of outward) {
-        if (!holds(option[0], option[1])) continue;
-        if (keepoutBite(
-          { x: option[0], y: option[1], width, height },
-          ctx.anchorX, ctx.anchorY, ctx.keepout,
-        ) > 0.5) continue;
-        pick = option;
-        break;
-      }
-      if (!pick) for (const option of outward) if (holds(option[0], option[1])) { pick = option; break; }
-      if (!pick) pick = outward[0];
-      px = pick[0]; py = pick[1]; moved = true;
-    }
-    if (!moved) break;
-  }
-  // ⚠️ THE STAGE HAS THE LAST WORD, AND IT HAS TO BE SAID HERE.
-  // Both escapes above may deliberately step outside the stage — the keep-out
-  // push takes the cheaper violation when neither axis fits, the separation
-  // takes the cheapest option when none of the four holds — and each relies on
-  // the NEXT round's clamp to bring it back. On the last round there is no next
-  // round, and a 440 px register beside a cell at x=410 on an 820 px stage came
-  // out at x=−150: half off the screen, which is worse than any overlap it was
-  // escaping.
-  let fx = clamp(px, ctx.minX, ctx.maxX - width);
-  let fy = clamp(py, ctx.minY, ctx.maxY - height);
-
-  // …and that clamp can put the cell back inside the box, which is the one
-  // thing this layout exists to prevent. Measured: a reader clamped to the
-  // stage edge on an iPad came to rest exactly `reach` from the cell — the
-  // signature of a box that now SPANS the anchor in one axis, so its nearest
-  // point is the anchor's own row. Try each axis's full-radius escape against
-  // the clamp and keep whichever bites least; the scorer sees what is left and
-  // can still prefer another room.
-  if (keepoutBite({ x: fx, y: fy, width, height }, ctx.anchorX, ctx.anchorY, ctx.keepout) > 0.5) {
-    const wantX = clamp(
-      left ? ctx.anchorX - ctx.keepout - width : ctx.anchorX + ctx.keepout,
-      ctx.minX,
-      ctx.maxX - width,
-    );
-    const wantY = clamp(
-      above ? ctx.anchorY - ctx.keepout - height : ctx.anchorY + ctx.keepout,
-      ctx.minY,
-      ctx.maxY - height,
-    );
-    let bestBite = keepoutBite({ x: fx, y: fy, width, height }, ctx.anchorX, ctx.anchorY, ctx.keepout);
-    for (const candidate of [{ x: wantX, y: fy }, { x: fx, y: wantY }]) {
-      const bite = keepoutBite(
-        { x: candidate.x, y: candidate.y, width, height },
-        ctx.anchorX, ctx.anchorY, ctx.keepout,
-      );
-      if (bite < bestBite - 0.01) { bestBite = bite; fx = candidate.x; fy = candidate.y; }
-    }
-  }
-  return { x: fx, y: fy };
-}
-
-/**
- * One pass of the walk, at one squeeze.
- *
- * Greedy over `CONSTELLATION_ORDER`: each instrument scores all
- * four quadrants, takes the best one still free, and becomes an obstacle for
- * everyone after it. Greedy rather than exhaustive because there are at most
- * four panels and four rooms and it runs in a frame — and because a STABLE
- * answer matters more than an optimal one, which is what the lock is for.
- *
- * The score is a penalty, and every term is in the same currency (pixels of
- * regret) so they can be added:
- *
- *   · reaching into the cell's clear field, ×6 — Law 1, and the reason the
- *     whole layout exists
- *   · standing on another instrument, area ÷ 260 — what a fold could not undo
- *   · standing on a HUD rail, area ÷ 900 — allowed, and the rails dim for it,
- *     but it is the last thing to spend
- *   · not fitting the room at all, the shortfall in either axis
- *   · the slot's own bias, in fractions of the panel's own measure
- */
-/** The order that puts the instrument with the LEAST freedom first.
- *
- *  The default is widest-first, which is right when there is room: a register
- *  that takes what three smaller panels left it ends up half off the stage. On
- *  a stage with no room it is exactly wrong — the specimen cannot shrink and
- *  cannot be clipped, so it is the one whose seat is hardest to find, and going
- *  third it gets whatever is left. Measured at 1180 × 663 with the cell at
- *  (330, 440): every clean seat for the specimen needed the register to move
- *  too, which no local pass can do. */
-const CONSTELLATION_RIGID_FIRST: readonly ConstellationSlot[] = [
-  'specimen',
-  'analysis',
-  'reader',
-  'trace',
-];
-
-function walkOnce(
-  input: ConstellationInput,
-  squeeze: number,
-  lock: ConstellationLock | undefined,
-  order: readonly ConstellationSlot[] = CONSTELLATION_ORDER,
-): ConstellationPlacement[] {
-  const {
-    anchorX, anchorY, stageWidth, stageHeight, panels, safeTop, edge,
-  } = input;
-  const obstacles = input.obstacles ?? [];
-  const reserved: Box[] = (input.reserved ?? []).map((claim) => ({
-    x: claim.left,
-    y: claim.top,
-    width: claim.right - claim.left,
-    height: claim.bottom - claim.top,
-  }));
-  const keepout = constellationKeepoutPx(stageWidth, stageHeight);
-  const reach = keepout * Math.SQRT1_2 + CONSTELLATION_LEADER_PX;
-  const band = Math.max(0, stageHeight - safeTop - edge);
-  const placed: ConstellationPlacement[] = [];
-  const occupancy: { [quadrant: string]: number } = {};
-  /** Height already spoken for in each room, so the second instrument in one
-   *  asks for what is LEFT rather than for the whole of it. Without this the
-   *  two share a quadrant, both cap to the full room, and stand on each other
-   *  — 70,278 px² of it, measured live on an 11" iPad in landscape. */
-  const spent: { [quadrant: string]: number } = {};
-
-  const ordered = order
+};
+const expanded = (b: Box, by: number): Box => ({
+  x: b.x - by, y: b.y - by, width: b.width + by * 2, height: b.height + by * 2,
+});
+const nearestDistance = (b: Box, x: number, y: number): number => Math.hypot(
+  clamp(x, b.x, b.x + b.width) - x,
+  clamp(y, b.y, b.y + b.height) - y,
+);
+const quadrantFor = (b: Box, x: number, y: number): ConstellationQuadrant => {
+  const left = b.x + b.width / 2 < x;
+  const top = b.y + b.height / 2 < y;
+  return `${top ? 't' : 'b'}${left ? 'l' : 'r'}` as ConstellationQuadrant;
+};
+const orderedPanels = (panels: readonly ConstellationPanel[]): ConstellationPanel[] => (
+  CONSTELLATION_ORDER
     .map((slot) => panels.find((panel) => panel.slot === slot))
-    .filter((panel): panel is ConstellationPanel => panel !== undefined);
-
-  for (const panel of ordered) {
-    const width = panel.width;
-    const mayCap = cappable(panel.slot);
-    const ctx: SettleContext = {
-      anchorX,
-      anchorY,
-      keepout,
-      minX: edge,
-      minY: safeTop,
-      maxX: stageWidth - edge,
-      maxY: stageHeight - edge,
-      placed,
-      reserved,
-    };
-    let best: ConstellationPlacement | null = null;
-    let bestPenalty = Number.POSITIVE_INFINITY;
-    const held = lock?.quadrant[panel.slot];
-    let heldPenalty = Number.POSITIVE_INFINITY;
-    let heldPlacement: ConstellationPlacement | null = null;
-
-    for (const quadrant of ['tl', 'tr', 'bl', 'br'] as const) {
-      const left = quadrant === 'tl' || quadrant === 'bl';
-      const above = quadrant === 'tl' || quadrant === 'tr';
-      // ⚠️ THE ROOM IS MEASURED FROM THE FULL RADIUS, NOT FROM THE REACH.
-      //
-      // `reach` is the DIAGONAL seat — a corner set there clears the disc by
-      // reach × √2. But a panel wider than either side of the cell gets clamped
-      // horizontally until it spans the anchor, and then its nearest point is
-      // the anchor's own row: a 440 px register beside a cell at x=410 on an
-      // 820 px stage came to rest exactly `reach` from the cell, 9 px inside a
-      // 120 px field, with no horizontal escape left to take. Sizing the room
-      // by the radius is what lets the vertical clearance alone be enough.
-      const roomX = left ? anchorX - keepout - edge : stageWidth - edge - anchorX - keepout;
-      // ⭐ A ROOM THAT CLEARS SIDEWAYS MAY SPAN THE CELL'S ROW.
-      //
-      // A quadrant is a diagonal, and requiring both axes of it is stricter
-      // than the field itself is: a panel entirely to the left of the disc
-      // never touches it, whatever its height. Requiring both cost the register
-      // half the screen — with a cell at 960 × 540 on a 1920 stage, the corner
-      // rooms are 316 above and 406 below against a 962 px band, so a 660 px
-      // dossier scrolled a third of itself away with the whole band free. The
-      // BESIDE composition, which is what the old card did, recovered.
-      const spans = roomX >= width;
-      const roomY = (spans
-        ? band
-        : (above ? anchorY - keepout - safeTop : stageHeight - edge - anchorY - keepout))
-        - (spent[quadrant] ?? 0);
-      // A panel that may scroll asks its room for what it can have rather than
-      // for what it wants. A panel that may not asks for what it is.
-      const floor = (spent[quadrant] ?? 0) > 0
-        ? CONSTELLATION_STACK_MIN_PX
-        : CONSTELLATION_MIN_HEIGHT_PX;
-      const asked = mayCap
-        ? Math.max(floor, panel.height * squeeze)
-        : panel.height;
-      const height = mayCap
-        ? Math.max(floor, Math.min(asked, band, Math.max(roomY, 0)))
-        : Math.min(asked, band);
-      const capped = height < panel.height - 0.5;
-      const shortfall = Math.max(0, width - roomX) + Math.max(0, height - roomY);
-      const seat = settleBox(
-        left ? anchorX - reach - width : anchorX + reach,
-        above ? anchorY - reach - height : anchorY + reach,
-        width,
-        height,
-        quadrant,
-        ctx,
-      );
-      const box: Box = { x: seat.x, y: seat.y, width, height };
-      // ⭐ THE FIELD IS A PREFERENCE WITH A HARD CORE; A NEIGHBOUR IS NEVER
-      // STOOD ON.
-      //
-      // These two were the wrong way round. A 120 px bite cost 720 and a
-      // 68,544 px² overlap cost 264, so on a stage where every room was bad the
-      // walk chose to put two instruments in the same place rather than let one
-      // reach into the cell's field — and on an 820 px portrait stage with the
-      // cell high, every room IS bad: 46 px above it, and 276 either side
-      // against a 280 px specimen.
-      //
-      // The trade the design actually wants is the other one. The disc is a
-      // clear FIELD, not the cell: a bite at its edge leaves the ~2 px sprite
-      // and its reticle untouched, and a reader can still see what it selected.
-      // Two instruments in one place is unreadable at any depth. So overlap is
-      // weighed six times heavier, and the core — a bite deep enough to reach
-      // the reticle itself — is what stays effectively absolute.
-      const bite = keepoutBite(box, anchorX, anchorY, keepout);
-      const core = Math.max(0, bite - (keepout - CONSTELLATION_RETICLE_PX / 2 - 8));
-      // ⚠️ AND SHRINKING HAS TO COST, OR THE SCORER STOPS PREFERRING ROOM.
-      //
-      // `shortfall` is what a panel could not fit — and a capped panel always
-      // fits, by construction, so capping silently made every quadrant look
-      // perfect. Measured at 1920: a register that had 660 px of content and a
-      // 962 px band chose an upper room with 400 and scrolled a third of
-      // itself away, with a lower room standing empty. What was given up is
-      // the thing to weigh.
-      let penalty = shortfall
-        + Math.max(0, panel.height - height) * 0.6
-        + quadrantBias(panel.slot, quadrant) * (width + height) * 0.25
-        + (occupancy[quadrant] ?? 0) * CONSTELLATION_SHARE_PX
-        + bite * 6 + core * 1200;
-      for (const other of placed) penalty += intersectionArea(box, other) / 40;
-      for (const claim of reserved) penalty += intersectionArea(box, claim) / 40;
-      for (const obstacle of obstacles) penalty += obstacleArea(box, obstacle) / 900;
-      const placement: ConstellationPlacement = {
-        slot: panel.slot, quadrant, x: seat.x, y: seat.y, width, height, capped,
-      };
-      if (quadrant === held) { heldPenalty = penalty; heldPlacement = placement; }
-      if (penalty < bestPenalty) { bestPenalty = penalty; best = placement; }
-    }
-
-    // Hysteresis: the room an instrument is already standing in keeps it until
-    // a better one is better by a real margin.
-    if (heldPlacement && bestPenalty > heldPenalty - CONSTELLATION_HOLD_MARGIN_PX) {
-      best = heldPlacement;
-    }
-    if (!best) {
-      // Unreachable: four quadrants are always scored. Belt and braces so the
-      // walk cannot drop an instrument on the floor if that ever changes.
-      const fallback = Math.min(panel.height, band);
-      const seat = settleBox(anchorX + reach, anchorY + reach, width, fallback, 'br', ctx);
-      best = {
-        slot: panel.slot,
-        quadrant: 'br',
-        ...seat,
-        width,
-        height: fallback,
-        capped: fallback < panel.height - 0.5,
-      };
-    }
-    occupancy[best.quadrant] = (occupancy[best.quadrant] ?? 0) + 1;
-    spent[best.quadrant] = (spent[best.quadrant] ?? 0)
-      + best.height + CONSTELLATION_MIN_GAP_PX;
-    placed.push(best);
-  }
-  return placed;
+    .filter((panel): panel is ConstellationPanel => panel !== undefined)
+);
+const cappable = (slot: ConstellationSlot): boolean => slot !== 'specimen';
+function panelHeight(panel: ConstellationPanel, squeeze: number): number {
+  if (!cappable(panel.slot)) return panel.height;
+  const floor = Math.min(panel.height, CONSTELLATION_STACK_MIN_PX);
+  return Math.min(panel.height, Math.max(floor, panel.height * squeeze));
+}
+function placement(panel: ConstellationPanel, height: number, x: number, y: number,
+  ax: number, ay: number): ConstellationPlacement {
+  const base = { x, y, width: panel.width, height };
+  return {
+    slot: panel.slot, quadrant: quadrantFor(base, ax, ay), ...base,
+    capped: height < panel.height - 0.5,
+  };
 }
 
-/**
- * The last word on the one thing that may never happen.
- *
- * Even after the retries a stage can leave a sliver — measured live on an
- * 820 px portrait stage, 588 px² of a specimen's right edge under a reader's
- * left, three and a half pixels of it. Every scoring term in the walk is a
- * preference, and a preference cannot promise. This can: each pair that still
- * overlaps is prised apart along the axis it overlaps LEAST, moving the later
- * instrument, clamped to the stage.
- *
- * It may cost a few pixels of the cell's field, and that is the trade this
- * layout has already made everywhere else — a bite at the edge of a 120 px disc
- * leaves the sprite and its reticle untouched; two instruments in one place are
- * unreadable at any depth.
- */
-function prise(placed: ConstellationPlacement[], input: ConstellationInput): void {
-  const minX = input.edge;
-  const minY = input.safeTop;
-  const maxX = input.stageWidth - input.edge;
-  const maxY = input.stageHeight - input.edge;
-  const core = CONSTELLATION_RETICLE_PX / 2 + 8;
-  const cx = input.anchorX;
-  const cy = input.anchorY;
+function templateForSides(sides: readonly string[]): ConstellationTemplate {
+  const set = new Set(sides);
+  if (set.size <= 2 && set.has('l') && set.has('r')) {
+    return sides[0] === 'l' ? 'split-left' : 'split-right';
+  }
+  if (set.size === 1 && set.has('t')) return 'fold-above';
+  if (set.size === 1 && set.has('b')) return 'fold-below';
+  return 'distributed';
+}
 
-  const clash = (box: Box, self: ConstellationPlacement): number => {
-    let total = 0;
-    for (const other of placed) {
-      if (other === self) continue;
-      total += intersectionArea(box, other);
+/** One bounded whole-group candidate. L/R are vertical columns and T/B use
+ * compact horizontal shelves. At four panels the exhaustive set has only 256
+ * members, including mixed shelf-and-column layouts. */
+function distributedCandidate(
+  input: ConstellationInput,
+  panels: readonly ConstellationPanel[],
+  sides: readonly ('l' | 'r' | 't' | 'b')[],
+  squeeze: number,
+  gap: number,
+): Candidate | null {
+  const groups = { l: [] as ConstellationPanel[], r: [] as ConstellationPanel[],
+    t: [] as ConstellationPanel[], b: [] as ConstellationPanel[] };
+  panels.forEach((panel, index) => groups[sides[index]].push(panel));
+  const out: ConstellationPlacement[] = [];
+  const minY = input.safeTop; const maxY = input.stageHeight - input.edge;
+  const minX = input.edge; const maxX = input.stageWidth - input.edge;
+  const coreGap = (input.stageWidth >= 1280
+    ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
+    : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX) + gap;
+  const reserved = input.reserved ?? [];
+  for (const side of ['l', 'r'] as const) {
+    const group = groups[side];
+    if (group.length === 0) continue;
+    const columnWidth = Math.max(...group.map((panel) => panel.width));
+    const heights = group.map((panel) => panelHeight(panel, squeeze));
+    const total = heights.reduce((sum, value) => sum + value, 0) + gap * (group.length - 1);
+    if (total > maxY - minY + 0.5) return null;
+    let y = clamp(input.anchorY - total / 2, minY, maxY - total);
+    let columnEdge = side === 'l'
+      ? input.anchorX - coreGap - columnWidth
+      : input.anchorX + coreGap;
+    for (const claim of reserved) {
+      const crossesColumn = columnEdge < claim.right && columnEdge + columnWidth > claim.left;
+      if (!crossesColumn || y >= claim.bottom || y + total <= claim.top) continue;
+      const shiftedEdge = side === 'l'
+        ? claim.left - gap - columnWidth
+        : claim.right + gap;
+      if (shiftedEdge >= minX - 0.5 && shiftedEdge + columnWidth <= maxX + 0.5) {
+        columnEdge = shiftedEdge;
+        continue;
+      }
+      const above = claim.top - gap - total;
+      const below = claim.bottom + gap;
+      const aboveFits = above >= minY; const belowFits = below + total <= maxY;
+      if (aboveFits && (!belowFits || Math.abs(above - y) <= Math.abs(below - y))) y = above;
+      else if (belowFits) y = below;
     }
-    return total;
-  };
-  /** Overlap first, the cell's mark second, distance last — the same ladder
-   *  the walk's own scorer uses, applied to the pass that has the last word. */
-  const score = (box: Box, self: ConstellationPlacement, from: Box): number => (
-    clash(box, self) * 1000
-    + keepoutBite(box, cx, cy, core) * 4000
-    + Math.abs(box.x - from.x) + Math.abs(box.y - from.y)
-  );
-  const take = (target: ConstellationPlacement, options: readonly Box[]): boolean => {
-    const from: Box = { x: target.x, y: target.y, width: target.width, height: target.height };
-    let best = from;
-    let least = score(from, target, from);
-    for (const option of options) {
-      const box: Box = {
-        x: clamp(option.x, minX, maxX - target.width),
-        y: clamp(option.y, minY, maxY - target.height),
-        width: target.width,
-        height: target.height,
-      };
-      const value = score(box, target, from);
-      if (value < least - 0.5) { least = value; best = box; }
+    const columnXs = group.map((panel) => side === 'l'
+      ? columnEdge + columnWidth - panel.width
+      : columnEdge);
+    for (let index = 0; index < group.length; index += 1) {
+      const panel = group[index];
+      const x = columnXs[index];
+      if (x < minX - 0.5 || x + panel.width > maxX + 0.5) return null;
+      out.push(placement(panel, heights[index], x, y, input.anchorX, input.anchorY));
+      y += heights[index] + gap;
     }
-    if (best === from) return false;
-    target.x = best.x;
-    target.y = best.y;
-    return true;
-  };
-
-  for (let round = 0; round < 6; round += 1) {
-    let moved = false;
-
-    // ⚠️ THE CELL'S MARK FIRST, AND FOR EVERY INSTRUMENT — NOT JUST THE LATER
-    // OF A PAIR. Prising apart only ever moved the second of two, so an
-    // instrument the WALK had already put on the cell could never be rescued:
-    // measured live on an 1180 × 663 stage, a specimen six pixels from the cell
-    // it was magnifying, with no overlap anywhere for the pass to notice.
-    for (const target of placed) {
-      const box: Box = { x: target.x, y: target.y, width: target.width, height: target.height };
-      if (keepoutBite(box, cx, cy, core) <= 0.5) continue;
-      // Four axis escapes and four corners. Sliding along ONE axis is how a
-      // panel escapes the mark straight into a neighbour and is pushed back;
-      // a corner is a move to somewhere genuinely clear, and on a stage where
-      // three instruments all have to live on one side of the cell it is the
-      // only escape that exists.
-      const left = cx - core - target.width;
-      const right = cx + core;
-      const above = cy - core - target.height;
-      const below = cy + core;
-      moved = take(target, [
-        { x: left, y: target.y, width: 0, height: 0 },
-        { x: right, y: target.y, width: 0, height: 0 },
-        { x: target.x, y: above, width: 0, height: 0 },
-        { x: target.x, y: below, width: 0, height: 0 },
-        { x: left, y: above, width: 0, height: 0 },
-        { x: right, y: above, width: 0, height: 0 },
-        { x: left, y: below, width: 0, height: 0 },
-        { x: right, y: below, width: 0, height: 0 },
-      ]) || moved;
+  }
+  for (const side of ['t', 'b'] as const) {
+    const group = groups[side];
+    if (group.length === 0) continue;
+    const rows = shelfRows(group, maxX - minX, gap);
+    if (!rows) return null;
+    const rowHeights = rows.map((row) => Math.max(
+      ...row.map((panel) => panelHeight(panel, squeeze)),
+    ));
+    const totalHeight = rowHeights.reduce((sum, height) => sum + height, 0)
+      + gap * Math.max(0, rows.length - 1);
+    const topEdge = Math.min(input.anchorY - coreGap,
+      ...reserved.map((box) => box.top - gap));
+    const bottomEdge = Math.max(input.anchorY + coreGap,
+      ...reserved.map((box) => box.bottom + gap));
+    const hasSideColumn = groups.l.length > 0 || groups.r.length > 0;
+    let y = side === 't'
+      ? (hasSideColumn ? minY : topEdge - totalHeight)
+      : (hasSideColumn ? maxY - totalHeight : bottomEdge);
+    if (y < minY - 0.5 || y + totalHeight > maxY + 0.5) return null;
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex]; const rowHeight = rowHeights[rowIndex];
+      const rowWidth = row.reduce((sum, panel) => sum + panel.width, 0)
+        + gap * Math.max(0, row.length - 1);
+      let x = clamp(input.anchorX - rowWidth / 2, minX, maxX - rowWidth);
+      for (const panel of row) {
+        const height = panelHeight(panel, squeeze);
+        out.push(placement(panel, height, x, y + rowHeight - height,
+          input.anchorX, input.anchorY));
+        x += panel.width + gap;
+      }
+      y += rowHeight + gap;
     }
-
-    // …then the pairs, moving the later one, judged by what each escape leaves.
-    for (let i = 0; i < placed.length; i += 1) {
-      for (let j = i + 1; j < placed.length; j += 1) {
-        const a = placed[i];
-        const b = placed[j];
-        const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
-        const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
-        if (ox <= 0 || oy <= 0) continue;
-        moved = take(b, [
-          { x: a.x - b.width, y: b.y, width: 0, height: 0 },
-          { x: a.x + a.width, y: b.y, width: 0, height: 0 },
-          { x: b.x, y: a.y - b.height, width: 0, height: 0 },
-          { x: b.x, y: a.y + a.height, width: 0, height: 0 },
-        ]) || moved;
+  }
+  // A mixed layout may overlap a shelf in y while remaining clear in x. Move
+  // each complete side column to the nearest channel formed by the individual
+  // shelf edges instead of reserving the shelf's full-height bounding box.
+  for (const side of ['l', 'r'] as const) {
+    const slots = new Set(groups[side].map((panel) => panel.slot));
+    if (slots.size === 0) continue;
+    const column = out.filter((panel) => slots.has(panel.slot));
+    const others = out.filter((panel) => !slots.has(panel.slot));
+    const firstX = Math.min(...column.map((panel) => panel.x));
+    const lastRight = Math.max(...column.map((panel) => panel.x + panel.width));
+    const columnWidth = lastRight - firstX;
+    const firstY = Math.min(...column.map((panel) => panel.y));
+    const lastBottom = Math.max(...column.map((panel) => panel.y + panel.height));
+    const columnHeight = lastBottom - firstY;
+    const validAt = (candidateX: number, candidateY: number) => {
+      if (candidateX < minX - 0.5 || candidateX + columnWidth > maxX + 0.5) return false;
+      if (candidateY < minY - 0.5 || candidateY + columnHeight > maxY + 0.5) return false;
+      return column.every((panel) => {
+        const moved = {
+          ...boxOf(panel),
+          x: panel.x + candidateX - firstX,
+          y: panel.y + candidateY - firstY,
+        };
+        return reserved.every((claim) => intersectionArea(moved, rectBox(claim)) === 0)
+          && others.every((other) => intersectionArea(
+            expanded(moved, gap / 2), expanded(boxOf(other), gap / 2),
+          ) <= 0.25);
+      });
+    };
+    if (validAt(firstX, firstY)) continue;
+    const xCandidates = [firstX, minX, maxX - columnWidth, ...others.flatMap((panel) => [
+      panel.x - gap - columnWidth, panel.x + panel.width + gap,
+    ])].filter((value, index, values) => values.indexOf(value) === index);
+    const yCandidates = [firstY, minY, maxY - columnHeight, ...others.flatMap((panel) => [
+      panel.y - gap - columnHeight, panel.y + panel.height + gap,
+    ])].filter((value, index, values) => values.indexOf(value) === index);
+    const positions = xCandidates.flatMap((x) => yCandidates.map((y) => ({ x, y })))
+      .sort((a, b) => Math.hypot(a.x + columnWidth / 2 - input.anchorX,
+        a.y + columnHeight / 2 - input.anchorY)
+        - Math.hypot(b.x + columnWidth / 2 - input.anchorX,
+          b.y + columnHeight / 2 - input.anchorY));
+    const next = positions.find(({ x, y }) => validAt(x, y));
+    if (next) {
+      for (const panel of column) {
+        panel.x += next.x - firstX;
+        panel.y += next.y - firstY;
       }
     }
-    if (!moved) break;
   }
+  out.sort((a, b) => CONSTELLATION_ORDER.indexOf(a.slot) - CONSTELLATION_ORDER.indexOf(b.slot));
+  return { template: templateForSides(sides), placements: out };
 }
 
-/** How much of the walk's answer is two instruments in the same place. */
-function overlapArea(placed: readonly ConstellationPlacement[]): number {
-  let total = 0;
-  for (let i = 0; i < placed.length; i += 1) {
-    for (let j = i + 1; j < placed.length; j += 1) {
-      total += intersectionArea(placed[i], placed[j]);
-    }
-  }
-  return total;
-}
-
-/**
- * Place every instrument, and say where each one went.
- *
- * ⭐ THE WALK IS GREEDY, SO IT NEEDS A WAY TO TAKE BACK.
- *
- * Each instrument picks the best room still free and becomes an obstacle for
- * everyone after it — stable, cheap, and unable to undo a choice that turns out
- * to have been too generous. On an 820 px portrait stage with the cell high in
- * it, the register takes 612 px of the only usable room and the reader, placed
- * third with 46 px left, has nowhere to be: 48,960 px² of overlap, and no
- * amount of scoring inside one pass can fix it, because the mistake was made
- * before the reader was considered.
- *
- * So the pass is repeated with the shrinkable instruments asking for less — two
- * retries, at 60 % and 40 % of what they wanted — and the first clean answer
- * wins; if none is clean, the least-overlapping one does. That is the sentence
- * this layout is built on, made operational: shrink what may shrink rather than
- * standing on your neighbour. The specimen is never in the squeeze, because a
- * capped window is a clipped braid.
- */
-export function constellationPlacement(
+function expandCandidate(
   input: ConstellationInput,
-): ConstellationPlacement[] {
-  const core = CONSTELLATION_RETICLE_PX / 2 + 8;
-  /** What is wrong with an answer, in one number: two instruments in one place
-   *  first, an instrument over the cell's mark second. */
-  const badness = (placed: readonly ConstellationPlacement[]): number => {
-    let total = overlapArea(placed) * 1000;
-    for (const panel of placed) {
-      total += keepoutBite(panel, input.anchorX, input.anchorY, core) * 4000;
+  panels: readonly ConstellationPanel[],
+  direction: 'left' | 'right',
+  squeeze: number,
+  gap: number,
+): Candidate | null {
+  const near = panels.filter((panel) => panel.slot === 'specimen' || panel.slot === 'reader');
+  const far = panels.filter((panel) => panel.slot === 'analysis' || panel.slot === 'trace');
+  if (near.length === 0 || far.length === 0) return null;
+  const keepout = input.stageWidth >= 1280
+    ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
+    : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
+  const reserved = input.reserved ?? [];
+  const columns = [near, far];
+  const widths = columns.map((column) => Math.max(...column.map((panel) => panel.width)));
+  const nearX = direction === 'right'
+    ? Math.max(input.anchorX + keepout + gap, ...reserved.map((box) => box.right + gap))
+    : Math.min(input.anchorX - keepout - gap - widths[0],
+      ...reserved.map((box) => box.left - gap - widths[0]));
+  const farX = direction === 'right'
+    ? nearX + widths[0] + gap : nearX - gap - widths[1];
+  if (Math.min(nearX, farX) < input.edge - 0.5
+    || Math.max(nearX + widths[0], farX + widths[1]) > input.stageWidth - input.edge + 0.5) return null;
+  const out: ConstellationPlacement[] = [];
+  for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+    const column = columns[columnIndex];
+    const heights = column.map((panel) => panelHeight(panel, squeeze));
+    const total = heights.reduce((sum, value) => sum + value, 0) + gap * (column.length - 1);
+    if (total > input.stageHeight - input.safeTop - input.edge + 0.5) return null;
+    let y = clamp(input.anchorY - total / 2, input.safeTop, input.stageHeight - input.edge - total);
+    for (let index = 0; index < column.length; index += 1) {
+      const panel = column[index];
+      const x = (columnIndex === 0 ? nearX : farX)
+        + (direction === 'left' ? widths[columnIndex] - panel.width : 0);
+      out.push(placement(panel, heights[index], x, y, input.anchorX, input.anchorY));
+      y += heights[index] + gap;
     }
-    return total;
-  };
-  let best: ConstellationPlacement[] | null = null;
-  let least = Number.POSITIVE_INFINITY;
-  // Six passes at most, and the first clean one wins. Two orders because the
-  // greedy walk cannot make a joint move, three squeezes because it cannot take
-  // height back — between them they cover every stage this instrument runs on.
-  for (const squeeze of [1, 0.6, 0.4]) {
-    for (const order of [CONSTELLATION_ORDER, CONSTELLATION_RIGID_FIRST]) {
-      const attempt = walkOnce(input, squeeze, input.lock, order);
-      // ⚠️ ALWAYS, not only on an overlap. The pass answers for the cell's mark
-      // as well as for the instruments, and a walk can seat something on the
-      // cell without any two instruments touching at all.
-      prise(attempt, input);
-      const value = badness(attempt);
-      if (value < least) { least = value; best = attempt; }
-      if (least === 0) break;
-    }
-    if (least === 0) break;
   }
-  if (!best) best = walkOnce(input, 1, input.lock);
-  // ⚠️ The lock is written from the ACCEPTED pass only: a retry that was thrown
-  // away must not tell the next frame which rooms this one chose.
-  if (input.lock) {
-    for (const placement of best) input.lock.quadrant[placement.slot] = placement.quadrant;
+  out.sort((a, b) => CONSTELLATION_ORDER.indexOf(a.slot) - CONSTELLATION_ORDER.indexOf(b.slot));
+  return { template: direction === 'right' ? 'expand-right' : 'expand-left', placements: out };
+}
+
+function shelfRows(panels: readonly ConstellationPanel[], maxWidth: number,
+  gap: number): ConstellationPanel[][] | null {
+  const rows: ConstellationPanel[][] = [];
+  const widths: number[] = [];
+  for (const panel of [...panels].sort((a, b) => b.width - a.width)) {
+    if (panel.width > maxWidth + 0.5) return null;
+    const rowIndex = rows.findIndex((_row, index) => (
+      widths[index] + gap + panel.width <= maxWidth + 0.5
+    ));
+    if (rowIndex < 0) {
+      rows.push([panel]); widths.push(panel.width);
+    } else {
+      rows[rowIndex].push(panel); widths[rowIndex] += gap + panel.width;
+    }
+  }
+  return rows;
+}
+
+/** True fold candidate: each half may contain several horizontal shelves.
+ * This covers the 820px portrait trace case where no side column fits and no
+ * single top/bottom row can hold all four instruments. */
+function foldCandidate(input: ConstellationInput, panels: readonly ConstellationPanel[],
+  topSlots: ReadonlySet<ConstellationSlot>, squeeze: number, gap: number): Candidate | null {
+  const top = panels.filter((panel) => topSlots.has(panel.slot));
+  const bottom = panels.filter((panel) => !topSlots.has(panel.slot));
+  if (top.length === 0 || bottom.length === 0) return null;
+  const maxWidth = input.stageWidth - input.edge * 2;
+  const topRows = shelfRows(top, maxWidth, gap);
+  const bottomRows = shelfRows(bottom, maxWidth, gap);
+  if (!topRows || !bottomRows) return null;
+  const heightOf = (rows: readonly ConstellationPanel[][]): number => rows.reduce(
+    (sum, row) => sum + Math.max(...row.map((panel) => panelHeight(panel, squeeze))),
+    gap * Math.max(0, rows.length - 1),
+  );
+  const topHeight = heightOf(topRows); const bottomHeight = heightOf(bottomRows);
+  const core = (input.stageWidth >= 1280
+    ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
+    : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX) + gap;
+  const reserved = input.reserved ?? [];
+  const topEdge = Math.min(input.anchorY - core, ...reserved.map((box) => box.top - gap));
+  const bottomEdge = Math.max(input.anchorY + core, ...reserved.map((box) => box.bottom + gap));
+  if (topEdge - topHeight < input.safeTop - 0.5
+    || bottomEdge + bottomHeight > input.stageHeight - input.edge + 0.5) return null;
+  const out: ConstellationPlacement[] = [];
+  const placeRows = (rows: readonly ConstellationPanel[][], above: boolean) => {
+    let y = above ? topEdge : bottomEdge;
+    const orderedRows = above ? [...rows].reverse() : rows;
+    for (const row of orderedRows) {
+      const rowHeight = Math.max(...row.map((panel) => panelHeight(panel, squeeze)));
+      if (above) y -= rowHeight;
+      const rowWidth = row.reduce((sum, panel) => sum + panel.width, 0) + gap * (row.length - 1);
+      let x = clamp(input.anchorX - rowWidth / 2, input.edge, input.stageWidth - input.edge - rowWidth);
+      for (const panel of row) {
+        const height = panelHeight(panel, squeeze);
+        const py = above ? y + rowHeight - height : y;
+        out.push(placement(panel, height, x, py, input.anchorX, input.anchorY));
+        x += panel.width + gap;
+      }
+      if (above) y -= gap; else y += rowHeight + gap;
+    }
+  };
+  placeRows(topRows, true); placeRows(bottomRows, false);
+  out.sort((a, b) => CONSTELLATION_ORDER.indexOf(a.slot) - CONSTELLATION_ORDER.indexOf(b.slot));
+  return {
+    template: top.length >= bottom.length ? 'fold-above' : 'fold-below',
+    placements: out,
+  };
+}
+
+function pairwiseClear(placements: readonly ConstellationPlacement[], gap: number): boolean {
+  for (let i = 0; i < placements.length; i += 1) {
+    for (let j = i + 1; j < placements.length; j += 1) {
+      if (intersectionArea(expanded(boxOf(placements[i]), gap / 2),
+        expanded(boxOf(placements[j]), gap / 2)) > 0.25) return false;
+    }
+  }
+  return true;
+}
+
+function subtractBox(source: Box, cut: Box): Box[] {
+  const ix = Math.max(source.x, cut.x); const iy = Math.max(source.y, cut.y);
+  const ir = Math.min(source.x + source.width, cut.x + cut.width);
+  const ib = Math.min(source.y + source.height, cut.y + cut.height);
+  if (ir <= ix || ib <= iy) return [source];
+  const result: Box[] = [];
+  if (iy > source.y) result.push({ x: source.x, y: source.y, width: source.width, height: iy - source.y });
+  if (ib < source.y + source.height) result.push({ x: source.x, y: ib, width: source.width, height: source.y + source.height - ib });
+  if (ix > source.x) result.push({ x: source.x, y: iy, width: ix - source.x, height: ib - iy });
+  if (ir < source.x + source.width) result.push({ x: ir, y: iy, width: source.x + source.width - ir, height: ib - iy });
+  return result.filter((box) => box.width > 0.5 && box.height > 0.5);
+}
+
+/** HUD portions covered by an inspection panel are dimmed and are no longer a
+ * visible obstacle. Subtraction keeps tablet target edges reachable and keeps
+ * the SVG mask from cutting the final approach. */
+function visibleHudBoxes(obstacles: readonly HudOcclusionRect[], panels: readonly Box[]): Box[] {
+  let result = obstacles.map(rectBox);
+  for (const panel of panels) result = result.flatMap((box) => subtractBox(box, panel));
+  return result;
+}
+const pointInside = (point: ConstellationPoint, box: Box): boolean => (
+  point.x > box.x + 0.1 && point.x < box.x + box.width - 0.1
+  && point.y > box.y + 0.1 && point.y < box.y + box.height - 0.1
+);
+function segmentClear(a: ConstellationPoint, b: ConstellationPoint, obstacles: readonly Box[]): boolean {
+  if (Math.abs(a.x - b.x) < 0.01) {
+    const lo = Math.min(a.y, b.y); const hi = Math.max(a.y, b.y);
+    return obstacles.every((box) => a.x <= box.x + 0.1 || a.x >= box.x + box.width - 0.1
+      || hi <= box.y + 0.1 || lo >= box.y + box.height - 0.1);
+  }
+  if (Math.abs(a.y - b.y) < 0.01) {
+    const lo = Math.min(a.x, b.x); const hi = Math.max(a.x, b.x);
+    return obstacles.every((box) => a.y <= box.y + 0.1 || a.y >= box.y + box.height - 0.1
+      || hi <= box.x + 0.1 || lo >= box.x + box.width - 0.1);
+  }
+  return false;
+}
+function simplify(points: ConstellationPoint[]): ConstellationPoint[] {
+  for (let index = points.length - 2; index > 0; index -= 1) {
+    const a = points[index - 1]; const b = points[index]; const c = points[index + 1];
+    if ((Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - c.x) < 0.01)
+      || (Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - c.y) < 0.01)) points.splice(index, 1);
+  }
+  return points;
+}
+
+function fastOrthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
+  obstacles: readonly Box[]): ConstellationPoint[] | null {
+  const horizontalFirst = [start, { x: end.x, y: start.y }, end];
+  if (segmentClear(horizontalFirst[0], horizontalFirst[1], obstacles)
+    && segmentClear(horizontalFirst[1], horizontalFirst[2], obstacles)) {
+    return simplify(horizontalFirst);
+  }
+  const verticalFirst = [start, { x: start.x, y: end.y }, end];
+  if (segmentClear(verticalFirst[0], verticalFirst[1], obstacles)
+    && segmentClear(verticalFirst[1], verticalFirst[2], obstacles)) {
+    return simplify(verticalFirst);
+  }
+  return null;
+}
+
+function orthogonalRoute(start: ConstellationPoint, end: ConstellationPoint,
+  obstacles: readonly Box[], bounds: Box): ConstellationPoint[] | null {
+  if (obstacles.some((box) => pointInside(start, box) || pointInside(end, box))) return null;
+  const fast = fastOrthogonalRoute(start, end, obstacles);
+  if (fast) return fast;
+  const xs = new Set<number>([start.x, end.x, bounds.x, bounds.x + bounds.width]);
+  const ys = new Set<number>([start.y, end.y, bounds.y, bounds.y + bounds.height]);
+  obstacles.forEach((box) => {
+    xs.add(clamp(box.x, bounds.x, bounds.x + bounds.width));
+    xs.add(clamp(box.x + box.width, bounds.x, bounds.x + bounds.width));
+    ys.add(clamp(box.y, bounds.y, bounds.y + bounds.height));
+    ys.add(clamp(box.y + box.height, bounds.y, bounds.y + bounds.height));
+  });
+  const xValues = [...xs]; const yValues = [...ys];
+  let best: ConstellationPoint[] | null = null;
+  let least = Number.POSITIVE_INFINITY;
+  const consider = (points: ConstellationPoint[]) => {
+    const simplified = simplify(points);
+    if (simplified.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return;
+    const cost = routeLength(simplified);
+    if (cost >= least) return;
+    for (let index = 1; index < simplified.length; index += 1) {
+      if (!segmentClear(simplified[index - 1], simplified[index], obstacles)) return;
+    }
+    if (cost < least) { least = cost; best = simplified; }
+  };
+  for (const x of xValues) {
+    const a = { x, y: start.y }; const b = { x, y: end.y };
+    if (!segmentClear(start, a, obstacles)) continue;
+    consider([start, a, b, end]);
+  }
+  for (const y of yValues) {
+    const a = { x: start.x, y }; const b = { x: end.x, y };
+    if (!segmentClear(start, a, obstacles)) continue;
+    consider([start, a, b, end]);
+  }
+  if (best) return best;
+  const clearHorizontalStarts = new Map(xValues.map((x) => {
+    const first = { x, y: start.y };
+    return [x, segmentClear(start, first, obstacles)] as const;
+  }));
+  const clearVerticalStarts = new Map(yValues.map((y) => {
+    const first = { x: start.x, y };
+    return [y, segmentClear(start, first, obstacles)] as const;
+  }));
+  for (const x of xValues) for (const y of yValues) {
+    const h1 = { x, y: start.y };
+    if (clearHorizontalStarts.get(x)) {
+      consider([start, h1, { x, y }, { x: end.x, y }, end]);
+    }
+    const v1 = { x: start.x, y };
+    if (clearVerticalStarts.get(y)) {
+      consider([start, v1, { x, y }, { x, y: end.y }, end]);
+    }
   }
   return best;
 }
 
-/**
- * Where a leader starts and ends: from the reticle's ring, to the corner of
- * the instrument nearest the cell.
- *
- * The end is the box's nearest point, which for a diagonally-placed panel IS
- * its near corner — so the line lands on the corner the eye already reads as
- * the panel's beginning, and it keeps landing there when a clamp has slid the
- * panel sideways and the nearest point has become the middle of an edge.
- */
-export function constellationLeader(
-  anchorX: number,
-  anchorY: number,
-  reticlePx: number,
-  panel: { x: number; y: number; width: number; height: number },
-): { x1: number; y1: number; x2: number; y2: number } {
-  const x2 = Math.max(panel.x, Math.min(anchorX, panel.x + panel.width));
-  const y2 = Math.max(panel.y, Math.min(anchorY, panel.y + panel.height));
-  const dx = x2 - anchorX;
-  const dy = y2 - anchorY;
-  const length = Math.hypot(dx, dy);
+function routeEndpoints(panel: Box, ax: number, ay: number): ConstellationPoint[] {
+  const xs = [0.25, 0.5, 0.75].map((part) => panel.x + panel.width * part);
+  const ys = [0.25, 0.5, 0.75].map((part) => panel.y + panel.height * part);
+  return [
+    ...ys.map((y) => ({ x: panel.x, y })),
+    ...ys.map((y) => ({ x: panel.x + panel.width, y })),
+    ...xs.map((x) => ({ x, y: panel.y })),
+    ...xs.map((x) => ({ x, y: panel.y + panel.height })),
+  ].sort((a, b) => Math.hypot(a.x - ax, a.y - ay) - Math.hypot(b.x - ax, b.y - ay));
+}
+function routeLength(points: readonly ConstellationPoint[]): number {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    total += Math.abs(points[index].x - points[index - 1].x)
+      + Math.abs(points[index].y - points[index - 1].y);
+  }
+  return total + Math.max(0, points.length - 2) * 18;
+}
+function labelForRoute(points: readonly ConstellationPoint[], width: number, height: number,
+  obstacles: readonly Box[], bounds: Box): ConstellationLabelPlacement {
+  for (let index = points.length - 1; index > 0; index -= 1) {
+    const a = points[index - 1]; const b = points[index];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const needed = Math.abs(a.x - b.x) < 0.01 ? height + 16 : width + 16;
+    if (length < needed) continue;
+    const x = (a.x + b.x) / 2; const y = (a.y + b.y) / 2;
+    const box = { x: x - width / 2, y: y - height / 2, width, height };
+    if (box.x < bounds.x || box.y < bounds.y
+      || box.x + width > bounds.x + bounds.width || box.y + height > bounds.y + bounds.height) continue;
+    if (obstacles.some((obstacle) => intersectionArea(box, obstacle) > 0.1)) continue;
+    return { x, y, width, height, inPanel: false };
+  }
+  return { x: 0, y: 0, width, height, inPanel: true };
+}
+
+function segments(points: readonly ConstellationPoint[]): Array<[ConstellationPoint, ConstellationPoint]> {
+  const result: Array<[ConstellationPoint, ConstellationPoint]> = [];
+  for (let index = 1; index < points.length; index += 1) result.push([points[index - 1], points[index]]);
+  return result;
+}
+function segmentsTouch(a: [ConstellationPoint, ConstellationPoint],
+  b: [ConstellationPoint, ConstellationPoint]): boolean {
+  const [a1, a2] = a; const [b1, b2] = b;
+  const av = Math.abs(a1.x - a2.x) < 0.01; const bv = Math.abs(b1.x - b2.x) < 0.01;
+  if (av && bv) {
+    return Math.abs(a1.x - b1.x) < 0.01
+      && Math.max(Math.min(a1.y, a2.y), Math.min(b1.y, b2.y))
+        <= Math.min(Math.max(a1.y, a2.y), Math.max(b1.y, b2.y)) + 0.01;
+  }
+  if (!av && !bv) {
+    return Math.abs(a1.y - b1.y) < 0.01
+      && Math.max(Math.min(a1.x, a2.x), Math.min(b1.x, b2.x))
+        <= Math.min(Math.max(a1.x, a2.x), Math.max(b1.x, b2.x)) + 0.01;
+  }
+  const vertical = av ? a : b; const horizontal = av ? b : a;
+  return vertical[0].x >= Math.min(horizontal[0].x, horizontal[1].x) - 0.01
+    && vertical[0].x <= Math.max(horizontal[0].x, horizontal[1].x) + 0.01
+    && horizontal[0].y >= Math.min(vertical[0].y, vertical[1].y) - 0.01
+    && horizontal[0].y <= Math.max(vertical[0].y, vertical[1].y) + 0.01;
+}
+
+function routeOutsideReticle(points: readonly ConstellationPoint[], ax: number, ay: number,
+  radius: number): Array<[ConstellationPoint, ConstellationPoint]> {
+  const result: Array<[ConstellationPoint, ConstellationPoint]> = [];
+  for (const [a, b] of segments(points)) {
+    const vertical = Math.abs(a.x - b.x) < 0.01;
+    if (vertical && a.x >= ax - radius && a.x <= ax + radius) {
+      const lo = Math.min(a.y, b.y); const hi = Math.max(a.y, b.y);
+      if (lo < ay - radius) result.push([{ x: a.x, y: lo }, { x: a.x, y: Math.min(hi, ay - radius) }]);
+      if (hi > ay + radius) result.push([{ x: a.x, y: Math.max(lo, ay + radius) }, { x: a.x, y: hi }]);
+    } else if (!vertical && a.y >= ay - radius && a.y <= ay + radius) {
+      const lo = Math.min(a.x, b.x); const hi = Math.max(a.x, b.x);
+      if (lo < ax - radius) result.push([{ x: lo, y: a.y }, { x: Math.min(hi, ax - radius), y: a.y }]);
+      if (hi > ax + radius) result.push([{ x: Math.max(lo, ax + radius), y: a.y }, { x: hi, y: a.y }]);
+    } else result.push([a, b]);
+  }
+  return result.filter(([a, b]) => Math.hypot(a.x - b.x, a.y - b.y) > 0.5);
+}
+
+function addRoutesInOrder(input: ConstellationInput, placements: ConstellationPlacement[],
+  order: readonly number[]): HudOcclusionRect[] | null {
+  const panelBoxes = placements.map(boxOf);
+  const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
+  const reserved = (input.reserved ?? []).map(rectBox);
+  const bounds: Box = {
+    x: input.edge + CONSTELLATION_ROUTE_CLEARANCE_PX,
+    y: input.safeTop + CONSTELLATION_ROUTE_CLEARANCE_PX,
+    width: input.stageWidth - input.edge * 2 - CONSTELLATION_ROUTE_CLEARANCE_PX * 2,
+    height: input.stageHeight - input.safeTop - input.edge - CONSTELLATION_ROUTE_CLEARANCE_PX * 2,
+  };
+  const masks = [...panelBoxes, ...reserved, ...hud].map(rectOf);
+  const reticle: Box = {
+    x: input.anchorX - CONSTELLATION_RETICLE_PX / 2,
+    y: input.anchorY - CONSTELLATION_RETICLE_PX / 2,
+    width: CONSTELLATION_RETICLE_PX,
+    height: CONSTELLATION_RETICLE_PX,
+  };
+  const placedLabels: Box[] = [];
+  const priorRoutes: ConstellationPoint[][] = [];
+  const usedOutlets = new Set<string>();
+  for (const placementIndex of order) {
+    const placement = placements[placementIndex];
+    const target = panelBoxes[placementIndex];
+    const priorRouteSegments = priorRoutes.flatMap((route) =>
+      routeOutsideReticle(route, input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2));
+    const priorRouteBoxes = priorRouteSegments.map(([a, b]) => ({
+      x: Math.min(a.x, b.x) - 4,
+      y: Math.min(a.y, b.y) - 4,
+      width: Math.max(8, Math.abs(a.x - b.x) + 8),
+      height: Math.max(8, Math.abs(a.y - b.y) + 8),
+    }));
+    const obstacles = [
+      ...panelBoxes.filter((box) => box !== target), ...reserved, ...hud, ...placedLabels,
+      ...priorRouteBoxes,
+    ].map((box) => expanded(box, CONSTELLATION_ROUTE_CLEARANCE_PX));
+    // The target itself stays at its exact boundary: the route may land on an
+    // edge but may never enter the body and emerge at another edge.
+    obstacles.push(target);
+    obstacles.push(reticle);
+    const radius = CONSTELLATION_RETICLE_PX / 2 + 6;
+    const outlet = 18;
+    const starts: ConstellationPoint[] = [
+      { x: input.anchorX + radius, y: input.anchorY - outlet },
+      { x: input.anchorX + radius, y: input.anchorY + outlet },
+      { x: input.anchorX - radius, y: input.anchorY - outlet },
+      { x: input.anchorX - radius, y: input.anchorY + outlet },
+      { x: input.anchorX - outlet, y: input.anchorY + radius },
+      { x: input.anchorX + outlet, y: input.anchorY + radius },
+      { x: input.anchorX - outlet, y: input.anchorY - radius },
+      { x: input.anchorX + outlet, y: input.anchorY - radius },
+    ].filter((point) => !usedOutlets.has(`${point.x},${point.y}`))
+      .sort((a, b) => Math.hypot(a.x - (target.x + target.width / 2), a.y - (target.y + target.height / 2))
+        - Math.hypot(b.x - (target.x + target.width / 2), b.y - (target.y + target.height / 2)));
+    let best: ConstellationPoint[] | null = null;
+    const crossesPrior = (route: readonly ConstellationPoint[]) => {
+      const outside = routeOutsideReticle(route, input.anchorX, input.anchorY,
+        CONSTELLATION_RETICLE_PX / 2);
+      return outside.some((segment) => priorRouteSegments.some((other) => segmentsTouch(segment, other)));
+    };
+    for (const start of starts) {
+      for (const end of routeEndpoints(target, input.anchorX, input.anchorY)) {
+        const route = fastOrthogonalRoute(start, end, obstacles);
+        if (!route || crossesPrior(route)) continue;
+        if (!best || routeLength(route) < routeLength(best)) best = route;
+      }
+    }
+    if (!best) {
+      routeSearch:
+      for (const start of starts) for (const end of routeEndpoints(target, input.anchorX, input.anchorY)) {
+        const route = orthogonalRoute(start, end, obstacles, bounds);
+        if (route && !crossesPrior(route)) { best = route; break routeSearch; }
+      }
+    }
+    if (!best) return null;
+    usedOutlets.add(`${best[0].x},${best[0].y}`);
+    const panel = input.panels.find((candidate) => candidate.slot === placement.slot);
+    const priorLabelRouteBoxes = priorRoutes.flatMap((route) => segments(route).map(([a, b]) => ({
+      x: Math.min(a.x, b.x) - 3,
+      y: Math.min(a.y, b.y) - 3,
+      width: Math.max(6, Math.abs(a.x - b.x) + 6),
+      height: Math.max(6, Math.abs(a.y - b.y) + 6),
+    })));
+    const label = labelForRoute(best, panel?.labelWidth ?? 70, panel?.labelHeight ?? 20,
+      [...panelBoxes, ...reserved, ...hud, reticle, ...placedLabels, ...priorLabelRouteBoxes], bounds);
+    placement.route = { points: best, label };
+    if (!label.inPanel) placedLabels.push({
+      x: label.x - label.width / 2, y: label.y - label.height / 2,
+      width: label.width, height: label.height,
+    });
+    priorRoutes.push(best);
+  }
+  return masks;
+}
+
+function routeOrders(count: number): number[][] {
+  const canonical = Array.from({ length: count }, (_value, index) => index);
+  const result: number[][] = [];
+  const visit = (prefix: number[], remaining: number[]) => {
+    if (remaining.length === 0) { result.push(prefix); return; }
+    for (let index = 0; index < remaining.length; index += 1) {
+      visit([...prefix, remaining[index]], [
+        ...remaining.slice(0, index), ...remaining.slice(index + 1),
+      ]);
+    }
+  };
+  visit([], canonical);
+  if (count === 3) {
+    const preferred = [[0, 2, 1], [0, 1, 2], [1, 2, 0], [2, 0, 1]];
+    const preferredKeys = new Set(preferred.map((order) => order.join(',')));
+    return [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+  }
+  if (count !== 4) return result;
+  const preferred = [
+    [0, 2, 3, 1], [0, 2, 1, 3], [0, 1, 3, 2], [0, 1, 2, 3],
+    [0, 3, 1, 2], [0, 3, 2, 1], [1, 0, 3, 2], [1, 2, 3, 0],
+    [2, 0, 3, 1], [2, 3, 0, 1], [2, 3, 1, 0], [3, 0, 1, 2], [3, 0, 2, 1],
+  ];
+  const preferredKeys = new Set(preferred.map((order) => order.join(',')));
+  return [...preferred, ...result.filter((order) => !preferredKeys.has(order.join(',')))];
+}
+
+function addRoutes(input: ConstellationInput,
+  placements: ConstellationPlacement[]): HudOcclusionRect[] | null {
+  for (const order of routeOrders(placements.length)) {
+    for (const panel of placements) panel.route = undefined;
+    const masks = addRoutesInOrder(input, placements, order);
+    if (masks) return masks;
+  }
+  for (const panel of placements) panel.route = undefined;
+  return null;
+}
+
+function hardValid(input: ConstellationInput, placements: readonly ConstellationPlacement[], gap: number): boolean {
+  if (placements.length !== input.panels.length || !pairwiseClear(placements, gap)) return false;
+  const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
+  const reserved = (input.reserved ?? []).map(rectBox);
+  return placements.every((panel) => {
+    const box = boxOf(panel);
+    return box.x >= input.edge - 0.5 && box.y >= input.safeTop - 0.5
+      && box.x + box.width <= input.stageWidth - input.edge + 0.5
+      && box.y + box.height <= input.stageHeight - input.edge + 0.5
+      && nearestDistance(box, input.anchorX, input.anchorY) >= core - 0.5
+      && reserved.every((claim) => intersectionArea(box, claim) === 0);
+  });
+}
+function scoreCandidate(input: ConstellationInput, candidate: Candidate): number {
+  let score = candidate.template === input.lock?.template ? -CONSTELLATION_HOLD_MARGIN_PX : 0;
+  const hud = (input.obstacles ?? []).map(rectBox);
+  for (const panel of candidate.placements) {
+    score += Math.abs(panel.height - (input.panels.find((p) => p.slot === panel.slot)?.height ?? panel.height)) * 4;
+    score += Math.hypot(panel.x + panel.width / 2 - input.anchorX,
+      panel.y + panel.height / 2 - input.anchorY) * 0.08;
+    for (const obstacle of hud) score += intersectionArea(boxOf(panel), obstacle) / 80;
+  }
+  const preference: Record<ConstellationTemplate, number> = {
+    'split-left': 0, 'split-right': 1, 'expand-right': 2, 'expand-left': 3,
+    'fold-above': 4, 'fold-below': 5, distributed: 6,
+  };
+  return score + preference[candidate.template] * 0.01;
+}
+function geometryKey(input: ConstellationInput, panels: readonly ConstellationPanel[]): string {
+  const part = (value: number) => Math.round(value * 2);
+  let key = `${part(input.stageWidth)},${part(input.stageHeight)},${part(input.safeTop)},${part(input.edge)}`;
+  for (const panel of panels) key += `|${panel.slot}:${part(panel.width)}:${part(panel.height)}`;
+  for (const rect of input.obstacles ?? []) {
+    key += `|${part(rect.left)},${part(rect.top)},${part(rect.right)},${part(rect.bottom)}`;
+  }
+  for (const rect of input.reserved ?? []) {
+    key += `|r${part(rect.right - rect.left)},${part(rect.bottom - rect.top)}`;
+  }
+  return key;
+}
+function reuseLocked(input: ConstellationInput, panels: readonly ConstellationPanel[],
+  key: string, withRoutes: boolean): ConstellationLayout | null {
+  const lock = input.lock;
+  if (!lock || lock.template === null) return null;
+  if (Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY) > 160) return null;
+  const previousSlots = Object.keys(lock.placements).filter((slot) => lock.placements[slot]);
+  const removedOnly = panels.every((panel) => lock.placements[panel.slot] !== undefined)
+    && panels.length < previousSlots.length;
+  if (lock.geometryKey !== key && !removedOnly) return null;
+  const sameGeometry = lock.geometryKey === key;
+  const placements = panels.map((panel) => {
+    const held = lock.placements[panel.slot] as ConstellationPlacement;
+    const next = placement(panel, sameGeometry ? held.height : panel.height, held.x, held.y,
+      input.anchorX, input.anchorY);
+    next.quadrant = held.quadrant;
+    return next;
+  });
+  if (!hardValid(input, placements, CONSTELLATION_MIN_GAP_PX)) return null;
+  const masks = withRoutes ? addRoutes(input, placements) : [];
+  if (!masks) return null;
+  return {
+    status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
+    template: lock.template, placements, masks,
+  };
+}
+
+function solveLayout(input: ConstellationInput, withRoutes: boolean): ConstellationLayout {
+  const panels = orderedPanels(input.panels);
+  if (panels.length === 0) return { status: 'normal', template: null, placements: [], masks: [] };
+  const key = geometryKey(input, panels);
+  const held = reuseLocked(input, panels, key, withRoutes);
+  if (held) return held;
+  let best: Candidate | null = null;
+  let bestMasks: HudOcclusionRect[] = [];
+  for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
+    for (const squeeze of [1, 0.76, 0.56, 0.4, 0.16]) {
+      const candidates: Candidate[] = [];
+      const right = expandCandidate(input, panels, 'right', squeeze, gap);
+      const left = expandCandidate(input, panels, 'left', squeeze, gap);
+      if (right) candidates.push(right);
+      if (left) candidates.push(left);
+      const count = 4 ** panels.length; const symbols = ['l', 'r', 't', 'b'] as const;
+      for (let encoded = 0; encoded < count; encoded += 1) {
+        let value = encoded; const sides: Array<'l' | 'r' | 't' | 'b'> = [];
+        for (let index = 0; index < panels.length; index += 1) {
+          sides.push(symbols[value % 4]); value = Math.floor(value / 4);
+        }
+        const candidate = distributedCandidate(input, panels, sides, squeeze, gap);
+        if (candidate) candidates.push(candidate);
+      }
+      const foldCount = 2 ** panels.length;
+      for (let encoded = 1; encoded < foldCount - 1; encoded += 1) {
+        const topSlots = new Set<ConstellationSlot>();
+        panels.forEach((panel, index) => {
+          if ((encoded & (1 << index)) !== 0) topSlots.add(panel.slot);
+        });
+        const candidate = foldCandidate(input, panels, topSlots, squeeze, gap);
+        if (candidate) candidates.push(candidate);
+      }
+      const feasible = candidates
+        .filter((candidate) => hardValid(input, candidate.placements, gap))
+        .sort((a, b) => scoreCandidate(input, a) - scoreCandidate(input, b))
+        .slice(0, 12);
+      for (const candidate of feasible) {
+        const masks = withRoutes ? addRoutes(input, candidate.placements) : [];
+        if (!masks) continue;
+        // `feasible` is already sorted by its deterministic geometry score.
+        // Take the first candidate whose internally shortest bounded routes are
+        // all valid; trying lower-ranked geometry after that only adds latency
+        // to a pointer interaction.
+        best = candidate; bestMasks = masks;
+        break;
+      }
+      if (best) break;
+    }
+    if (best) break;
+  }
+  if (!best) return { status: 'unavailable', template: null, placements: [], masks: [] };
+  const result: ConstellationLayout = {
+    status: best.placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
+    template: best.template, placements: best.placements, masks: bestMasks,
+  };
+  if (input.lock) {
+    input.lock.template = best.template; input.lock.geometryKey = key;
+    input.lock.anchorX = input.anchorX; input.lock.anchorY = input.anchorY;
+    for (const slot of Object.keys(input.lock.placements)) delete input.lock.placements[slot];
+    for (const panel of best.placements) {
+      input.lock.placements[panel.slot] = { ...panel, route: undefined };
+      input.lock.quadrant[panel.slot] = panel.quadrant;
+    }
+  }
+  return result;
+}
+export function constellationLayout(input: ConstellationInput): ConstellationLayout {
+  return solveLayout(input, true);
+}
+export function constellationPlacement(input: ConstellationInput): ConstellationPlacement[] {
+  return solveLayout(input, false).placements;
+}
+export function constellationLeader(anchorX: number, anchorY: number, reticlePx: number,
+  panel: { x: number; y: number; width: number; height: number }):
+  { x1: number; y1: number; x2: number; y2: number } {
+  const x2 = clamp(anchorX, panel.x, panel.x + panel.width);
+  const y2 = clamp(anchorY, panel.y, panel.y + panel.height);
+  const dx = x2 - anchorX; const dy = y2 - anchorY; const length = Math.hypot(dx, dy);
   if (length < 1) return { x1: anchorX, y1: anchorY, x2, y2 };
   const start = reticlePx / 2 + 6;
-  return {
-    x1: anchorX + (dx / length) * start,
-    y1: anchorY + (dy / length) * start,
-    x2,
-    y2,
-  };
+  return { x1: anchorX + dx / length * start, y1: anchorY + dy / length * start, x2, y2 };
 }

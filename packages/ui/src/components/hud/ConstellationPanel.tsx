@@ -16,6 +16,9 @@ import { CloseButton, spatialPlate, spatialPlateBackground } from './primitives'
  *  scrolled inside a docked card, was the browser's own light-grey bar with
  *  arrow buttons drawn down the middle of a black instrument. */
 export const CONSTELLATION_SCROLLER_CLASS = 'cknerv-constellation-scroller';
+const PANEL_ROUTE_TAG: Record<ConstellationSlot, string> = {
+  specimen: 'CELL SCAN', analysis: 'SCAN·01', reader: 'SCAN·02', trace: 'SCAN·03',
+};
 
 /**
  * One instrument, positioned by the frame writer and sized by its own content.
@@ -84,9 +87,14 @@ export default function ConstellationPanel({
       // body needs. Measured live at 1920: a 664.6 px register in a 664.6 px
       // host left its scroller 632, and the bottom 33 px of every instrument
       // was clipped, silently, because an uncapped panel does not scroll.
-      const next = head.getBoundingClientRect().height
-        + content.getBoundingClientRect().height
-        + 2;
+      const headHeight = head.getBoundingClientRect().height;
+      const measured = headHeight + content.getBoundingClientRect().height + 2;
+      // The specimen body is an aspect-ratio square. Once a previous frame
+      // constrains the flex host, browsers may report the flexed content height
+      // instead of the square's intrinsic requirement. Keep that transparent
+      // scissor window at its full width so the portrait cannot spill through
+      // the bottom of a shortened plate.
+      const next = windowed ? Math.max(measured, handle.width + headHeight + 2) : measured;
       if (Math.abs(next - handle.height) < 0.5) return;
       handle.height = next;
       // A panel that changed height changes everyone's placement: the walk
@@ -108,7 +116,7 @@ export default function ConstellationPanel({
       observer.disconnect();
       detach();
     };
-  }, [handles, slot]);
+  }, [handles, slot, windowed]);
 
   return (
     <div
@@ -126,6 +134,7 @@ export default function ConstellationPanel({
         pointerEvents: 'auto',
         userSelect: 'text',
         willChange: 'transform',
+        zIndex: 3,
         color: HUD_COLORS.ink,
         fontFamily: HUD_FONTS.mono,
         // One composited shadow per instrument, following its own silhouette.
@@ -162,6 +171,27 @@ export default function ConstellationPanel({
         >
           {title}
         </span>
+        {slot !== 'specimen' ? <span
+          ref={(node) => { handles.panels[slot].fallbackLabel = node; }}
+          data-cell-panel-route-label={slot}
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            visibility: 'hidden',
+            maxWidth: 0,
+            overflow: 'hidden',
+            padding: 0,
+            borderWidth: 0,
+            borderStyle: 'solid',
+            borderColor: rgba(accent, 0.4),
+            color: accent,
+            fontSize: HUD_TYPE.label,
+            letterSpacing: 1.2,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {PANEL_ROUTE_TAG[slot]}
+        </span> : null}
         {status}
         {/* Every instrument closes alone (the user's direction of 2026-09-10:
           * 「三个panel相互分开」). A reader who does not care about bytes closes

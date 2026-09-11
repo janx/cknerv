@@ -1,20 +1,8 @@
-// The DOM half of the constellation: the channel between the anchor in the
-// R3F tree and the instruments outside the Canvas, and the one function that
-// writes a frame through it.
-//
-// Same bargain `sceneInspection` strikes for a single card, and for the same
-// reason: the anchor must inherit the colony's transform to project the cell,
-// the panels are DOM in a different renderer, and nothing on the path between
-// them may allocate or read layout sixty times a second. What is different is
-// the count — three or four boxes, a reticle, a name chip and three labelled
-// leaders instead of one card and one tether — which is exactly why the write
-// is gated on a signature rather than done unconditionally.
-
 import {
-  constellationLeader,
-  constellationPlacement,
+  constellationLayout,
   createConstellationLock,
   CONSTELLATION_RETICLE_PX,
+  type ConstellationLayout,
   type ConstellationLock,
   type ConstellationPanel,
   type ConstellationPlacement,
@@ -22,82 +10,51 @@ import {
 } from '../../derives/cellConstellation.derive';
 import type { HudOcclusionRect } from '../hudOcclusion';
 
-/** One instrument's channel: the box the frame writer moves, and the height
- *  its own content asked for. Width is declared by the dialect — a hex dump is
- *  seventy-three monospace characters and a register's longest row is 336 px,
- *  so neither is a measurement — and height is measured, because it is the
- *  whole of what varies between one Cell and the next. */
 export interface ConstellationPanelHandle {
   host: HTMLDivElement | null;
+  fallbackLabel: HTMLElement | null;
   width: number;
   height: number;
-  /** Mounted at all. A Cell holding no bytes has no reader, and the walk must
-   *  not reserve a room for an instrument that is not there. */
   present: boolean;
 }
-
 export interface ConstellationLeaderHandle {
-  /** Two strokes: a near-black one under a rose one. A single hairline over
-   *  the galaxy's brightest nebula is invisible, which is the same problem a
-   *  map label solves the same way. */
-  under: SVGLineElement | null;
-  over: SVGLineElement | null;
+  under: SVGPathElement | null;
+  over: SVGPathElement | null;
   dot: SVGCircleElement | null;
-  /** The module tag, riding the line. */
   label: HTMLElement | null;
+  labelWidth: number;
+  labelHeight: number;
 }
-
 export interface CellConstellationHandles {
-  /** The layer-sized container. Owns opacity (the one entrance and the one
-   *  exit) and is the dismiss boundary — it is `pointer-events: none`, so a
-   *  press that lands on it landed on one of its instruments. */
   root: HTMLDivElement | null;
   panels: { [slot: string]: ConstellationPanelHandle };
   leaders: { [slot: string]: ConstellationLeaderHandle };
+  maskGroup: SVGGElement | null;
   reticle: HTMLElement | null;
   chip: HTMLElement | null;
-  /** The chip's own box, measured. The mark on the cell is a reticle AND its
-   *  label, and an instrument that clears the reticle can still land on the
-   *  name — measured live at 1920, a 376 px chip under a cell at x=960 reached
-   *  66 px into the reader standing to its lower right. */
   chipWidth: number;
   chipHeight: number;
   lock: ConstellationLock;
   visible: boolean;
   leaving: boolean;
-  /** Last committed signature — clearing forces the next frame to write. */
+  /** Compatibility alias; invalidation clears all three signatures. */
   frameKey: string;
-  /** The specimen's last seat. The portrait channel needs the origin of the
-   *  box the braid is scissored into, and a gated frame still owes it the
-   *  answer it gave last time rather than nothing. */
+  layoutKey: string;
+  connectorKey: string;
+  placementKey: string;
+  maskKey: string;
+  lastLayout: ConstellationLayout | null;
   lastSpecimen: ConstellationPlacement | null;
-  /** Which quadrant each instrument last took, for the React side. A panel
-   *  wants to know so its head can point its close control away from the cell;
-   *  nothing else reads it. */
   quadrant: { [slot: string]: string | undefined };
   quadrantListeners: Set<() => void>;
 }
 
 export const CONSTELLATION_SLOTS: readonly ConstellationSlot[] = [
-  'analysis',
-  'specimen',
-  'reader',
-  'trace',
+  'analysis', 'specimen', 'reader', 'trace',
 ];
-
-/** The measures the instruments are drawn at. Constants rather than a ladder:
- *  the three-rung width ladder, the notch column and the 640 px compact floor
- *  all existed to fit three panels into one box, and there is no box now. */
 export const CONSTELLATION_WIDTH: { [slot: string]: number } = {
-  analysis: 440,
-  specimen: 280,
-  reader: 408,
-  trace: 560,
+  analysis: 440, specimen: 280, reader: 408, trace: 560,
 };
-
-/** …and the floor under a stage too narrow to hold one at its own measure.
- *  Below this the register stops being a register — its longest row, a label,
- *  a badge and a mid-truncated hash, measures 336 px. */
 export const CONSTELLATION_MIN_WIDTH_PX = 336;
 
 export function createCellConstellationHandles(): CellConstellationHandles {
@@ -105,95 +62,110 @@ export function createCellConstellationHandles(): CellConstellationHandles {
   const leaders: { [slot: string]: ConstellationLeaderHandle } = {};
   for (const slot of CONSTELLATION_SLOTS) {
     panels[slot] = {
-      host: null,
-      width: CONSTELLATION_WIDTH[slot] ?? 408,
-      height: 0,
-      present: false,
+      host: null, fallbackLabel: null, width: CONSTELLATION_WIDTH[slot] ?? 408,
+      height: 0, present: false,
     };
-    leaders[slot] = { under: null, over: null, dot: null, label: null };
+    leaders[slot] = {
+      under: null, over: null, dot: null, label: null,
+      labelWidth: slot === 'specimen' ? 78 : 62, labelHeight: 20,
+    };
   }
   return {
-    root: null,
-    panels,
-    leaders,
-    reticle: null,
-    chip: null,
-    chipWidth: 0,
-    chipHeight: 0,
-    lock: createConstellationLock(),
-    visible: false,
-    leaving: false,
-    frameKey: '',
-    lastSpecimen: null,
-    quadrant: {},
-    quadrantListeners: new Set(),
+    root: null, panels, leaders, maskGroup: null, reticle: null, chip: null,
+    chipWidth: 0, chipHeight: 0, lock: createConstellationLock(),
+    visible: false, leaving: false, frameKey: '', layoutKey: '', connectorKey: '',
+    placementKey: '', maskKey: '',
+    lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
   };
 }
 
-/** Half-pixel bucket, as the single-card chassis uses: the galaxy autorotates,
- *  so every coordinate here drifts a fraction of a pixel forever and a gate
- *  finer than the eye turns that into a write per frame for as long as an
- *  instrument is open. */
 const QUANTUM_PX = 0.5;
 const bucket = (value: number): number => Math.round(value / QUANTUM_PX);
-
-/** Scratch, module-scope, re-used. One selection exists at a time — the same
- *  argument the portrait channel is a singleton on. */
 const scratchPanels: ConstellationPanel[] = [];
-/** …and the obstacles the walk is given: the HUD's rails, plus the name chip,
- *  which is not a rail and is not the reticle and would otherwise be the one
- *  mark on the stage nothing composes around. */
-const scratchObstacles: HudOcclusionRect[] = [];
+const scratchReserved: HudOcclusionRect[] = [];
 const chipBox: HudOcclusionRect = { left: 0, top: 0, right: 0, bottom: 0 };
 
-function collectPanels(
-  handles: CellConstellationHandles,
-  stageWidth: number,
-  edge: number,
-): ConstellationPanel[] {
+function collectPanels(handles: CellConstellationHandles, stageWidth: number,
+  edge: number): ConstellationPanel[] {
   scratchPanels.length = 0;
   const room = Math.max(CONSTELLATION_MIN_WIDTH_PX, stageWidth - edge * 2);
   for (const slot of CONSTELLATION_SLOTS) {
     const panel = handles.panels[slot];
     if (!panel?.present || panel.height <= 0) continue;
+    const leader = handles.leaders[slot];
     scratchPanels.push({
       slot,
       width: Math.min(panel.width, room),
       height: panel.height,
+      labelWidth: leader.labelWidth,
+      labelHeight: leader.labelHeight,
     });
   }
   return scratchPanels;
 }
-
-function frameSignature(
-  anchorX: number,
-  anchorY: number,
-  stageWidth: number,
-  stageHeight: number,
-  panels: readonly ConstellationPanel[],
-): string {
-  let key = `${bucket(anchorX)},${bucket(anchorY)},${bucket(stageWidth)},${bucket(stageHeight)}`;
-  for (const panel of panels) key += `|${panel.slot}:${bucket(panel.width)}:${bucket(panel.height)}`;
+function rectKey(rects: readonly HudOcclusionRect[]): string {
+  let key = '';
+  for (const rect of rects) {
+    key += `|${bucket(rect.left)},${bucket(rect.top)},${bucket(rect.right)},${bucket(rect.bottom)}`;
+  }
   return key;
 }
-
+function layoutSignature(stageWidth: number, stageHeight: number, safeTop: number,
+  edge: number, panels: readonly ConstellationPanel[], handles: CellConstellationHandles,
+  obstacles: readonly HudOcclusionRect[], obstacleVersion: number): string {
+  let key = `${bucket(stageWidth)},${bucket(stageHeight)},${bucket(safeTop)},${bucket(edge)}`;
+  for (const panel of panels) {
+    key += `|${panel.slot}:${bucket(panel.width)}:${bucket(panel.height)}:${bucket(panel.labelWidth ?? 0)}:${bucket(panel.labelHeight ?? 0)}`;
+  }
+  return key + `|c${bucket(handles.chipWidth)},${bucket(handles.chipHeight)}|h${obstacleVersion}`
+    + rectKey(obstacles);
+}
+function pathData(points: readonly { x: number; y: number }[]): string {
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+}
+function placementSignature(placements: readonly ConstellationPlacement[]): string {
+  return placements.map((panel) =>
+    `${panel.slot}:${bucket(panel.x)},${bucket(panel.y)},${bucket(panel.width)},${bucket(panel.height)}`,
+  ).join('|');
+}
 function notifyQuadrants(handles: CellConstellationHandles): void {
   handles.quadrantListeners.forEach((listener) => listener());
 }
+function writeMasks(handles: CellConstellationHandles, masks: readonly HudOcclusionRect[]): void {
+  const group = handles.maskGroup;
+  if (!group) return;
+  const nodes: SVGRectElement[] = [];
+  for (const mask of masks) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    node.setAttribute('x', `${mask.left}`);
+    node.setAttribute('y', `${mask.top}`);
+    node.setAttribute('width', `${Math.max(0, mask.right - mask.left)}`);
+    node.setAttribute('height', `${Math.max(0, mask.bottom - mask.top)}`);
+    node.setAttribute('fill', 'black');
+    nodes.push(node);
+  }
+  group.replaceChildren(...nodes);
+}
+function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<string>): void {
+  for (const slot of CONSTELLATION_SLOTS) {
+    if (present.has(slot)) continue;
+    const leader = handles.leaders[slot];
+    leader.under?.setAttribute('d', '');
+    leader.over?.setAttribute('d', '');
+    if (leader.dot) leader.dot.style.display = 'none';
+    if (leader.label) leader.label.style.display = 'none';
+    writeFallback(handles.panels[slot].fallbackLabel, false);
+  }
+}
+function writeFallback(label: HTMLElement | null, visible: boolean): void {
+  if (!label) return;
+  label.style.visibility = visible ? 'visible' : 'hidden';
+  label.style.position = visible ? 'static' : 'absolute';
+  label.style.maxWidth = visible ? '90px' : '0';
+  label.style.padding = visible ? '1px 5px' : '0';
+  label.style.borderWidth = visible ? '1px' : '0';
+}
 
-/**
- * Write one frame: every instrument, the reticle, the chip and every leader.
- *
- * Gated on the signature above, so a constellation merely drifting under the
- * galaxy's own turn costs one string build and a comparison. When it does
- * write, it writes everything — there is no second gate of the kind the single
- * card has for its connector, because a leader here is four numbers on an SVG
- * line rather than a gradient, two glows and a pair of cleared edges.
- *
- * Returns the specimen's placement, or null, because the portrait channel needs
- * the origin of the box the braid is scissored into and this is the only place
- * that knows it.
- */
 export function commitConstellationFrame(
   handles: CellConstellationHandles,
   anchorX: number,
@@ -203,118 +175,112 @@ export function commitConstellationFrame(
   safeTop: number,
   edge: number,
   obstacles: readonly HudOcclusionRect[],
+  obstacleVersion = 0,
 ): ConstellationPlacement | null {
   const panels = collectPanels(handles, stageWidth, edge);
-  if (panels.length === 0) return null;
-  const key = frameSignature(anchorX, anchorY, stageWidth, stageHeight, panels)
-    + `|c${bucket(handles.chipWidth)}`;
-  if (key === handles.frameKey) return handles.lastSpecimen ?? null;
-  handles.frameKey = key;
-
-  // The chip hangs under the reticle and the walk composes around it, so the
-  // name of the thing being inspected is never printed under an instrument.
-  // RESERVED and not an obstacle: a rail is worth a fraction of its area and
-  // never moved anything, and the first live run printed the chip across the
-  // reader's own header.
-  scratchObstacles.length = 0;
-  if (handles.chipWidth > 0) {
-    chipBox.left = anchorX - handles.chipWidth / 2;
-    chipBox.right = anchorX + handles.chipWidth / 2;
-    chipBox.top = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+  scratchReserved.length = 0;
+  const chipX = handles.chipWidth > 0
+    ? Math.max(edge + handles.chipWidth / 2,
+      Math.min(stageWidth - edge - handles.chipWidth / 2, anchorX))
+    : anchorX;
+  const chipBelow = anchorY + CONSTELLATION_RETICLE_PX / 2 + 12;
+  const chipY = chipBelow + handles.chipHeight <= stageHeight - edge
+    ? chipBelow
+    : anchorY - CONSTELLATION_RETICLE_PX / 2 - 12 - handles.chipHeight;
+  if (handles.chipWidth > 0 && handles.chipHeight > 0) {
+    chipBox.left = chipX - handles.chipWidth / 2;
+    chipBox.right = chipX + handles.chipWidth / 2;
+    chipBox.top = chipY;
     chipBox.bottom = chipBox.top + handles.chipHeight;
-    scratchObstacles.push(chipBox);
+    scratchReserved.push(chipBox);
   }
+  const nextLayoutKey = layoutSignature(
+    stageWidth, stageHeight, safeTop, edge, panels, handles, obstacles, obstacleVersion,
+  );
+  const nextConnectorKey = `${bucket(anchorX)},${bucket(anchorY)}|${nextLayoutKey}`;
+  if (nextConnectorKey === handles.connectorKey) return handles.lastSpecimen;
 
-  const placements = constellationPlacement({
-    anchorX,
-    anchorY,
-    stageWidth,
-    stageHeight,
-    panels,
-    obstacles,
-    reserved: scratchObstacles,
-    safeTop,
-    edge,
-    lock: handles.lock,
+  const layout = constellationLayout({
+    anchorX, anchorY, stageWidth, stageHeight, panels, obstacles,
+    reserved: scratchReserved, safeTop, edge, lock: handles.lock,
   });
-
+  handles.frameKey = nextConnectorKey;
+  handles.connectorKey = nextConnectorKey;
+  handles.layoutKey = nextLayoutKey;
+  handles.lastLayout = layout;
+  const nextPlacementKey = placementSignature(layout.placements);
+  const placementChanged = nextPlacementKey !== handles.placementKey;
+  handles.placementKey = nextPlacementKey;
+  const nextMaskKey = rectKey(layout.masks);
+  const maskChanged = nextMaskKey !== handles.maskKey;
+  handles.maskKey = nextMaskKey;
+  if (handles.root) {
+    handles.root.dataset.cellConstellationStatus = layout.status;
+    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
+    else delete handles.root.dataset.cellConstellationTemplate;
+  }
+  const present = new Set(layout.placements.map((panel) => panel.slot));
+  clearAbsent(handles, present);
   let specimen: ConstellationPlacement | null = null;
   let quadrantsMoved = false;
-  for (const placement of placements) {
-    const handle = handles.panels[placement.slot];
-    const host = handle?.host;
-    if (placement.slot === 'specimen') specimen = placement;
-    if (handles.quadrant[placement.slot] !== placement.quadrant) {
-      handles.quadrant[placement.slot] = placement.quadrant;
+  for (const current of layout.placements) {
+    const panel = handles.panels[current.slot];
+    if (current.slot === 'specimen') specimen = current;
+    if (handles.quadrant[current.slot] !== current.quadrant) {
+      handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
-    if (host) {
-      host.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
-      host.style.width = `${placement.width}px`;
-      host.style.height = `${placement.height}px`;
-      // The register is the only instrument that can outgrow the band, and it
-      // is told so rather than left to discover it: a capped panel scrolls and
-      // owes the reader a rail, an uncapped one must never grow one.
-      host.dataset.cellPanelCapped = placement.capped ? 'true' : 'false';
-      host.dataset.cellPanelQuadrant = placement.quadrant;
+    if (placementChanged && panel.host) {
+      panel.host.style.transform = `translate3d(${current.x}px, ${current.y}px, 0)`;
+      panel.host.style.width = `${current.width}px`;
+      panel.host.style.height = `${current.height}px`;
+      panel.host.dataset.cellPanelCapped = current.capped ? 'true' : 'false';
+      panel.host.dataset.cellPanelQuadrant = current.quadrant;
     }
-    const leader = handles.leaders[placement.slot];
-    if (leader) {
-      const line = constellationLeader(
-        anchorX,
-        anchorY,
-        CONSTELLATION_RETICLE_PX,
-        placement,
-      );
-      for (const stroke of [leader.under, leader.over]) {
-        if (!stroke) continue;
-        stroke.setAttribute('x1', `${line.x1}`);
-        stroke.setAttribute('y1', `${line.y1}`);
-        stroke.setAttribute('x2', `${line.x2}`);
-        stroke.setAttribute('y2', `${line.y2}`);
-      }
-      if (leader.dot) {
-        leader.dot.setAttribute('cx', `${line.x2}`);
-        leader.dot.setAttribute('cy', `${line.y2}`);
-      }
-      if (leader.label) {
-        // 0.52 rather than the midpoint: a label exactly halfway sits on the
-        // reticle's own ring for the shortest runs, and the runs are shortest
-        // on the smallest stages, which is where it matters most.
-        const lx = line.x1 + (line.x2 - line.x1) * 0.52;
-        const ly = line.y1 + (line.y2 - line.y1) * 0.52;
-        leader.label.style.transform = `translate3d(${lx}px, ${ly}px, 0) translate(-50%, -50%)`;
+    const route = current.route;
+    const leader = handles.leaders[current.slot];
+    if (!route || !leader) continue;
+    const d = pathData(route.points);
+    leader.under?.setAttribute('d', d);
+    leader.over?.setAttribute('d', d);
+    const end = route.points[route.points.length - 1];
+    if (leader.dot) {
+      leader.dot.style.display = '';
+      leader.dot.setAttribute('cx', `${end.x}`);
+      leader.dot.setAttribute('cy', `${end.y}`);
+    }
+    if (leader.label) {
+      leader.label.style.display = route.label.inPanel ? 'none' : '';
+      if (!route.label.inPanel) {
+        leader.label.style.transform =
+          `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
       }
     }
+    writeFallback(panel.fallbackLabel, route.label.inPanel);
   }
+  if (maskChanged) writeMasks(handles, layout.masks);
   if (handles.reticle) {
     const half = CONSTELLATION_RETICLE_PX / 2;
     handles.reticle.style.transform = `translate3d(${anchorX - half}px, ${anchorY - half}px, 0)`;
   }
   if (handles.chip) {
     handles.chip.style.transform =
-      `translate3d(${anchorX}px, ${anchorY + CONSTELLATION_RETICLE_PX / 2 + 12}px, 0) translateX(-50%)`;
+      `translate3d(${chipX}px, ${chipY}px, 0) translateX(-50%)`;
   }
   handles.lastSpecimen = specimen;
   if (quadrantsMoved) notifyQuadrants(handles);
   return specimen;
 }
 
-/** Show or hide the whole constellation in one write. The cell has left the
- *  frustum, or come back into it; every instrument answers together, because
- *  they are readings of one thing. */
-export function setConstellationVisible(
-  handles: CellConstellationHandles,
-  visible: boolean,
-): void {
+export function setConstellationVisible(handles: CellConstellationHandles, visible: boolean): void {
   if (visible === handles.visible) return;
   handles.visible = visible;
   if (handles.root) handles.root.style.opacity = visible ? '1' : '0';
 }
-
-/** A fresh element inherits none of what the gate assumes it kept. */
-export function invalidateConstellationFrame(
-  handles: CellConstellationHandles,
-): void {
+export function invalidateConstellationFrame(handles: CellConstellationHandles): void {
   handles.frameKey = '';
+  handles.layoutKey = '';
+  handles.connectorKey = '';
+  handles.placementKey = '';
+  handles.maskKey = '';
 }

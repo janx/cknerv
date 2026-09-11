@@ -8,6 +8,7 @@ import {
   CONSTELLATION_RETICLE_PX,
   constellationKeepoutPx,
   constellationLeader,
+  constellationLayout,
   constellationPlacement,
   createConstellationLock,
   resetConstellationLock,
@@ -387,5 +388,177 @@ describe('the promise the scoring cannot make', () => {
       }
     }
     }
+  });
+});
+
+describe('whole-group routing', () => {
+  type Rect = { left: number; top: number; right: number; bottom: number };
+  const routeSegments = (points: readonly { x: number; y: number }[]) => points.slice(1)
+    .map((point, index) => [points[index], point] as const);
+  const segmentTouches = (a: readonly [{ x: number; y: number }, { x: number; y: number }],
+    b: readonly [{ x: number; y: number }, { x: number; y: number }]) => {
+    const av = a[0].x === a[1].x; const bv = b[0].x === b[1].x;
+    if (av && bv) return a[0].x === b[0].x
+      && Math.max(Math.min(a[0].y, a[1].y), Math.min(b[0].y, b[1].y))
+        <= Math.min(Math.max(a[0].y, a[1].y), Math.max(b[0].y, b[1].y));
+    if (!av && !bv) return a[0].y === b[0].y
+      && Math.max(Math.min(a[0].x, a[1].x), Math.min(b[0].x, b[1].x))
+        <= Math.min(Math.max(a[0].x, a[1].x), Math.max(b[0].x, b[1].x));
+    const v = av ? a : b; const h = av ? b : a;
+    return v[0].x >= Math.min(h[0].x, h[1].x) && v[0].x <= Math.max(h[0].x, h[1].x)
+      && h[0].y >= Math.min(v[0].y, v[1].y) && h[0].y <= Math.max(v[0].y, v[1].y);
+  };
+  const expectCleanRoutes = (layout: ReturnType<typeof constellationLayout>) => {
+    const routes = layout.placements.map((panel) => panel.route?.points ?? []);
+    expect(new Set(routes.map((points) => `${points[0]?.x},${points[0]?.y}`)).size)
+      .toBe(routes.length);
+    for (let i = 0; i < routes.length; i += 1) {
+      for (let j = i + 1; j < routes.length; j += 1) {
+        for (const a of routeSegments(routes[i])) for (const b of routeSegments(routes[j])) {
+          expect(segmentTouches(a, b), `${layout.placements[i].slot}/${layout.placements[j].slot}`).toBe(false);
+        }
+      }
+    }
+  };
+  const segmentPenetrates = (segment: readonly [{ x: number; y: number }, { x: number; y: number }],
+    box: Rect) => {
+    const [a, b] = segment;
+    if (a.x === b.x) return a.x > box.left && a.x < box.right
+      && Math.max(Math.min(a.y, b.y), box.top) < Math.min(Math.max(a.y, b.y), box.bottom);
+    return a.y > box.top && a.y < box.bottom
+      && Math.max(Math.min(a.x, b.x), box.left) < Math.min(Math.max(a.x, b.x), box.right);
+  };
+  const intersect = (a: Rect, b: Rect) => Math.max(0, Math.min(a.right, b.right)
+    - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom)
+    - Math.max(a.top, b.top));
+  const subtract = (source: Rect, cut: Rect): Rect[] => {
+    const left = Math.max(source.left, cut.left); const top = Math.max(source.top, cut.top);
+    const right = Math.min(source.right, cut.right); const bottom = Math.min(source.bottom, cut.bottom);
+    if (right <= left || bottom <= top) return [source];
+    return [
+      { left: source.left, top: source.top, right: source.right, bottom: top },
+      { left: source.left, top: bottom, right: source.right, bottom: source.bottom },
+      { left: source.left, top, right: left, bottom },
+      { left: right, top, right: source.right, bottom },
+    ].filter((box) => box.right - box.left > 0.5 && box.bottom - box.top > 0.5);
+  };
+  const expectRoutesAvoid = (layout: ReturnType<typeof constellationLayout>, anchorX: number,
+    anchorY: number, reserved: Rect[], hud: Rect[]) => {
+    const panelBoxes: Rect[] = layout.placements.map((panel) => ({
+      left: panel.x, top: panel.y, right: panel.x + panel.width, bottom: panel.y + panel.height,
+    }));
+    let visibleHud = [...hud];
+    for (const panel of panelBoxes) visibleHud = visibleHud.flatMap((box) => subtract(box, panel));
+    const reticle = {
+      left: anchorX - CONSTELLATION_RETICLE_PX / 2,
+      top: anchorY - CONSTELLATION_RETICLE_PX / 2,
+      right: anchorX + CONSTELLATION_RETICLE_PX / 2,
+      bottom: anchorY + CONSTELLATION_RETICLE_PX / 2,
+    };
+    const hardObstacles = [...panelBoxes, ...reserved, ...visibleHud, reticle];
+    for (const panel of layout.placements) for (const segment of routeSegments(panel.route!.points)) {
+      for (const obstacle of hardObstacles) {
+        expect(segmentPenetrates(segment, obstacle), `${panel.slot} penetrates ${JSON.stringify(obstacle)}`)
+          .toBe(false);
+      }
+    }
+    const labels = layout.placements.map((panel) => panel.route!.label)
+      .filter((label) => !label.inPanel)
+      .map((label) => ({
+        left: label.x - label.width / 2, top: label.y - label.height / 2,
+        right: label.x + label.width / 2, bottom: label.y + label.height / 2,
+      }));
+    for (let index = 0; index < labels.length; index += 1) {
+      for (const obstacle of [...panelBoxes, ...reserved, ...visibleHud, reticle]) {
+        expect(intersect(labels[index], obstacle)).toBe(0);
+      }
+      for (let other = index + 1; other < labels.length; other += 1) {
+        expect(intersect(labels[index], labels[other])).toBe(0);
+      }
+    }
+    for (let labelIndex = 0; labelIndex < labels.length; labelIndex += 1) {
+      for (let routeIndex = 0; routeIndex < layout.placements.length; routeIndex += 1) {
+        const ownLabel = layout.placements[routeIndex].route!.label;
+        if (!ownLabel.inPanel && ownLabel.x === (labels[labelIndex].left + labels[labelIndex].right) / 2
+          && ownLabel.y === (labels[labelIndex].top + labels[labelIndex].bottom) / 2) continue;
+        for (const segment of routeSegments(layout.placements[routeIndex].route!.points)) {
+          expect(segmentPenetrates(segment, labels[labelIndex])).toBe(false);
+        }
+      }
+    }
+  };
+  const routed = (panels: ConstellationPanel[], anchorX: number, anchorY: number,
+    stageWidth: number, stageHeight: number, reserved: HudOcclusionRect[] = [],
+    obstacles: HudOcclusionRect[] = []) => constellationLayout({
+      panels, anchorX, anchorY, stageWidth, stageHeight, reserved, obstacles,
+      safeTop: SAFE_TOP, edge: EDGE,
+    });
+
+  it('solves the screenshot geometry with the measured name chip', () => {
+    const reserved = [
+      { left: 314, top: 543, right: 690, bottom: 567 },
+    ];
+    const layout = routed([
+      { slot: 'analysis', width: 440, height: 717 },
+      { slot: 'specimen', width: 280, height: 314 },
+      { slot: 'reader', width: 408, height: 340 },
+    ], 502, 485, 1920, 920, reserved);
+    expect(layout.status).not.toBe('unavailable');
+    expect(layout.placements).toHaveLength(3);
+    expect(layout.placements.every((panel) => panel.route && panel.route.points.length >= 2)).toBe(true);
+    expectCleanRoutes(layout);
+    expectRoutesAvoid(layout, 502, 485, reserved, []);
+  });
+
+  it('folds four panels into multiple portrait shelves', () => {
+    const reserved = [
+      { left: 250, top: 608, right: 570, bottom: 632 },
+    ];
+    const layout = routed([
+      { slot: 'analysis', width: 440, height: 717 },
+      { slot: 'specimen', width: 280, height: 314 },
+      { slot: 'reader', width: 408, height: 340 },
+      { slot: 'trace', width: 560, height: 420 },
+    ], 410, 550, 820, 1078, reserved);
+    expect(layout.status).toBe('compressed');
+    expect(layout.placements).toHaveLength(4);
+    expect(layout.template).toMatch(/^fold-/);
+    expectCleanRoutes(layout);
+    expectRoutesAvoid(layout, 410, 550, reserved, []);
+  });
+
+  it('routes around real tablet rails, panels, reticle and name', () => {
+    const rails = [
+      { left: 14, top: 48, right: 312, bottom: 282 },
+      { left: 14, top: 306, right: 312, bottom: 517 },
+      { left: 926, top: 153, right: 1166, bottom: 266 },
+    ];
+    const layout = routed(THREE, 590, 370, 1180, 663, [
+      { left: 420, top: 428, right: 760, bottom: 452 },
+    ], rails);
+    expect(layout.status).not.toBe('unavailable');
+    expect(layout.placements).toHaveLength(3);
+    for (const panel of layout.placements) {
+      expect((panel.route?.points.length ?? 0) - 2).toBeLessThanOrEqual(3);
+    }
+    expectCleanRoutes(layout);
+    expectRoutesAvoid(layout, 590, 370, [
+      { left: 420, top: 428, right: 760, bottom: 452 },
+    ], rails);
+  });
+
+  it('holds panel coordinates along a continuous track while routes follow', () => {
+    const lock = createConstellationLock();
+    const input = {
+      panels: THREE, stageWidth: 1920, stageHeight: 920, safeTop: SAFE_TOP, edge: EDGE,
+      reserved: [{ left: 314, top: 543, right: 690, bottom: 567 }], lock,
+    };
+    const first = constellationLayout({ ...input, anchorX: 502, anchorY: 485 });
+    const seats = first.placements.map((panel) => `${panel.x},${panel.y}`).join('|');
+    const route = first.placements[0].route?.points.map((point) => `${point.x},${point.y}`).join('|');
+    const last = constellationLayout({ ...input, anchorX: 508, anchorY: 488 });
+    expect(last.placements.map((panel) => `${panel.x},${panel.y}`).join('|')).toBe(seats);
+    expect(last.placements[0].route?.points.map((point) => `${point.x},${point.y}`).join('|'))
+      .not.toBe(route);
   });
 });

@@ -1,4 +1,4 @@
-import { type CSSProperties, useLayoutEffect, useRef } from 'react';
+import { type CSSProperties, useId, useLayoutEffect, useRef } from 'react';
 import {
   CONSTELLATION_RETICLE_PX,
   type ConstellationSlot,
@@ -30,6 +30,50 @@ export const CONSTELLATION_TAG: { [slot: string]: string } = {
   reader: 'SCAN·02',
   trace: 'SCAN·03',
 };
+
+function LeaderLabel({ handles, slot }: {
+  handles: CellConstellationHandles;
+  slot: ConstellationSlot;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    const handle = handles.leaders[slot];
+    handle.label = node;
+    if (!node) return undefined;
+    const measure = () => {
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return;
+      if (Math.abs(box.width - handle.labelWidth) < 0.5
+        && Math.abs(box.height - handle.labelHeight) < 0.5) return;
+      handle.labelWidth = box.width;
+      handle.labelHeight = box.height;
+      invalidateConstellationFrame(handles);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return () => { handle.label = null; };
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => { observer.disconnect(); handle.label = null; };
+  }, [handles, slot]);
+  return (
+    <span
+      ref={ref}
+      data-cell-leader-label={slot}
+      aria-hidden="true"
+      style={{
+        position: 'absolute', left: 0, top: 0, zIndex: 2, padding: '1px 6px',
+        pointerEvents: 'none', willChange: 'transform', whiteSpace: 'nowrap',
+        background: rgba(HUD_COLORS.stageGround, 0.92),
+        border: `1px solid ${rgba(CELL_CARD_ACCENT, 0.4)}`,
+        fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1.2,
+        color: CELL_CARD_ACCENT,
+      }}
+    >
+      {CONSTELLATION_TAG[slot]}
+    </span>
+  );
+}
 
 const BRACKET_PX = 16;
 
@@ -75,6 +119,7 @@ export function CellReticle({ handles }: { handles: CellConstellationHandles }) 
         pointerEvents: 'none',
         willChange: 'transform',
         filter: `drop-shadow(0 0 3px ${rgba(HUD_COLORS.ground, 0.95)}) drop-shadow(0 0 7px ${rgba(CELL_CARD_ACCENT, 0.35)})`,
+        zIndex: 4,
       }}
     >
       <span style={bracket('tl')} />
@@ -119,7 +164,8 @@ export function CellNameChip({
     if (!chip) return undefined;
     const measure = () => {
       const box = chip.getBoundingClientRect();
-      if (Math.abs(box.width - handles.chipWidth) < 0.5) return;
+      if (Math.abs(box.width - handles.chipWidth) < 0.5
+        && Math.abs(box.height - handles.chipHeight) < 0.5) return;
       handles.chipWidth = box.width;
       handles.chipHeight = box.height;
       invalidateConstellationFrame(handles);
@@ -147,6 +193,7 @@ export function CellNameChip({
         willChange: 'transform',
         background: rgba(HUD_COLORS.stageGround, 0.92),
         border: `1px solid ${rgba(CELL_CARD_ACCENT, 0.34)}`,
+        zIndex: 4,
       }}
     >
       <span
@@ -225,22 +272,39 @@ export function CellConstellationLeaders({
   slots: readonly ConstellationSlot[];
 }) {
   const present = CONSTELLATION_SLOTS.filter((slot) => slots.includes(slot));
+  const rawMaskId = useId();
+  const maskId = `cell-constellation-${rawMaskId.replace(/:/g, '')}`;
   return (
     <>
       <svg
         data-cell-constellation-leaders="true"
         aria-hidden="true"
-        style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 1 }}
+        width="100%"
+        height="100%"
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none', zIndex: 1 }}
       >
+        <defs>
+          <mask id={maskId} x="0" y="0" width="100%" height="100%" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="100%" height="100%" fill="white" />
+            <g ref={(node) => {
+              handles.maskGroup = node;
+              invalidateConstellationFrame(handles);
+            }} data-cell-constellation-mask-cuts="true" />
+          </mask>
+        </defs>
         {present.map((slot) => (
-          <g key={slot} data-cell-leader={slot}>
-            <line
+          <g key={slot} data-cell-leader={slot} mask={`url(#${maskId})`}>
+            <path
               ref={(node) => { handles.leaders[slot].under = node; invalidateConstellationFrame(handles); }}
+              fill="none"
+              strokeLinejoin="round"
               stroke={rgba(HUD_COLORS.ground, 0.85)}
               strokeWidth={3.5}
             />
-            <line
+            <path
               ref={(node) => { handles.leaders[slot].over = node; invalidateConstellationFrame(handles); }}
+              fill="none"
+              strokeLinejoin="round"
               stroke={rgba(CELL_CARD_ACCENT, 0.72)}
               strokeWidth={1.2}
             />
@@ -254,32 +318,7 @@ export function CellConstellationLeaders({
           </g>
         ))}
       </svg>
-      {present.map((slot) => (
-        <span
-          key={slot}
-          ref={(node) => { handles.leaders[slot].label = node; invalidateConstellationFrame(handles); }}
-          data-cell-leader-label={slot}
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            zIndex: 2,
-            padding: '1px 6px',
-            pointerEvents: 'none',
-            willChange: 'transform',
-            whiteSpace: 'nowrap',
-            background: rgba(HUD_COLORS.stageGround, 0.92),
-            border: `1px solid ${rgba(CELL_CARD_ACCENT, 0.4)}`,
-            fontFamily: HUD_FONTS.mono,
-            fontSize: HUD_TYPE.label,
-            letterSpacing: 1.2,
-            color: CELL_CARD_ACCENT,
-          }}
-        >
-          {CONSTELLATION_TAG[slot]}
-        </span>
-      ))}
+      {present.map((slot) => <LeaderLabel key={slot} handles={handles} slot={slot} />)}
     </>
   );
 }

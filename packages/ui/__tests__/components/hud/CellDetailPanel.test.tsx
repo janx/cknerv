@@ -2387,6 +2387,7 @@ describe('CellDetailPanel', () => {
 
     expect(square.dataset.cellScanWindow).toBe('true');
     expect(square.style.background).toBe('transparent');
+    expect(square.style.boxSizing).toBe('border-box');
   });
 
   // The ladder the card's measure is picked from, in HOLE px — the clear stage
@@ -3192,14 +3193,24 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-evidence-row="lock-code"]')).toBeNull();
   });
 
-  it('close button fires onClose', () => {
+  it('closes one instrument without dismissing the Cell', () => {
     const onClose = vi.fn();
-    const { getAllByRole } = render(<CellDetailPanel cell={base} onClose={onClose} />);
+    const { container, getAllByRole, rerender } = render(
+      <CellDetailPanel cell={base} onClose={onClose} />,
+    );
     // Every instrument carries its own ✕ (2026-09-10), so this surface no
     // longer has exactly one — the register's is the first, and the chip's,
     // which dismisses the whole constellation, lives out on the layer.
-    getAllByRole('button', { name: 'close' })[0].click();
-    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(getAllByRole('button', { name: 'close' })[0]);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-cell-constellation-panel="analysis"]')).toBeNull();
+    expect(container.querySelector('[data-cell-constellation-panel="specimen"]')).not.toBeNull();
+
+    const other = { ...base, id: base.id + 1 };
+    rerender(<CellDetailPanel cell={other} onClose={onClose} />);
+    expect(container.querySelector('[data-cell-constellation-panel="analysis"]')).not.toBeNull();
+    rerender(<CellDetailPanel cell={base} onClose={onClose} />);
+    expect(container.querySelector('[data-cell-constellation-panel="analysis"]')).not.toBeNull();
   });
 });
 

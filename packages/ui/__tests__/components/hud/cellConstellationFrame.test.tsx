@@ -40,8 +40,8 @@ function wired() {
   handles.reticle = document.createElement('div');
   handles.chip = document.createElement('div');
   for (const slot of ['analysis', 'specimen'] as const) {
-    handles.leaders[slot].under = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    handles.leaders[slot].over = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    handles.leaders[slot].under = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    handles.leaders[slot].over = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     handles.leaders[slot].dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     handles.leaders[slot].label = document.createElement('span');
   }
@@ -70,9 +70,11 @@ describe('the frame writer', () => {
       expect(hosts[slot].dataset.cellPanelQuadrant).toMatch(/^(tl|tr|bl|br)$/);
       expect(hosts[slot].dataset.cellPanelCapped).toMatch(/^(true|false)$/);
       const leader = handles.leaders[slot];
-      expect(leader.over?.getAttribute('x1')).not.toBeNull();
-      expect(leader.dot?.getAttribute('cx')).toBe(leader.over?.getAttribute('x2'));
-      expect(leader.label?.style.transform).toMatch(/^translate3d\(/);
+      expect(leader.over?.getAttribute('d')).toMatch(/^M /);
+      expect(leader.dot?.getAttribute('cx')).not.toBeNull();
+      if (leader.label?.style.display !== 'none') {
+        expect(leader.label?.style.transform).toMatch(/^translate3d\(/);
+      }
     }
     // The window is never capped — a clipped braid is the one thing 280 px of
     // width exists to prevent.
@@ -83,10 +85,11 @@ describe('the frame writer', () => {
       .toBe('translate3d(960px, 598px, 0) translateX(-50%)');
   });
 
-  it('writes nothing for a constellation that has only drifted', () => {
+  it('keeps panel seats while drift updates the routed leaders', () => {
     const { handles, hosts } = wired();
     commit(handles);
     hosts.analysis.style.transform = 'SENTINEL';
+    const before = handles.leaders.analysis.over?.getAttribute('d');
 
     // Under the half-pixel bucket: the galaxy autorotates, so every coordinate
     // here drifts forever and a gate finer than the eye is a write per frame
@@ -95,7 +98,31 @@ describe('the frame writer', () => {
     expect(hosts.analysis.style.transform).toBe('SENTINEL');
 
     commit(handles, 980, 540);
-    expect(hosts.analysis.style.transform).not.toBe('SENTINEL');
+    expect(hosts.analysis.style.transform).toBe('SENTINEL');
+    expect(handles.leaders.analysis.over?.getAttribute('d')).not.toBe(before);
+  });
+
+  it('invalidates after an in-place HUD rectangle mutation', () => {
+    const { handles } = wired();
+    const obstacles = [{ left: 10, top: 120, right: 200, bottom: 300 }];
+    commitConstellationFrame(handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, obstacles, 1);
+    const before = handles.lastLayout?.masks.map((rect) => rect.right).join(',');
+    obstacles[0].right = 260;
+    commitConstellationFrame(handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, obstacles, 2);
+    expect(handles.lastLayout?.masks.map((rect) => rect.right).join(',')).not.toBe(before);
+  });
+
+  it('updates the reticle and chip after every instrument closes', () => {
+    const { handles } = wired();
+    commit(handles);
+    for (const slot of ['analysis', 'specimen'] as const) {
+      handles.panels[slot].present = false;
+      handles.panels[slot].height = 0;
+    }
+    invalidateConstellationFrame(handles);
+    expect(commit(handles, 800, 420)).toBeNull();
+    expect(handles.reticle?.style.transform).toBe('translate3d(754px, 374px, 0)');
+    expect(handles.leaders.analysis.over?.getAttribute('d')).toBe('');
   });
 
   it('still answers with the specimen seat on a frame it skipped', () => {

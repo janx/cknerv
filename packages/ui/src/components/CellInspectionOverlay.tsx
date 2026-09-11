@@ -47,6 +47,7 @@ import {
 } from './sceneInspection';
 import {
   dimHudPanelsUnder,
+  hudOcclusionVersion,
   HUD_DIM_SAMPLE_MS,
   useHudOcclusionRects,
   type HudOcclusionRect,
@@ -177,6 +178,7 @@ export function CellInspectionAnchor({
       INSPECTOR_SAFE_TOP_PX,
       INSPECTOR_EDGE_PX,
       obstacles,
+      hudOcclusionVersion(),
     );
     // The braid is scissored into the specimen's window, and the window's own
     // offset is measured inside that panel — so the origin the scene needs is

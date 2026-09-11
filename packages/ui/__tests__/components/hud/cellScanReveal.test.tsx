@@ -111,12 +111,16 @@ describe('the scan reveal runs on a clock the leaves hold', () => {
     // fact button holds whether the pointer (or the keyboard) is on IT, so
     // that a hover re-renders one button and not the dossier. Round 3 added
     // it — before then a fact answered a pointer with nothing at all.
+    // The FIFTH records which independently closable instruments the reader
+    // dismissed. It changes only on a close click or a Cell selection change;
+    // it never advances with the scan clock.
     const stateDeclarations = PANEL_SOURCE.match(/useState[<(]/g) ?? [];
-    expect(stateDeclarations).toHaveLength(4);
+    expect(stateDeclarations).toHaveLength(5);
     expect(PANEL_SOURCE).toContain('const [selectedFieldState, setSelectedFieldState] = useState<');
     expect(PANEL_SOURCE).toContain('const [segmentFocus, setSegmentFocus] = useState<');
     expect(PANEL_SOURCE).toContain('const [plateHeightPx, setPlateHeightPx] = useState(0);');
     expect(PANEL_SOURCE).toContain('const [hot, setHot] = useState(false);');
+    expect(PANEL_SOURCE).toContain('const [closedState, setClosedState] = useState<');
   });
 
   it('renders the card body once while the walk lights the whole dossier', () => {
