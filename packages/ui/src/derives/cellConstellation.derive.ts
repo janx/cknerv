@@ -32,10 +32,62 @@ export const CONSTELLATION_MIN_GAP_PX = 16;
 export const CONSTELLATION_PREFERRED_GAP_PX = 24;
 export const CONSTELLATION_MIN_HEIGHT_PX = 168;
 export const CONSTELLATION_STACK_MIN_PX = 120;
-export const CONSTELLATION_HOLD_MARGIN_PX = 96;
 export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
 export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
 
+/**
+ * How far the Cell may travel from the anchor its seats were solved at before
+ * the constellation is asked to step after it.
+ *
+ * Inside this radius the held seats are reused verbatim and the re-solve's
+ * continuity reference is the held seat itself, so an instrument stands
+ * perfectly still while the reader reads and the galaxy turns underneath.
+ * Outside it the reference becomes the held seat plus the anchor delta, so the
+ * constellation follows the Cell AS A GROUP rather than re-deriving a fresh
+ * composition: it steps about once every radius of travel, and the plates keep
+ * their relative arrangement across the step. The trade is how far the Cell may
+ * drift from its instruments before they come with it; 160 px is a little under
+ * two reticle diameters, which is the distance at which the leaders start to
+ * read as long rather than as a constellation.
+ */
+export const CONSTELLATION_HOLD_RADIUS_PX = 160;
+
+/**
+ * What one pixel of seat movement costs the scorer, in the same currency as
+ * every other term.
+ *
+ * Continuity is the strongest preference the scorer has, and deliberately so:
+ * a plate the reader is reading may not be moved for a tidier composition. It
+ * stays below the height term (4 pt per pixel of compression), so an
+ * arrangement that keeps an instrument at its asked height still beats one
+ * that holds a seat and cuts 100 px off a plate to do it.
+ *
+ * 2 is a measurement, not the plan's proposal of 1. The term it has to beat is
+ * the HUD overlap preference, which is 1 pt per 80 px² — a 440 px register
+ * standing over the right-hand rails of a 1920 stage scores about 1,400 there,
+ * where three plates held perfectly still score at most 3 × the cap. At 1 pt/px
+ * that preference wins and the whole constellation crosses the stage rather
+ * than stand on a rail it is already allowed to draw over, which is the
+ * teleport this phase exists to remove: probe E's rightward drift kept a
+ * 734 px jump at 1 pt/px and 1.5, and a 749 px one on the diagonal. From 2
+ * upwards every re-seat in the probe is a pure group step — each plate moves
+ * exactly the anchor's own travel and no more — and the picture is identical
+ * at 2, 3 and 4, so this is a plateau and not a knife edge.
+ */
+export const CONSTELLATION_CONTINUITY_PX_WEIGHT = 2;
+
+/**
+ * The most one plate's movement may cost, in pixels of distance.
+ *
+ * Past this distance a seat is not "further from where it was", it is
+ * somewhere else entirely, and letting the term keep growing would make a
+ * layout that puts one plate across the stage arbitrarily worse than one that
+ * puts two plates half a stage away. Capping it keeps the term a preference
+ * for holding still rather than a veto on re-composing, and it is what lets a
+ * genuine side flip happen at all when the held side runs out of room. At
+ * 1 pt/px the cap is 400 points a plate.
+ */
+export const CONSTELLATION_CONTINUITY_CAP_PX = 400;
 
 /**
  * How far outside the straight line between an outlet and a plate edge the
@@ -1891,14 +1943,71 @@ export function revalidateConstellationLayoutForAnchor(
     ...(held.chip ? { chip: held.chip } : {}),
   };
 }
-function scoreCandidate(input: ConstellationInput, candidate: Candidate): number {
-  let score = candidate.template === input.lock?.template ? -CONSTELLATION_HOLD_MARGIN_PX : 0;
+/** Where each instrument stood when the reader last saw it, in the frame the
+ * scorer is being asked about. Null when there is nothing to be continuous
+ * with — a first selection, or a lock that holds a different set of
+ * instruments than the one being solved for. */
+type ContinuityReference = { [slot: string]: ConstellationPoint | undefined } | null;
+
+/**
+ * The seats a re-solve is asked to stay near, and the rule for where they are.
+ *
+ * Inside `CONSTELLATION_HOLD_RADIUS_PX` of the anchor the lock was solved at,
+ * the reference is the held seat itself, so a Cell that drifts under the
+ * reader's eye moves and its instruments do not. Beyond it the reference is
+ * the held seat carried by the anchor's own delta, so the constellation steps
+ * after the Cell as a group and arrives in the arrangement it left in. Only a
+ * lock holding EXACTLY this slot set qualifies: a layout that gained or lost
+ * an instrument is a new composition, not a moved one.
+ */
+function continuityReference(
+  input: ConstellationInput,
+  panels: readonly ConstellationPanel[],
+): ContinuityReference {
+  const lock = input.lock;
+  if (!lock || lock.template === null) return null;
+  let heldCount = 0;
+  for (const slot of Object.keys(lock.placements)) {
+    if (lock.placements[slot]) heldCount += 1;
+  }
+  if (heldCount !== panels.length) return null;
+  if (!panels.every((panel) => lock.placements[panel.slot] !== undefined)) return null;
+  const dx = input.anchorX - lock.anchorX;
+  const dy = input.anchorY - lock.anchorY;
+  const stepping = Math.hypot(dx, dy) > CONSTELLATION_HOLD_RADIUS_PX;
+  const reference: { [slot: string]: ConstellationPoint | undefined } = {};
+  for (const panel of panels) {
+    const held = lock.placements[panel.slot] as ConstellationPlacement;
+    reference[panel.slot] = stepping
+      ? { x: held.x + dx, y: held.y + dy }
+      : { x: held.x, y: held.y };
+  }
+  return reference;
+}
+
+function scoreCandidate(
+  input: ConstellationInput,
+  candidate: Candidate,
+  reference: ContinuityReference,
+): number {
+  let score = 0;
   const hud = (input.obstacles ?? []).map(rectBox);
   for (const panel of candidate.placements) {
     score += Math.abs(panel.height - (input.panels.find((p) => p.slot === panel.slot)?.height ?? panel.height)) * 4;
     score += Math.hypot(panel.x + panel.width / 2 - input.anchorX,
       panel.y + panel.height / 2 - input.anchorY) * 0.08;
     for (const obstacle of hud) score += intersectionArea(boxOf(panel), obstacle) / 80;
+    // Holding a seat is worth more than any composition preference, up to the
+    // point where the seat is not the same seat any more. This replaces the
+    // template hold bonus outright: a template is a family of arrangements,
+    // and what the reader's eye holds on to is the plate, not the family.
+    const held = reference?.[panel.slot];
+    if (held) {
+      score += Math.min(
+        CONSTELLATION_CONTINUITY_CAP_PX,
+        Math.hypot(panel.x - held.x, panel.y - held.y),
+      ) * CONSTELLATION_CONTINUITY_PX_WEIGHT;
+    }
   }
   const preference: Record<ConstellationTemplate, number> = {
     'split-left': 0, 'split-right': 1, 'expand-right': 2, 'expand-left': 3,
@@ -1921,6 +2030,7 @@ function* bestCandidatesSteps(
   input: ConstellationInput,
   candidates: readonly Candidate[],
   gap: number,
+  reference: ContinuityReference,
 ): Generator<void, Candidate[]> {
   const best: Array<{ candidate: Candidate; score: number; ordinal: number }> = [];
   let dropped = false;
@@ -1929,7 +2039,7 @@ function* bestCandidatesSteps(
     constellationWorkStats.candidatesValidated += 1;
     if ((ordinal & 31) === 31) yield;
     if (!hardValid(input, candidate.placements, gap)) continue;
-    const entry = { candidate, score: scoreCandidate(input, candidate), ordinal };
+    const entry = { candidate, score: scoreCandidate(input, candidate, reference), ordinal };
     let at = best.length;
     while (at > 0) {
       const prior = best[at - 1];
@@ -1956,6 +2066,160 @@ function geometryKey(input: ConstellationInput, panels: readonly ConstellationPa
   }
   return key;
 }
+/**
+ * How far the enumeration keeps a plate from the Cell.
+ *
+ * `hardValid` accepts any plate more than the reticle's own clearance away —
+ * 54 px — because that is the last line before a plate is standing ON the
+ * Cell. Every composition the solver BUILDS keeps much more than that: the
+ * keep-out field where the stage is wide enough for one, and the reticle
+ * clearance otherwise, plus the gap. The difference matters to anything that
+ * offers a seat back to the solver: a seat placed on the validity line is
+ * broken again by the next pixel of drift, and the frame after that, which is
+ * a re-solve every few frames and a plate that will not stand still. Measured
+ * without this margin: 126 full solves over 240 drifting frames where three
+ * had been enough.
+ *
+ * (1280 is the same field threshold the three enumerators spell out; P3 §5.6
+ * names it `CONSTELLATION_FIELD_MIN_STAGE_PX`, and these are its other sites.)
+ */
+function anchorKeepoutPx(input: ConstellationInput): number {
+  return (input.stageWidth >= 1280
+    ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
+    : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX)
+    + CONSTELLATION_MIN_GAP_PX;
+}
+
+/**
+ * The shortest single-axis move that makes one box legal again, or null.
+ *
+ * "Legal" is the geometry half of `hardValid` for one plate: inside the stage,
+ * off the Cell, and clear of everything given. The offsets considered are the
+ * ones that put the box exactly past an edge of something it overlaps, which
+ * is the complete set of minimal answers along either axis, so the first that
+ * clears everything is the smallest there is.
+ */
+function slideToClear(
+  box: Box,
+  blockers: readonly Box[],
+  input: ConstellationInput,
+): Box | null {
+  const minX = input.edge; const minY = input.safeTop;
+  const maxX = input.stageWidth - input.edge; const maxY = input.stageHeight - input.edge;
+  const core = anchorKeepoutPx(input);
+  const all: Box[] = [...blockers, {
+    x: input.anchorX - core, y: input.anchorY - core, width: core * 2, height: core * 2,
+  }];
+  const fits = (moved: Box): boolean => moved.x >= minX - 0.5 && moved.y >= minY - 0.5
+    && moved.x + moved.width <= maxX + 0.5 && moved.y + moved.height <= maxY + 0.5
+    && all.every((other) => intersectionArea(moved, other) <= 0.25);
+  if (fits(box)) return box;
+  const options: Array<{ dx: number; dy: number }> = [
+    { dx: minX - box.x, dy: 0 }, { dx: maxX - box.width - box.x, dy: 0 },
+    { dx: 0, dy: minY - box.y }, { dx: 0, dy: maxY - box.height - box.y },
+  ];
+  for (const other of all) {
+    options.push({ dx: other.x - (box.x + box.width), dy: 0 });
+    options.push({ dx: other.x + other.width - box.x, dy: 0 });
+    options.push({ dx: 0, dy: other.y - (box.y + box.height) });
+    options.push({ dx: 0, dy: other.y + other.height - box.y });
+  }
+  options.sort((a, b) => (Math.abs(a.dx) + Math.abs(a.dy)) - (Math.abs(b.dx) + Math.abs(b.dy)));
+  for (const option of options) {
+    const moved = {
+      x: box.x + option.dx, y: box.y + option.dy, width: box.width, height: box.height,
+    };
+    if (fits(moved)) return moved;
+  }
+  return null;
+}
+
+/**
+ * The three answers a re-solve already has.
+ *
+ * A full solve enumerates compositions from scratch, which is right for a
+ * first selection and wrong for a Cell the reader has been reading: the seats
+ * on screen are an answer, and they are the answer the eye is holding. So the
+ * candidate set gains the picture that is up (verbatim), the same picture
+ * carried by the Cell's own move (translated), and the same picture with each
+ * plate that no longer fits slid the shortest distance along one axis that
+ * makes it fit (repaired). They are candidates, not shortcuts: each one passes
+ * `hardValid` at the current gap like every other, and each is scored like
+ * every other — they simply start from where the reader left off.
+ *
+ * Only a lock over the SAME geometry qualifies. A stage, a rail or a panel
+ * height that changed makes the held heights a statement about a different
+ * question; that case is grow-in-place, and it is not this.
+ */
+function heldCandidates(
+  input: ConstellationInput,
+  panels: readonly ConstellationPanel[],
+  key: string,
+): Candidate[] {
+  const lock = input.lock;
+  if (!lock || lock.template === null || lock.geometryKey !== key) return [];
+  let heldCount = 0;
+  for (const slot of Object.keys(lock.placements)) {
+    if (lock.placements[slot]) heldCount += 1;
+  }
+  if (heldCount !== panels.length) return [];
+  if (!panels.every((panel) => lock.placements[panel.slot] !== undefined)) return [];
+  const held = panels.map((panel) => lock.placements[panel.slot] as ConstellationPlacement);
+  const seat = (index: number, x: number, y: number, keepQuadrant: boolean) => {
+    const next = placement(
+      panels[index], held[index].height, x, y, input.anchorX, input.anchorY,
+    );
+    if (keepQuadrant) next.quadrant = held[index].quadrant;
+    return next;
+  };
+  // A held seat is offered back only while it is still a seat this composition
+  // would have CHOSEN — every plate outside the Cell's keep-out field, not
+  // merely outside the line `hardValid` draws at the reticle's own clearance.
+  // Without it the answer nearest the held seats is repeatedly the one that
+  // has just barely stopped being illegal, and the constellation nudges after
+  // the Cell every few frames instead of stepping after it once.
+  const keepout = anchorKeepoutPx(input) - 0.5;
+  const roomy = (placements: readonly ConstellationPlacement[]): boolean => placements.every(
+    (panel) => nearestDistance(boxOf(panel), input.anchorX, input.anchorY) >= keepout,
+  );
+  const offer = (candidate: Candidate, into: Candidate[]) => {
+    if (roomy(candidate.placements)) into.push(candidate);
+  };
+  const out: Candidate[] = [];
+  offer({
+    template: lock.template,
+    placements: held.map((seated, index) => seat(index, seated.x, seated.y, true)),
+  }, out);
+  const dx = input.anchorX - lock.anchorX;
+  const dy = input.anchorY - lock.anchorY;
+  if (Math.hypot(dx, dy) > 0.5) {
+    offer({
+      template: lock.template,
+      placements: held.map((seated, index) => seat(index, seated.x + dx, seated.y + dy, true)),
+    }, out);
+  }
+  const reserved = (input.reserved ?? []).map(rectBox);
+  const repaired: ConstellationPlacement[] = [];
+  let anyMoved = false;
+  for (let index = 0; index < held.length; index += 1) {
+    // Each plate is repaired against its NEIGHBOURS AS THEY STAND, so the
+    // answer is "this one plate moved" and never a cascade nobody asked for.
+    const blockers = [
+      ...held.filter((_seated, other) => other !== index)
+        .map((seated) => expanded(boxOf(seated), CONSTELLATION_MIN_GAP_PX)),
+      ...reserved,
+    ];
+    const slid = slideToClear(boxOf(held[index]), blockers, input);
+    if (!slid) return out;
+    const moved = Math.abs(slid.x - held[index].x) > 0.5
+      || Math.abs(slid.y - held[index].y) > 0.5;
+    if (moved) anyMoved = true;
+    repaired.push(seat(index, slid.x, slid.y, !moved));
+  }
+  if (anyMoved) offer({ template: lock.template, placements: repaired }, out);
+  return out;
+}
+
 function* lockedLayoutSteps(
   input: ConstellationInput,
   withRoutes: boolean,
@@ -1964,7 +2228,8 @@ function* lockedLayoutSteps(
   const key = geometryKey(input, panels);
   const lock = input.lock;
   if (lock?.template !== null && lock !== undefined
-    && Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY) <= 160) {
+    && Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY)
+      <= CONSTELLATION_HOLD_RADIUS_PX) {
     const previousSlots = Object.keys(lock.placements).filter((slot) => lock.placements[slot]);
     const removedOnly = panels.every((panel) => lock.placements[panel.slot] !== undefined)
       && panels.length < previousSlots.length;
@@ -2024,6 +2289,12 @@ function* solveLayoutSteps(
   if (held) return held;
   const key = geometryKey(input, panels);
   constellationWorkStats.fullSolves += 1;
+  // What the reader is already looking at, and where the scorer is asked to
+  // keep it. Null on a first selection and whenever the lock holds a different
+  // set of instruments, which is why the matrix and the oracle — neither of
+  // which locks — are solved exactly as they were before this existed.
+  const reference = continuityReference(input, panels);
+  const alreadySeated = heldCandidates(input, panels, key);
   let best: Candidate | null = null;
   let bestMasks: HudOcclusionRect[] = [];
   let bestDegraded = 0;
@@ -2041,6 +2312,11 @@ function* solveLayoutSteps(
     let seatedAtThisSqueeze = false;
     for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
       const candidates: Candidate[] = [];
+      // Held seats are offered first and at the asked heights only: if nothing
+      // fits at this squeeze, the composition has to change and holding a seat
+      // is no longer the question. They lead the list so a tie with a freshly
+      // enumerated arrangement is settled in favour of standing still.
+      if (squeeze === 1) candidates.push(...alreadySeated);
       const right = expandCandidate(input, panels, 'right', squeeze, gap);
       const left = expandCandidate(input, panels, 'left', squeeze, gap);
       if (right) candidates.push(right);
@@ -2066,7 +2342,7 @@ function* solveLayoutSteps(
         if ((encoded & 31) === 31) yield;
       }
       constellationWorkStats.candidatesBuilt += candidates.length;
-      const feasible = yield* bestCandidatesSteps(input, candidates, gap);
+      const feasible = yield* bestCandidatesSteps(input, candidates, gap, reference);
       if (feasible.length > 0) seatedAtThisSqueeze = true;
       for (const candidate of feasible) {
         if (!withRoutes) { best = candidate; bestMasks = []; break; }

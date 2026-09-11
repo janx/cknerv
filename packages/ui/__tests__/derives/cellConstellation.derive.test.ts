@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { HudOcclusionRect } from '../../src/components/hudOcclusion';
 import {
-  CONSTELLATION_HOLD_MARGIN_PX,
+  CONSTELLATION_CONTINUITY_CAP_PX,
+  CONSTELLATION_CONTINUITY_PX_WEIGHT,
+  CONSTELLATION_HOLD_RADIUS_PX,
   CONSTELLATION_MIN_HEIGHT_PX,
   CONSTELLATION_MIN_GAP_PX,
   CONSTELLATION_ORDER,
@@ -294,7 +296,12 @@ describe('the quadrant lock', () => {
   });
 
   it('states its margin in the same currency the scorer uses', () => {
-    expect(CONSTELLATION_HOLD_MARGIN_PX).toBeGreaterThan(0);
+    // The template hold bonus was replaced by a continuity term over the seats
+    // themselves: a template is a family of arrangements, and what the eye
+    // holds on to is the plate. Both knobs are points per pixel of movement,
+    // the same currency the height and distance terms are already in.
+    expect(CONSTELLATION_CONTINUITY_PX_WEIGHT).toBeGreaterThan(0);
+    expect(CONSTELLATION_CONTINUITY_CAP_PX).toBeGreaterThan(CONSTELLATION_HOLD_RADIUS_PX);
   });
 });
 
@@ -716,21 +723,27 @@ describe('routing failure never takes height from an instrument (F6)', () => {
 });
 
 describe('the seats hold while the galaxy turns the cell (F4)', () => {
-  // RED until P3 — seat continuity and chip relocation.
-  it.fails('re-seats at most three times over 480 px of drift, and never teleports', () => {
-    // Measured 2026-09-11: 7 seat changes over the same drift, the largest
-    // single-frame jump 854 px. The 376 px chip is a hard reserved claim on
-    // every locked reuse, so about 24 px of horizontal drift breaks the lock,
-    // and the re-solve keeps the template but not the seats.
+  // Measured 2026-09-11 at 2 px/frame: 7 seat changes over the same drift, the
+  // largest single-frame jump 854 px. The 376 px chip was a hard reserved claim
+  // on every locked reuse, so about 24 px of horizontal drift broke the lock,
+  // and the re-solve kept the template but not the seats.
+  //
+  // What a re-seat is measured against is the anchor's travel SINCE THE SEATS
+  // WERE SET, not since the previous frame: the ruling on the plan's §9.3 is a
+  // hold radius of 160 px with a group step of the same length, so the
+  // constellation is expected to move about 160 px when it moves at all. The
+  // question the assertion asks is whether the plates went with the Cell or
+  // somewhere else — travel plus 48 px is following, 854 px is a teleport.
+  const drift = (perFrame: number, frames: number) => {
     const lock = createConstellationLock();
     let anchorX = 900;
     const anchorY = 520;
     let previous: ConstellationPlacement[] | null = null;
-    let previousAnchorX = anchorX;
+    let seatedAtAnchorX = anchorX;
     let changes = 0;
     let worst = 0;
-    for (let frame = 0; frame < 240; frame += 1) {
-      anchorX += 2;
+    for (let frame = 0; frame < frames; frame += 1) {
+      anchorX += perFrame;
       const layout = constellationLayout({
         panels: THREE_MEASURED,
         anchorX,
@@ -750,15 +763,32 @@ describe('the seats hold while the galaxy turns the cell (F4)', () => {
           const before = previous.find((other) => other.slot === panel.slot);
           if (!before) continue;
           worst = Math.max(worst, Math.hypot(panel.x - before.x, panel.y - before.y)
-            - Math.abs(anchorX - previousAnchorX));
+            - Math.abs(anchorX - seatedAtAnchorX));
         }
+        seatedAtAnchorX = anchorX;
       }
       previous = layout.placements;
-      previousAnchorX = anchorX;
     }
+    return { changes, worst };
+  };
+
+  it('re-seats at most three times over 480 px of drift, and never teleports', () => {
+    const { changes, worst } = drift(2, 240);
     expect(changes).toBeLessThanOrEqual(3);
     // A re-seat may follow the Cell; it may not jump the stage.
     expect(worst).toBeLessThanOrEqual(48);
+  });
+
+  it('holds the same promise at the speeds an orbit and a canopy turn at', () => {
+    // 0.6 px/frame is a slow orbit; 0.07 is the 12 % canopy tempo a selected
+    // Cell drifts at while the reader simply reads. Both run to 480 px of
+    // travel so the comparison with the 2 px/frame case is like for like.
+    for (const perFrame of [0.6, 0.07]) {
+      const { changes, worst } = drift(perFrame, Math.round(480 / perFrame));
+      expect(changes, `seat changes at ${perFrame} px/frame`).toBeLessThanOrEqual(3);
+      expect(worst, `worst move over the anchor at ${perFrame} px/frame`)
+        .toBeLessThanOrEqual(48);
+    }
   });
 });
 
