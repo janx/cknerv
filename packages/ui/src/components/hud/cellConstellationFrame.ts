@@ -17,6 +17,7 @@ import {
   createConstellationLock,
   refineConstellationRoutesCursor,
   revalidateConstellationLayoutForAnchor,
+  constellationHeldRoomPx,
   CONSTELLATION_RETICLE_PX,
   CONSTELLATION_ROUTE_CLEARANCE_PX,
   CONSTELLATION_UNAVAILABLE_RESOLVE_PX,
@@ -430,19 +431,32 @@ function layoutFullyPresented(handles: CellConstellationHandles): boolean {
  *
  * A plate is withdrawn only when the Cell has walked into its seat — the
  * reticle would be underneath it — or when the seat has left the stage. Every
- * other plate stays exactly where the reader last saw it. Its leaders are
- * hidden by the caller, because a leader belongs to an anchor and this one is
- * stale; a seat does not.
+ * other plate stays exactly where the reader last saw it.
+ *
+ * A plate whose CONTENT changed height is given the new height here, clamped to
+ * the room the old placement had: the stage edge, or the top of the next plate
+ * down its column less the gap. Writing the measured height without the clamp
+ * would let a growing register run under the plate beneath it for the frames
+ * the solve takes; refusing to write it at all leaves the reader's new rows
+ * behind a plate that has not been told about them. Clamped, the instrument
+ * shows what it can and scrolls the rest, and nothing on the stage overlaps.
+ *
+ * The leaders come with it wherever they can be carried: a height change is not
+ * an anchor change, so a leader whose plate did not move is still exactly
+ * right, and `revalidateConstellationLayoutForAnchor` says so for the whole set
+ * against the boxes as presented. When it cannot — the grown plate now stands
+ * in its own leader's way — every leader is hidden, because a leader that ends
+ * inside a plate is a lie about where the instrument is.
  */
 function holdStaleSeats(
   handles: CellConstellationHandles,
   request: ConstellationFrameRequest,
 ): ConstellationPlacement | null {
   const layout = handles.provisionalBaseLayout ?? handles.lastLayout;
-  if (!layout) return null;
+  if (!layout) { setLeadersVisible(handles, false); return null; }
   const { anchorX, anchorY, stageWidth, stageHeight, safeTop, edge } = request.input;
   const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
-  let specimen: ConstellationPlacement | null = null;
+  const kept: ConstellationPlacement[] = [];
   for (const placement of layout.placements) {
     const panel = handles.panels[placement.slot];
     if (!panel?.host) continue;
@@ -457,8 +471,54 @@ function holdStaleSeats(
       panel.positionedHost = null;
       continue;
     }
+    kept.push(placement);
+  }
+  const presented = kept.map((placement, index) => {
+    const measured = handles.panels[placement.slot].height;
+    if (measured <= 0 || Math.abs(measured - placement.height) < 0.5) return placement;
+    // The room this seat has is the derive's answer, not a second opinion:
+    // `constellationHeldRoomPx` is what `growInPlaceSeats` grows into, so the
+    // plate drawn here is the plate the solve behind it will land.
+    const room = constellationHeldRoomPx(request.input, kept, index);
+    const height = Math.min(measured, Math.max(placement.height, room));
+    if (Math.abs(height - placement.height) < 0.5) return placement;
+    return { ...placement, height, capped: height < measured - 0.5 };
+  });
+  let specimen: ConstellationPlacement | null = null;
+  let grew = false;
+  for (let index = 0; index < presented.length; index += 1) {
+    const placement = presented[index];
+    if (placement !== kept[index]) {
+      writePanelPlacement(handles.panels[placement.slot], placement, true);
+      grew = true;
+    }
     if (placement.slot === 'specimen') specimen = placement;
   }
+  // Only a HEIGHT change earns this second look. Every other way of arriving
+  // here — a viewport, a rail, an instrument opening — has already had the same
+  // question asked of the same base layout by `showValidatedProvisional` and
+  // has already been told no, and asking it twice a frame is the one thing this
+  // path may not cost. Measured 2026-09-12 on probe I without the guard: three
+  // of 400 drifting frames stopped landing inside their slice.
+  const carried = grew && presented.length === layout.placements.length
+    && presented.length === request.input.panels.length
+    && Number.isFinite(handles.appliedAnchorX)
+    ? revalidateConstellationLayoutForAnchor(
+      request.input, { ...layout, placements: presented },
+      handles.appliedAnchorX, handles.appliedAnchorY,
+    )
+    : null;
+  if (!carried) {
+    setLeadersVisible(handles, false);
+    return currentSpecimenPlacement(handles, specimen);
+  }
+  for (const placement of carried.placements) writeLeader(handles, placement);
+  const nextMaskKey = rectKey(carried.masks);
+  if (nextMaskKey !== handles.maskKey) {
+    handles.maskKey = nextMaskKey;
+    writeMasks(handles, carried.masks);
+  }
+  setLeadersVisible(handles, true);
   return currentSpecimenPlacement(handles, specimen);
 }
 function setLeadersVisible(handles: CellConstellationHandles, visible: boolean): void {
@@ -1178,10 +1238,10 @@ export function advanceConstellationFrame(
       );
     } else {
       // The held seats no longer answer the current request, but they are
-      // still where the reader's eyes are. Keep them, hide the leaders, and
-      // withdraw only a plate the Cell has walked into. The root's opacity
+      // still where the reader's eyes are. Keep them at the height their
+      // content now asks for, withdraw only a plate the Cell has walked into,
+      // and show the leaders that can still be carried. The root's opacity
       // belongs to the off-screen test and to the exit, both in the overlay.
-      setLeadersVisible(handles, false);
       handles.provisionalVisible = false;
       handles.presentationDirty = true;
       setConstellationVisible(handles, true);

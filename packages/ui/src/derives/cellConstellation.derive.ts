@@ -2346,6 +2346,82 @@ function slideToClear(
   return null;
 }
 
+const GROW_COLUMN_GAP_PX = CONSTELLATION_MIN_GAP_PX;
+const sharesGrowColumn = (a: Box, b: Box): boolean => (
+  b.x - GROW_COLUMN_GAP_PX < a.x + a.width && b.x + b.width + GROW_COLUMN_GAP_PX > a.x
+);
+/**
+ * How close to the Cell one plate's vertical span may come.
+ *
+ * `hardValid` measures the distance from the box to the anchor as a hypotenuse,
+ * so a plate whose x-span is already further from the anchor than the reticle
+ * clearance needs no vertical room at all, and one standing over the Cell needs
+ * the whole of it.
+ */
+function cellVerticalClearance(input: ConstellationInput, box: Box): number {
+  const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
+  const dx = Math.max(box.x - input.anchorX, input.anchorX - (box.x + box.width), 0);
+  return dx >= core ? 0 : Math.sqrt(core * core - dx * dx);
+}
+/** The tallest this plate may be drawn keeping its TOP edge: down to the stage
+ * edge, the top of the next plate in its column less the gap, or the Cell. */
+function growRoomBelow(
+  input: ConstellationInput, boxes: readonly Box[], index: number,
+): number {
+  const box = boxes[index];
+  let limit = input.stageHeight - input.edge;
+  // The Cell stops a plate only where the plate stands OVER it: a column well
+  // to one side is already further from the anchor than the clearance and the
+  // vertical room it needs is none.
+  const clearance = cellVerticalClearance(input, box);
+  if (clearance > 0 && box.y < input.anchorY) limit = Math.min(limit, input.anchorY - clearance);
+  for (let other = 0; other < boxes.length; other += 1) {
+    if (other === index || !sharesGrowColumn(box, boxes[other])) continue;
+    if (boxes[other].y >= box.y + box.height - 0.5) {
+      limit = Math.min(limit, boxes[other].y - GROW_COLUMN_GAP_PX);
+    }
+  }
+  return limit - box.y;
+}
+/** The highest this plate's TOP edge may go keeping its bottom: the safe top,
+ * the bottom of the plate above it in its column plus the gap, or the Cell. */
+function growTopAbove(
+  input: ConstellationInput, boxes: readonly Box[], index: number,
+): number {
+  const box = boxes[index];
+  let limit = input.safeTop;
+  const clearance = cellVerticalClearance(input, box);
+  if (clearance > 0 && box.y + box.height > input.anchorY) {
+    limit = Math.max(limit, input.anchorY + clearance);
+  }
+  for (let other = 0; other < boxes.length; other += 1) {
+    if (other === index || !sharesGrowColumn(box, boxes[other])) continue;
+    if (boxes[other].y + boxes[other].height <= box.y + 0.5) {
+      limit = Math.max(limit, boxes[other].y + boxes[other].height + GROW_COLUMN_GAP_PX);
+    }
+  }
+  return limit;
+}
+
+/**
+ * The tallest one already-seated plate may be DRAWN at without overlapping
+ * anything, keeping the top edge it has.
+ *
+ * The frame writer's answer to a measurement that arrives while a solve is
+ * still running: the plate is given the height its content now asks for,
+ * clamped to this, so the reader sees the new rows at once and nothing on the
+ * stage is covered. It is the same room `growInPlaceSeats` grows into, which is
+ * what makes the presentation and the answer behind it agree — a plate drawn
+ * taller here than the solve will seat it would shrink back on landing.
+ */
+export function constellationHeldRoomPx(
+  input: ConstellationInput,
+  placements: readonly ConstellationPlacement[],
+  index: number,
+): number {
+  return growRoomBelow(input, placements.map(boxOf), index);
+}
+
 /**
  * Extend the instruments that grew, where they stand.
  *
@@ -2388,47 +2464,11 @@ function growInPlaceSeats(
   held: readonly ConstellationPlacement[],
 ): ConstellationPlacement[] | null {
   const gap = CONSTELLATION_MIN_GAP_PX;
-  const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
-  const stageBottom = input.stageHeight - input.edge;
   const boxes: Box[] = held.map((seat, index) => ({
     x: seat.x, y: seat.y, width: panels[index].width, height: seat.height,
   }));
-  const sharesColumn = (a: Box, b: Box): boolean => (
-    b.x - gap < a.x + a.width && b.x + b.width + gap > a.x
-  );
-  // How close to the Cell this plate's vertical span may come. A plate whose
-  // x-span is further from the anchor than the core needs no vertical room at
-  // all; one standing over it must keep the whole core.
-  const cellClearance = (box: Box): number => {
-    const dx = Math.max(box.x - input.anchorX, input.anchorX - (box.x + box.width), 0);
-    return dx >= core ? 0 : Math.sqrt(core * core - dx * dx);
-  };
-  const roomBelow = (index: number): number => {
-    const box = boxes[index];
-    let limit = stageBottom;
-    if (box.y >= input.anchorY) limit = Math.min(limit, stageBottom);
-    else limit = Math.min(limit, input.anchorY - cellClearance(box));
-    for (let other = 0; other < boxes.length; other += 1) {
-      if (other === index || !sharesColumn(box, boxes[other])) continue;
-      if (boxes[other].y >= box.y + box.height - 0.5) {
-        limit = Math.min(limit, boxes[other].y - gap);
-      }
-    }
-    return limit - box.y;
-  };
-  const topAbove = (index: number): number => {
-    const box = boxes[index];
-    let limit = input.safeTop;
-    if (box.y + box.height <= input.anchorY) limit = Math.max(limit, input.safeTop);
-    else limit = Math.max(limit, input.anchorY + cellClearance(box));
-    for (let other = 0; other < boxes.length; other += 1) {
-      if (other === index || !sharesColumn(box, boxes[other])) continue;
-      if (boxes[other].y + boxes[other].height <= box.y + 0.5) {
-        limit = Math.max(limit, boxes[other].y + boxes[other].height + gap);
-      }
-    }
-    return limit;
-  };
+  const roomBelow = (index: number): number => growRoomBelow(input, boxes, index);
+  const topAbove = (index: number): number => growTopAbove(input, boxes, index);
   for (let index = 0; index < panels.length; index += 1) {
     const asked = panels[index].height;
     const box = boxes[index];
@@ -2445,7 +2485,7 @@ function growInPlaceSeats(
     const wanted: Box = { ...box, height: asked };
     let slid = false;
     for (const other of [...boxes.keys()].filter((candidate) => candidate !== index
-      && sharesColumn(box, boxes[candidate]))) {
+      && sharesGrowColumn(box, boxes[candidate]))) {
       const blockers = boxes
         .filter((_seat, at) => at !== index && at !== other)
         .map((seat) => expanded(seat, gap))

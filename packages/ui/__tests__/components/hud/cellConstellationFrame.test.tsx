@@ -502,17 +502,32 @@ describe('the frame writer', () => {
     // portrait — from the frame a panel's content changed height until the full
     // re-solve landed, which on a four-panel stage was hundreds of frames. A
     // measurement arriving is not a reason to withdraw the reading.
+    //
+    // Since P3 §5.5 the plate is also given the height its content asks for
+    // while that solve runs, clamped to the room its old placement had, so the
+    // reader sees the new rows instead of a plate that has not been told about
+    // them — and the leaders come with it wherever they can still be carried.
     const { handles, hosts } = wired();
-    expect(commit(handles)).not.toBeNull();
+    // The Cell high on the stage with a 400 px register, so the register has
+    // real room under it — the case where growing in place has something to do.
+    handles.panels.analysis.height = 400;
+    expect(commitConstellationFrame(
+      handles, 960, 240, 1920, 1080, SAFE_TOP, EDGE, [],
+    )).not.toBeNull();
     const seats = {
       analysis: hosts.analysis.style.transform,
       specimen: hosts.specimen.style.transform,
     };
+    const seated = handles.lastLayout!.placements.find((panel) => panel.slot === 'analysis')!;
+    const specimenSeat = handles.lastLayout!.placements.find(
+      (panel) => panel.slot === 'specimen',
+    )!;
+    expect(hosts.analysis.style.height).toBe('400px');
     handles.panels.analysis.height += 40;
     let tick = 0;
     const now = () => { tick += 2; return tick; };
     const specimen = advanceConstellationFrame(
-      handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, [], 1, 1, now,
+      handles, 960, 240, 1920, 1080, SAFE_TOP, EDGE, [], 1, 1, now,
     );
     expect(handles.root?.style.opacity).toBe('1');
     expect(hosts.analysis.style.transform).toBe(seats.analysis);
@@ -520,9 +535,63 @@ describe('the frame writer', () => {
     expect(hosts.analysis.style.visibility).toBe('visible');
     expect(hosts.specimen.style.visibility).toBe('visible');
     expect(specimen?.slot).toBe('specimen');
-    // The seats are still honest; the leaders belong to the old anchor and are
-    // the one thing that may not be shown.
-    expect(handles.leaders.analysis.over?.style.visibility).toBe('hidden');
+    // The plate carries the height its content now asks for, because the room
+    // under this seat holds it: 1,066 px of stage below a top edge at 104, and
+    // the Cell is off to the right of the column rather than under it.
+    expect(hosts.analysis.style.height).toBe('440px');
+
+    // And when the solve lands, the plate is still there — grown in place, not
+    // re-composed. `commitConstellationFrame` drains the solver in one call.
+    const landedSpecimen = commitConstellationFrame(
+      handles, 960, 240, 1920, 1080, SAFE_TOP, EDGE, [],
+    );
+    expect(landedSpecimen?.slot).toBe('specimen');
+    expect(handles.root?.style.opacity).toBe('1');
+    expect(hosts.analysis.style.transform).toBe(seats.analysis);
+    expect(hosts.specimen.style.transform).toBe(seats.specimen);
+    const landed = handles.lastLayout!.placements.find((panel) => panel.slot === 'analysis')!;
+    expect(landed.x).toBe(seated.x);
+    expect(landed.y).toBe(seated.y);
+    expect(landed.height).toBe(440);
+    expect(landed.capped).toBe(false);
+    expect(hosts.analysis.style.height).toBe('440px');
+    expect(handles.lastLayout!.placements.find((panel) => panel.slot === 'specimen'))
+      .toMatchObject({ x: specimenSeat.x, y: specimenSeat.y });
+  });
+
+  it('clamps a growing plate to the room its seat has, and never past it', () => {
+    // The other half of §5.5: a register asking for far more than its seat can
+    // hold is drawn at the room it has — down to the stage edge here, since
+    // nothing stands under this column — rather than over whatever is below.
+    // It scrolls, the specimen beside it does not move, and the solve behind it
+    // lands on exactly the plate the reader was already looking at.
+    const { handles, hosts } = wired();
+    expect(commit(handles)).not.toBeNull();
+    const seated = handles.lastLayout!.placements.find((panel) => panel.slot === 'analysis')!;
+    const seats = {
+      analysis: hosts.analysis.style.transform,
+      specimen: hosts.specimen.style.transform,
+    };
+    const room = 1080 - EDGE - seated.y;
+    handles.panels.analysis.height += 400;
+    expect(handles.panels.analysis.height).toBeGreaterThan(room);
+    let tick = 0;
+    const now = () => { tick += 2; return tick; };
+    advanceConstellationFrame(
+      handles, 960, 540, 1920, 1080, SAFE_TOP, EDGE, [], 1, 1, now,
+    );
+    expect(handles.root?.style.opacity).toBe('1');
+    expect(hosts.analysis.style.height).toBe(`${room}px`);
+    expect(hosts.analysis.style.transform).toBe(seats.analysis);
+    expect(hosts.specimen.style.transform).toBe(seats.specimen);
+    commit(handles);
+    const landed = handles.lastLayout!.placements.find((panel) => panel.slot === 'analysis')!;
+    expect(landed.x).toBe(seated.x);
+    expect(landed.y).toBe(seated.y);
+    expect(landed.height).toBe(room);
+    expect(landed.capped).toBe(true);
+    expect(hosts.analysis.style.height).toBe(`${room}px`);
+    expect(hosts.specimen.style.transform).toBe(seats.specimen);
   });
 
   it('keeps a geometry-validated presentation visible while a larger viewport resolves', () => {
