@@ -8,8 +8,12 @@ import {
   observeConstellationProvisionalFrame,
   observeConstellationCursorSlice,
   observeConstellationCursorStart,
+  observeConstellationRefineDropped,
+  observeConstellationRefineLanding,
+  observeConstellationRefineStart,
   observeConstellationUnavailableHold,
   createConstellationLock,
+  refineConstellationRoutesCursor,
   revalidateConstellationLayoutForAnchor,
   CONSTELLATION_RETICLE_PX,
   CONSTELLATION_ROUTE_CLEARANCE_PX,
@@ -62,6 +66,21 @@ interface ConstellationLayoutJob {
   lockedOnly: boolean;
 }
 
+/**
+ * A second look at the leaders of a constellation that is already on screen.
+ *
+ * It carries the request it was routed for — whose anchor may be half a pixel
+ * behind the live one by the time it lands — the seats it is allowed to write
+ * to, and how many fallback leaders the reader was shown when it started, so
+ * the landing can say how many it took back.
+ */
+interface ConstellationRefineJob {
+  request: ConstellationFrameRequest;
+  cursor: Generator<void, ConstellationLayout | null>;
+  placements: readonly ConstellationPlacement[];
+  degradedAtStart: number;
+}
+
 export interface ConstellationPanelHandle {
   host: HTMLDivElement | null;
   /** The exact DOM host that has received a complete, valid placement. */
@@ -106,6 +125,13 @@ export interface CellConstellationHandles {
   quadrant: { [slot: string]: string | undefined };
   quadrantListeners: Set<() => void>;
   layoutJob: ConstellationLayoutJob | null;
+  /** The background second look at a degraded set of leaders. It never runs
+   * beside a layout job and never survives one starting. */
+  refineJob: ConstellationRefineJob | null;
+  /** `layoutKey|placementKey` of the picture a refinement has already finished
+   * for, whatever it found. Without it a layout the refinement cannot improve
+   * would be re-refined on every frame the Cell stands still. */
+  refinedKey: string;
   desiredRequest: ConstellationFrameRequest | null;
   /** The last request `prepareRequest` built, with the HUD occlusion version
    * it was built from. A frame whose anchor bucket, stage, chip, rails and
@@ -167,7 +193,7 @@ export function createCellConstellationHandles(
     visible: false, leaving: false, frameKey: '', layoutKey: '', connectorKey: '',
     placementKey: '', maskKey: '',
     lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
-    layoutJob: null, desiredRequest: null,
+    layoutJob: null, refineJob: null, refinedKey: '', desiredRequest: null,
     lastRequest: null, lastRequestObstacleVersion: -1,
     layoutPendingFrames: 0,
     appliedAnchorX: Number.NaN, appliedAnchorY: Number.NaN,
@@ -603,6 +629,161 @@ function cancelLayoutJob(handles: CellConstellationHandles): void {
   clearFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE);
 }
 
+function cancelRefineJob(handles: CellConstellationHandles): void {
+  if (!handles.refineJob) return;
+  handles.refineJob.cursor.return(null);
+  handles.refineJob = null;
+}
+
+function degradedLeaders(layout: ConstellationLayout): number {
+  let count = 0;
+  for (const placement of layout.placements) {
+    if (placement.route?.degraded === true) count += 1;
+  }
+  return count;
+}
+
+/** The same seats, to the pixel — not to the half-pixel bucket the signatures
+ * round to. A refinement may write a route only to the plate it measured. */
+function samePlacements(
+  a: readonly ConstellationPlacement[],
+  b: readonly ConstellationPlacement[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const one = a[index]; const other = b[index];
+    if (one.slot !== other.slot || one.x !== other.x || one.y !== other.y
+      || one.width !== other.width || one.height !== other.height) return false;
+  }
+  return true;
+}
+
+/**
+ * Write a finished refinement over the leaders that are on screen.
+ *
+ * Routes, labels, masks and the lock's held routes — and nothing else. No seat
+ * moves, no host is positioned or hidden, no signature that describes geometry
+ * changes, because the geometry did not. Two things can still stop it: the
+ * seats it routed for are no longer the seats on screen, in which case it is
+ * dropped outright; or the Cell has drifted inside its half-pixel bucket since
+ * it started, in which case its routes are carried to the live anchor through
+ * the same re-anchor path the locked router uses, and dropped if they will not
+ * go.
+ */
+function applyRefinedRoutes(
+  handles: CellConstellationHandles,
+  job: ConstellationRefineJob,
+  refined: ConstellationLayout,
+  latest: ConstellationFrameRequest,
+): void {
+  const current = handles.lastLayout;
+  if (!current || !samePlacements(current.placements, job.placements)
+    || !samePlacements(refined.placements, job.placements)) {
+    observeConstellationRefineDropped();
+    return;
+  }
+  let applied = refined;
+  if (latest.input.anchorX !== job.request.input.anchorX
+    || latest.input.anchorY !== job.request.input.anchorY) {
+    const carried = revalidateConstellationLayoutForAnchor(
+      latest.input, refined, job.request.input.anchorX, job.request.input.anchorY,
+    );
+    if (!carried || !samePlacements(carried.placements, job.placements)) {
+      observeConstellationRefineDropped();
+      return;
+    }
+    applied = carried;
+  }
+  handles.lastLayout = applied;
+  if (handles.provisionalBaseLayout === current) {
+    handles.provisionalBaseLayout = applied;
+    handles.provisionalBaseAnchorX = latest.input.anchorX;
+    handles.provisionalBaseAnchorY = latest.input.anchorY;
+  }
+  handles.appliedAnchorX = latest.input.anchorX;
+  handles.appliedAnchorY = latest.input.anchorY;
+  const nextMaskKey = rectKey(applied.masks);
+  if (nextMaskKey !== handles.maskKey) {
+    handles.maskKey = nextMaskKey;
+    writeMasks(handles, applied.masks);
+  }
+  if (handles.root) handles.root.dataset.cellConstellationLeaders = applied.leaders;
+  for (const placement of applied.placements) {
+    writeLeader(handles, placement);
+    if (placement.slot === 'specimen') handles.lastSpecimen = placement;
+    // The lock carries proven lines across the Cell's next move. A refined
+    // leader is the best proof the router has; a plate the refinement still
+    // could not reach holds nothing, because a fallback is rebuilt from the
+    // anchor and never reused.
+    const route = placement.route;
+    if (route && !route.degraded) handles.lock.routes[placement.slot] = route.points;
+    else delete handles.lock.routes[placement.slot];
+  }
+  // `prepareRequest` hands back the SAME request object while nothing moves,
+  // and that object carries a clone of the lock taken before this write. Refresh
+  // it, or the next locked solve routes from the leaders this just replaced.
+  if (handles.lastRequest) {
+    handles.lastRequest.input.lock = cloneLock(handles.lock);
+  }
+  observeConstellationRefineLanding(job.degradedAtStart - degradedLeaders(applied));
+}
+
+/**
+ * Look again for the leaders first paint could not afford to find.
+ *
+ * Called only from the settled frame — the Cell is where it was, every host is
+ * seated, and nothing is being solved. One refinement is started per landed
+ * picture that shows a fallback leader, advanced at the ordinary interaction
+ * slice against the same ledger the locked cursor uses, and never at the
+ * first-paint allowance: the constellation is already on screen and nothing is
+ * waiting for this.
+ */
+function advanceRefinement(
+  handles: CellConstellationHandles,
+  request: ConstellationFrameRequest,
+  now: () => number,
+): void {
+  let job = handles.refineJob;
+  if (job && (job.request.layoutKey !== request.layoutKey
+    || handles.lastLayout === null
+    || !samePlacements(handles.lastLayout.placements, job.placements))) {
+    cancelRefineJob(handles);
+    job = null;
+  }
+  if (!job) {
+    const layout = handles.lastLayout;
+    if (!layout || layout.leaders !== 'degraded' || layout.placements.length === 0) return;
+    const key = `${request.layoutKey}|${handles.placementKey}`;
+    if (handles.refinedKey === key) return;
+    job = {
+      request,
+      cursor: refineConstellationRoutesCursor(request.input, layout),
+      placements: layout.placements,
+      degradedAtStart: degradedLeaders(layout),
+    };
+    handles.refineJob = job;
+    observeConstellationRefineStart();
+  }
+  announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
+  if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) return;
+  const started = now();
+  const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.inspectionLayoutSlice);
+  const available = frameBudgetRemainingMs(FRAME_BUDGET_PANEL_SOLVE);
+  const allowance = Math.min(PANEL_SLICE_BUDGET, available || PANEL_SLICE_BUDGET);
+  let step = job.cursor.next();
+  while (!step.done && now() - started < allowance) step = job.cursor.next();
+  const elapsed = now() - started;
+  spendFrameBudget(FRAME_BUDGET_PANEL_SOLVE, elapsed);
+  observeConstellationCursorSlice(elapsed, false);
+  endCpuProbe(sliceProbe);
+  if (!step.done) return;
+  handles.refineJob = null;
+  handles.refinedKey = `${job.request.layoutKey}|${handles.placementKey}`;
+  clearFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE);
+  if (step.value === null) return;
+  applyRefinedRoutes(handles, job, step.value, request);
+}
+
 /**
  * Keep the selected Cell's marks and completed panel seats usable while its
  * camera moves, but remove every leader stroke, endpoint and label. No request
@@ -623,6 +804,7 @@ export function suspendConstellationFrame(
   writeMovingMarks(handles, anchorX, anchorY, chipPoint.x, chipPoint.y);
   if (!handles.motionSuspended) {
     cancelLayoutJob(handles);
+    cancelRefineJob(handles);
     handles.frameKey = '';
     handles.connectorKey = '';
     handles.presentationDirty = true;
@@ -656,6 +838,10 @@ function applyLayout(handles: CellConstellationHandles,
   handles.provisionalBaseAnchorY = request.input.anchorY;
   handles.provisionalVisible = false;
   handles.presentationDirty = false;
+  // A new canonical answer earns a new second look. Without this, a locked
+  // re-solve that lost a leader again at the same seats would be suppressed by
+  // the refinement that ran for the picture before it.
+  handles.refinedKey = '';
   setConstellationVisible(handles, true);
   setLeadersVisible(handles, true);
   publishLock(handles.lock, request.input.lock as ConstellationLock);
@@ -815,6 +1001,7 @@ export function commitConstellationFrame(
   if (request.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
     return currentSpecimenPlacement(handles);
   }
+  cancelRefineJob(handles);
   const layout = constellationLayout(request.input);
   return applyLayout(handles, request, layout);
 }
@@ -876,6 +1063,7 @@ export function advanceConstellationFrame(
     && Math.hypot(anchorX - handles.appliedAnchorX, anchorY - handles.appliedAnchorY)
       < CONSTELLATION_UNAVAILABLE_RESOLVE_PX) {
     cancelLayoutJob(handles);
+    cancelRefineJob(handles);
     handles.desiredRequest = desired;
     setConstellationVisible(handles, true);
     observeConstellationUnavailableHold();
@@ -892,8 +1080,17 @@ export function advanceConstellationFrame(
       handles.provisionalBaseAnchorY = handles.appliedAnchorY;
       applyProvisionalRoutes(handles, handles.lastLayout, false);
     } else setLeadersVisible(handles, true);
+    // The one frame a refinement may run on: the picture is complete, the Cell
+    // is where the picture was solved for, and nothing is pending.
+    advanceRefinement(handles, desired, now);
     return handles.lastSpecimen;
   }
+
+  // Past here the frame is asking a new question — the geometry changed, the
+  // Cell moved to another bucket, or a host is not seated yet — and a solve is
+  // about to start. A refinement belongs to the picture that is up, so it does
+  // not survive any of that.
+  cancelRefineJob(handles);
 
   const geometryPending = desired.layoutKey !== handles.layoutKey;
   const provisionalGeometryValid = handles.provisionalBaseLayout !== null
@@ -1009,6 +1206,8 @@ export function setConstellationVisible(handles: CellConstellationHandles, visib
 }
 export function invalidateConstellationFrame(handles: CellConstellationHandles): void {
   cancelLayoutJob(handles);
+  cancelRefineJob(handles);
+  handles.refinedKey = '';
   handles.frameKey = '';
   handles.layoutKey = '';
   handles.connectorKey = '';

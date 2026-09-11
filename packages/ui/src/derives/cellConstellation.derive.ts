@@ -111,6 +111,49 @@ export const ROUTE_ORDER_CAP = 2;
 export const ROUTE_CANDIDATE_CAP = 12;
 
 /**
+ * How many route orders one REFINEMENT may try.
+ *
+ * The refinement runs behind an already-painted constellation, so it may spend
+ * what first paint may not: the whole permutation set, 6 orders at three
+ * plates and 24 at four, starting from `preferredRouteOrder` so a layout that
+ * is already reachable in the ordinary order costs exactly one pass. 24 is not
+ * a compromise — it is the measured requirement. Over the 149 layouts the
+ * router reached cleanly before P2's caps, the winning order is the first one
+ * in 109 cases but reaches index 23 in two, and walking to index 23 is
+ * precisely the seconds-long solve first paint may not pay for.
+ */
+export const ROUTE_REFINE_ORDER_CAP = 24;
+
+/**
+ * How many start–end pairs of one plate may enter a REFINEMENT's grid search.
+ *
+ * `ROUTE_GRID_PAIR_CAP` (13) is what a first paint can afford; the winning
+ * pair's rank over the clean set reaches 40, so 41 is the smallest cap that
+ * loses nothing. It costs: at 41 the four-panel first-paint tail measured
+ * 82 ms p99, which is why first paint does not have it. A refinement is
+ * sliced at 1.6 ms a frame behind a picture the reader is already reading, so
+ * it pays the same cost in latency the reader cannot see.
+ */
+export const ROUTE_REFINE_GRID_PAIR_CAP = 41;
+
+/**
+ * The total grid points one refinement may examine before it stops and keeps
+ * the best answer it has.
+ *
+ * `ROUTE_GRID_POINT_CAP` bounds one start–end pair; this bounds the whole
+ * refinement — every pair, of every plate, in every order it tries. It is the
+ * only bound on a `refine` pass that cannot be defeated by presenting it with
+ * more work, and it is what makes "the refinement costs at most N" a statement
+ * rather than a hope. 250,000 points is roughly a tenth of a second of search
+ * on this machine, spent 1.6 ms at a time, so about a second of wall clock
+ * behind a constellation that is already on screen. Measured over the twelve
+ * layouts P2's caps cost a canonical leader, the dearest refinement spends far
+ * less than this; it is a ceiling, not a target. When it runs out the best
+ * attempt so far is kept, which is never worse than the picture that is up.
+ */
+export const ROUTE_REFINE_POINT_BUDGET = 320_000;
+
+/**
  * How far the Cell must travel before a stage that had no room for its
  * instruments is asked again.
  *
@@ -190,6 +233,17 @@ export interface ConstellationWorkStats {
    * because the Cell had not travelled `CONSTELLATION_UNAVAILABLE_RESOLVE_PX`
    * from where the stage last said it had no room. */
   unavailableHolds: number;
+  /** Refinements started behind a landed, degraded constellation. */
+  refineStarts: number;
+  /** Refinements that finished and were applied to the picture on screen. */
+  refineLandings: number;
+  /** Leaders that went from the dashed fallback to a canonical route because
+   * a refinement found the line first paint could not afford to look for. */
+  refineUpgrades: number;
+  /** Refinements that finished against seats the writer had already moved on
+   * from, and were therefore thrown away. A refinement may never write a route
+   * to a plate that is no longer where it was routed for. */
+  refineDropped: number;
   /** Seat changes the frame writer animated instead of writing at once. */
   seatTweens: number;
   /** Times the name chip moved off its preferred position to clear a held
@@ -218,6 +272,10 @@ const constellationWorkStats: ConstellationWorkStats = {
   routeGridPoints: 0,
   routeCapHits: 0,
   unavailableHolds: 0,
+  refineStarts: 0,
+  refineLandings: 0,
+  refineUpgrades: 0,
+  refineDropped: 0,
   seatTweens: 0,
   chipRelocations: 0,
   cursorSlices: 0,
@@ -259,6 +317,25 @@ export function observeConstellationProvisionalFrame(): void {
 /** The frame writer held an `unavailable` verdict instead of re-deriving it. */
 export function observeConstellationUnavailableHold(): void {
   constellationWorkStats.unavailableHolds += 1;
+}
+
+/** A refinement was started behind a landed constellation with at least one
+ * fallback leader. */
+export function observeConstellationRefineStart(): void {
+  constellationWorkStats.refineStarts += 1;
+}
+
+/** A refinement landed and its routes were written. `upgrades` is how many
+ * leaders stopped being the dashed fallback because of it. */
+export function observeConstellationRefineLanding(upgrades: number): void {
+  constellationWorkStats.refineLandings += 1;
+  constellationWorkStats.refineUpgrades += Math.max(0, upgrades);
+}
+
+/** A finished refinement was discarded because the seats it was routed for
+ * are no longer the seats on screen. */
+export function observeConstellationRefineDropped(): void {
+  constellationWorkStats.refineDropped += 1;
 }
 
 export function snapshotConstellationWorkStats(): ConstellationWorkStats {
@@ -712,7 +789,9 @@ const orthogonalGuideCache = new Map<string, OrthogonalGuide>();
 
 function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoint,
   allObstacles: readonly Box[], bounds: Box,
-  guideKey?: string): Generator<void, ConstellationPoint[] | null> {
+  guideKey?: string,
+  budget: RouteGridBudget | null = null): Generator<void, ConstellationPoint[] | null> {
+  if (budget !== null && budget.points <= 0) return null;
   if (allObstacles.some((box) => pointInside(start, box) || pointInside(end, box))) return null;
   const fast = fastOrthogonalRoute(start, end, allObstacles);
   if (fast) return fast;
@@ -782,6 +861,7 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
     if ((quantum += 1) % 8 === 0) yield;
   }
   constellationWorkStats.routeGridPoints += gridPoints;
+  if (budget !== null) budget.points -= gridPoints;
   if (best) return best;
   // The two-leg passes above are linear in the coordinate set and always run;
   // the cap governs the quadratic sweep below, counting what they already
@@ -834,9 +914,11 @@ function* orthogonalRouteSteps(start: ConstellationPoint, end: ConstellationPoin
   for (let xIndex = 0; xIndex < xValues.length; xIndex += 1) {
     const x = xValues[xIndex];
     for (let yIndex = 0; yIndex < yValues.length; yIndex += 1) {
-    if (gridPoints >= ROUTE_GRID_POINT_CAP) { capped = true; break sweep; }
+    if (gridPoints >= ROUTE_GRID_POINT_CAP
+      || (budget !== null && budget.points <= 0)) { capped = true; break sweep; }
     gridPoints += 1;
     constellationWorkStats.routeGridPoints += 1;
+    if (budget !== null) budget.points -= 1;
     const y = yValues[yIndex];
     // Manhattan distance is a strict lower bound on routeLength. Once a
     // direct route exists, reject most x×y grid points before allocating and
@@ -1093,6 +1175,48 @@ interface RoutedOrder {
   routes: Array<ConstellationRoute | undefined>;
 }
 
+/**
+ * How hard the router is allowed to look.
+ *
+ * `first` owns first paint and is P2 exactly: one preferred order, one retry,
+ * thirteen grid pairs per plate. Its answer is what the reader sees within
+ * three frames of a selection, and nothing here may change it by a byte.
+ * `refine` runs behind a constellation that is already on screen, where
+ * latency is invisible and only the picture matters: the whole permutation
+ * set, forty-one grid pairs, and one total point budget for the lot.
+ */
+export type RouteEffort = 'first' | 'refine';
+
+/** Grid points a whole refinement may still spend. Mutated as they are spent,
+ * shared by every pair of every plate of every order in one pass. */
+interface RouteGridBudget { points: number }
+
+interface RouteEffortProfile {
+  /** How many route orders this pass may try. */
+  orderCap: number;
+  /** How many start–end pairs of one plate may enter the grid search. */
+  gridPairCap: number;
+  /** Walk the permutations, rather than the preferred order and one retry. */
+  permute: boolean;
+  budget: RouteGridBudget | null;
+}
+
+function routeEffortProfile(effort: RouteEffort): RouteEffortProfile {
+  return effort === 'refine'
+    ? {
+      orderCap: ROUTE_REFINE_ORDER_CAP,
+      gridPairCap: ROUTE_REFINE_GRID_PAIR_CAP,
+      permute: true,
+      budget: { points: ROUTE_REFINE_POINT_BUDGET },
+    }
+    : {
+      orderCap: ROUTE_ORDER_CAP,
+      gridPairCap: ROUTE_GRID_PAIR_CAP,
+      permute: false,
+      budget: null,
+    };
+}
+
 interface RouteMode {
   /** Held routes from the last published layout, by slot, with the anchor
    * they were solved for. A plate whose held route still reaches it after the
@@ -1106,11 +1230,14 @@ interface RouteMode {
    * then degrade. The locked path runs inside a pointer interaction and has a
    * held picture to fall back on; it may not spend a search there. */
   fastOnly?: boolean;
+  /** Default `first`. */
+  effort?: RouteEffort;
 }
 
 function* addRoutesInOrderSteps(input: ConstellationInput,
   placements: ConstellationPlacement[],
-  order: readonly number[], mode: RouteMode = {}): Generator<void, RoutedOrder> {
+  order: readonly number[], mode: RouteMode,
+  profile: RouteEffortProfile): Generator<void, RoutedOrder> {
   const panelBoxes = placements.map(boxOf);
   const hud = visibleHudBoxes(input.obstacles ?? [], panelBoxes);
   const reserved = (input.reserved ?? []).map(rectBox);
@@ -1232,7 +1359,7 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
       // takes them by their Manhattan lower bound — then walks them in the
       // router's own start-then-endpoint order, so a plate whose winning pair
       // the cap did not cut is routed exactly as it was before the cap existed.
-      const searchable = pairs.slice(0, ROUTE_GRID_PAIR_CAP)
+      const searchable = pairs.slice(0, profile.gridPairCap)
         .sort((a, b) => a.ordinal - b.ordinal);
       for (let index = 0; index < searchable.length; index += 1) {
         const pair = searchable[index];
@@ -1240,6 +1367,7 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
         const route = yield* orthogonalRouteSteps(
           pair.start, pair.end, obstacles, bounds,
           `${placement.slot}:${pair.startIndex}:${pair.endIndex}:${obstacles.length}`,
+          profile.budget,
         );
         if (route && !crossesPrior(route)) { best = route; break; }
       }
@@ -1310,35 +1438,96 @@ function retryRouteOrder(
   return [firstDegradedIndex, ...order.filter((index) => index !== firstDegradedIndex)];
 }
 
-/** Every plate leaves here with a route. The preferred order wins outright if
- * it reaches all of them cleanly; otherwise the plate it could not reach is
- * tried first, and the better of the two attempts is written back —
- * `ROUTE_ORDER_CAP` attempts in total, where a permutation search used to
- * cost 6 or 24. */
+const refineOrderCache: Array<readonly (readonly number[])[] | undefined> = [];
+
+/**
+ * Every order a refinement may try, best first.
+ *
+ * This is the permutation list the router shipped with before P2 capped it,
+ * preserved exactly: the preference heads that today's clean layouts route in,
+ * then the orders that were measured to rescue the awkward ones, then the rest
+ * of the permutations. Its first entry IS `preferredRouteOrder`, so a
+ * refinement that succeeds immediately costs one pass and reproduces first
+ * paint's own answer.
+ */
+function refineRouteOrders(count: number): readonly (readonly number[])[] {
+  const cached = refineOrderCache[count];
+  if (cached) return cached;
+  const permutations: number[][] = [];
+  const visit = (prefix: number[], remaining: number[]) => {
+    if (remaining.length === 0) { permutations.push(prefix); return; }
+    for (let index = 0; index < remaining.length; index += 1) {
+      visit([...prefix, remaining[index]], [
+        ...remaining.slice(0, index), ...remaining.slice(index + 1),
+      ]);
+    }
+  };
+  visit([], Array.from({ length: count }, (_value, index) => index));
+  const preferred = count === 3
+    ? [[0, 2, 1], [0, 1, 2], [1, 2, 0], [2, 0, 1]]
+    : count === 4
+      ? [
+        [0, 2, 3, 1], [0, 2, 1, 3], [0, 1, 3, 2], [0, 1, 2, 3],
+        [0, 3, 1, 2], [0, 3, 2, 1], [1, 0, 3, 2], [1, 2, 3, 0],
+        [2, 0, 3, 1], [2, 3, 0, 1], [2, 3, 1, 0], [3, 0, 1, 2], [3, 0, 2, 1],
+      ]
+      : [];
+  const preferredKeys = new Set(preferred.map((order) => order.join(',')));
+  const ordered = [
+    ...preferred,
+    ...permutations.filter((order) => !preferredKeys.has(order.join(','))),
+  ];
+  refineOrderCache[count] = ordered;
+  return ordered;
+}
+
+/**
+ * Every plate leaves here with a route.
+ *
+ * One loop, two efforts. It always starts from `preferredRouteOrder`, returns
+ * the moment an order reaches every plate cleanly, and otherwise keeps the
+ * attempt with the fewest fallback leaders — ties to the earlier order, which
+ * is the router's own preference. What the effort decides is where the next
+ * order comes from and how many there may be: `first` earns exactly one retry,
+ * the failing plate moved to the front, for `ROUTE_ORDER_CAP` attempts in all;
+ * `refine` walks the permutation list until it runs out, hits
+ * `ROUTE_REFINE_ORDER_CAP`, or spends its grid-point budget.
+ */
 function* addRoutesSteps(input: ConstellationInput,
   placements: ConstellationPlacement[], mode: RouteMode = {}): Generator<void, RoutedOrder> {
-  const first = preferredRouteOrder(placements.length);
-  constellationWorkStats.routeOrders += 1;
-  for (const panel of placements) panel.route = undefined;
-  const attempt = yield* addRoutesInOrderSteps(input, placements, first, mode);
-  if (attempt.degraded === 0) return attempt;
-  const retry = attempt.firstDegradedIndex === null || mode.fastOnly
-    ? null
-    : retryRouteOrder(first, attempt.firstDegradedIndex);
-  if (!retry) {
-    // Nothing else this rule can try, where the permutation search still had
-    // 5 or 23 orders left to walk.
-    constellationWorkStats.routeCapHits += 1;
-    return attempt;
+  const profile = routeEffortProfile(mode.effort ?? 'first');
+  const orders = profile.permute ? refineRouteOrders(placements.length) : null;
+  let orderIndex = 0;
+  let order: readonly number[] | null = preferredRouteOrder(placements.length);
+  let best: RoutedOrder | null = null;
+  let attempts = 0;
+  while (order !== null && attempts < profile.orderCap) {
+    constellationWorkStats.routeOrders += 1;
+    // A route order is the smallest useful canonical unit: its later plates
+    // depend on the exact paths chosen for its earlier ones. Yield between
+    // orders so the Canvas path can budget the search without changing any of
+    // them.
+    if (attempts > 0) yield;
+    for (const panel of placements) panel.route = undefined;
+    const attempt: RoutedOrder = yield* addRoutesInOrderSteps(
+      input, placements, order, mode, profile,
+    );
+    attempts += 1;
+    if (best === null || attempt.degraded < best.degraded) best = attempt;
+    if (attempt.degraded === 0) break;
+    if (profile.budget !== null && profile.budget.points <= 0) break;
+    if (orders !== null) {
+      orderIndex += 1;
+      order = orderIndex < orders.length ? orders[orderIndex] : null;
+    } else {
+      order = attempt.firstDegradedIndex === null || mode.fastOnly
+        ? null
+        : retryRouteOrder(order, attempt.firstDegradedIndex);
+    }
   }
-  constellationWorkStats.routeOrders += 1;
-  // A route order is the smallest useful canonical unit: its later plates
-  // depend on the exact paths chosen for its earlier ones. Yield between the
-  // two so the Canvas path can budget the search without changing either.
-  yield;
-  for (const panel of placements) panel.route = undefined;
-  const second = yield* addRoutesInOrderSteps(input, placements, retry, mode);
-  const winner = second.degraded < attempt.degraded ? second : attempt;
+  const winner = best as RoutedOrder;
+  // A cap, an exhausted order list or a spent budget stopped a search that
+  // still had a fallback leader in its answer.
   if (winner.degraded > 0) constellationWorkStats.routeCapHits += 1;
   for (let index = 0; index < placements.length; index += 1) {
     placements[index].route = winner.routes[index];
@@ -1750,6 +1939,57 @@ export function constellationLayoutCursor(
   input: ConstellationInput,
 ): Generator<void, ConstellationLayout> {
   return solveLayoutSteps(input, true);
+}
+
+/**
+ * Look again for the lines first paint could not afford to find.
+ *
+ * A refinement takes a landed layout and re-routes its plates AT THE SEATS
+ * THEY ALREADY OCCUPY, with the `refine` effort: every route order, forty-one
+ * grid pairs a plate, one shared point budget. It never enumerates a candidate,
+ * never moves a seat, never changes a height and never withdraws an instrument
+ * — the geometry on screen is the geometry it routes. It returns a layout with
+ * the same placements and strictly fewer fallback leaders, or `null` when it
+ * could not do better than the picture it was given, which is the ordinary
+ * answer and costs the caller nothing to ignore.
+ *
+ * `constellationWorkStats.degradedRoutes` is deliberately NOT adjusted here:
+ * it counts fallback leaders that reached the reader, and these did. What a
+ * refinement took back is `refineUpgrades`.
+ */
+export function* refineConstellationRoutesCursor(
+  input: ConstellationInput,
+  layout: ConstellationLayout,
+): Generator<void, ConstellationLayout | null> {
+  const degradedBefore = layout.placements.filter(
+    (panel) => panel.route?.degraded === true,
+  ).length;
+  if (degradedBefore === 0) return null;
+  if (layout.placements.length !== input.panels.length) return null;
+  for (const panel of input.panels) {
+    if (!layout.placements.some((seat) => seat.slot === panel.slot)) return null;
+  }
+  const placements = layout.placements.map((seat) => ({ ...seat, route: undefined }));
+  const routed = yield* addRoutesSteps(input, placements, { effort: 'refine' });
+  if (routed.degraded >= degradedBefore) return null;
+  return {
+    status: layout.status,
+    template: layout.template,
+    placements,
+    masks: routed.masks,
+    leaders: routed.degraded > 0 ? 'degraded' : 'clean',
+  };
+}
+
+/** The refinement drained in one go, for tests and non-frame callers. */
+export function refineConstellationRoutes(
+  input: ConstellationInput,
+  layout: ConstellationLayout,
+): ConstellationLayout | null {
+  const steps = refineConstellationRoutesCursor(input, layout);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
 }
 
 /** Only the held-placement path. A caller may drain this at a presentation
