@@ -1,7 +1,7 @@
 {
-  "note": "The layouts the router reached cleanly at P1 (commit 5bb314e5, fixture cellConstellationOracle.json), one sha256 of the oracle projection each. `reproduced` is whether first paint plus a refinement reproduces that exact picture today. Regenerated only when a phase deliberately moves one, with the reason in its commit message and the ledger.",
-  "reproduced": 120,
-  "moved": 29,
+  "note": "The layouts the router reached cleanly at P1 (commit 5bb314e5, fixture cellConstellationOracle.json), one sha256 of the oracle projection each. `reproduced` is whether first paint plus a refinement reproduces that exact picture today. Regenerated only when a phase deliberately moves one, with the reason in its commit message and the ledger. 2026-09-12, P3 \u00a75.6: 38 of them moved when `CONSTELLATION_MIN_HEIGHT_PX` became the readable floor \u2014 every one on 1280x800, 1180x663 or 820x1078, where an instrument used to be cut to the 120 px stack minimum and now stands at 168 px or taller.",
+  "reproduced": 82,
+  "moved": 67,
   "cases": {
     "1920x1080@0.22,0.25 n3": {
       "sha": "0d0c7e082e8709a65a721342d6c54660b778e078919be961538d891d626f5523",
@@ -225,7 +225,7 @@
     },
     "1280x800@0.22,0.5 n3": {
       "sha": "8df78ef7bbbaaf80f98b24bf103a166837edece8b3ec5fef67a01dc5d4ac65c4",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.22,0.5 n4": {
       "sha": "0130eb103afdb7b5b38de7b362349ce40e70afdadc0699eb6efc8e8ac429963c",
@@ -249,11 +249,11 @@
     },
     "1280x800@0.5,0.5 n3": {
       "sha": "3140114ae358aa8bc55f48e904b38e5b42688198eff3cebdaf099cdc6e27b7a0",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.5,0.5 n4": {
       "sha": "4089a13b804bbf71db32410cf2212f9da5def66818ee420b8e451dccdade4ac4",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.5,0.75 n3": {
       "sha": "e4b5aca5fad86a13f402c184dda210ae4d36364c0ec9e5b4c57cb7977f170231",
@@ -261,7 +261,7 @@
     },
     "1280x800@0.5,0.75 n4": {
       "sha": "01cef82bdd88d68781ebf4a30eb3d49ac5342283ef2ccb415aed883e42251015",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.78,0.25 n3": {
       "sha": "ed68dfe3e4507177d767408d2a0635e642bb740297fe2363880411d1af501fc8",
@@ -273,11 +273,11 @@
     },
     "1280x800@0.78,0.5 n3": {
       "sha": "a784962a1a930212f2217b4b758309bbcdfa049f789b40b8a9af23822ed9d8ac",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.78,0.5 n4": {
       "sha": "44d1242ce733e939ed5227c505c19e4ce925dafa1e0a69452eef4f40c1c18f7d",
-      "reproduced": true
+      "reproduced": false
     },
     "1280x800@0.78,0.75 n3": {
       "sha": "318c02d8f2f38e9f0f827e5f25fa2764a51e4e4d5fcceef86b4a1694ed0ec8a9",
@@ -289,55 +289,55 @@
     },
     "1180x663@0.22,0.25 n3": {
       "sha": "841c298d1117de6176d3e50c27ca76d80e598fc5bd8459f3d966b40b286b1757",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.22,0.25 n4": {
       "sha": "2ef0c64e3486193fc6b695924481ebcb2d55c5a5d48e053fd5bb59c250ff58ba",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.22,0.5 n3": {
       "sha": "e44649c6f98235c30e4b4364fc06a20e6372b163b05226bae6ffc77290bb639f",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.22,0.5 n4": {
       "sha": "a37d19af45d5700bef1410bb1874e0f0ea610ce85fcdd067c515eaa55faba0a6",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.22,0.75 n3": {
       "sha": "24c0b1c20104ed16524d8d34ab32b59160ffe05dce940a09635178f7d2823c20",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.22,0.75 n4": {
       "sha": "7ec874f41b91652748e4359c280431287150cfa367f5ca4ab3a86910c78cbb81",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.25 n3": {
       "sha": "5277dbb57d77808843b7d4c30e48ee56b3b60142abfd1c2c8604d864dd04aa76",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.25 n4": {
       "sha": "07f531db1e9d5a5f35fb0e64bdcd1a3653b96e72c300954be6dce34852f26eb4",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.5 n3": {
       "sha": "4038c5f1f9da51e8266373c8095f7542d642d5a81c2a8da269ca34a24f9e9c6a",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.5 n4": {
       "sha": "4fbac06126879fb031f0d1061915ef0b9e9a179e77c40f4a993701c42d1afb34",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.75 n3": {
       "sha": "dad6f9f0fcc30aecf0ccf2b99ebf75b7eeec118f4a8be62b94885a0cb5db6baf",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.75 n4": {
       "sha": "e35af86b57e0d595524a3ba31b492bb35ed1e5a8ae212af00a07250a0694ea22",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.25 n3": {
       "sha": "50703fa13943ed0950196acaa44c1784948c0b88911e03d963b1d1aaa46f73cc",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.25 n4": {
       "sha": "ab36d04408aef13a02f27d3aa1e53a0f484512645db8e0b4aaeaa0dd314c7401",
@@ -345,19 +345,19 @@
     },
     "1180x663@0.78,0.5 n3": {
       "sha": "018178925817e4d95abc8a35cdd3a33e8c25da8ac1cdfadd77cedcb1750f0ca1",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.5 n4": {
       "sha": "2e9a0928cacdd3f4d352c0d0bd41c80ae3bd5cbbd71769781ea1b71747947f39",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.75 n3": {
       "sha": "c1a8d475ff44b297913d08f72c1ebaa39a71cf127573a80c43c3f7aa02a2814a",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.75 n4": {
       "sha": "2888e74f870e02ea2a776ce38a467168c191ed268926e9949a8c1d49b78f864a",
-      "reproduced": true
+      "reproduced": false
     },
     "820x1078@0.22,0.5 n3": {
       "sha": "ae6fea07f308f60dc23b8ab0902c8a78c6e9e557770fb7057b72234e6a2ee53c",
@@ -373,7 +373,7 @@
     },
     "820x1078@0.22,0.75 n4": {
       "sha": "2defc7e3575402cfd90766ae41b5092e60f654207b744df48e1ba6d99a46abda",
-      "reproduced": true
+      "reproduced": false
     },
     "820x1078@0.5,0.25 n3": {
       "sha": "a48f0d28ef4dca9101ad70d6a1daef889d7338718dadebc51b2dc59b3e2e5bae",
@@ -389,7 +389,7 @@
     },
     "820x1078@0.5,0.5 n4": {
       "sha": "84cde37731f1ae42aade7a5b86bea5cd29a093983402ddb8c80e27225b07d571",
-      "reproduced": true
+      "reproduced": false
     },
     "820x1078@0.5,0.75 n3": {
       "sha": "66aa2c3229f00838ed6f72d006f9749a06d4e31639cffc5ca8794a03748b934c",
@@ -397,7 +397,7 @@
     },
     "820x1078@0.5,0.75 n4": {
       "sha": "69569a1e67bb9f94c44844b633b333bf0167a0c289dbc460f8f225f6f50ee0ba",
-      "reproduced": true
+      "reproduced": false
     },
     "820x1078@0.78,0.5 n3": {
       "sha": "7db43cdad885810d36ce7950c932f6dad3d39b1c80663ba873e6200aeeb11226",
@@ -409,7 +409,7 @@
     },
     "820x1078@0.78,0.75 n4": {
       "sha": "de5aa24a3006c84f0b4e2517a8b6e26f05829800ffb2efbf54f9cf744e87653a",
-      "reproduced": true
+      "reproduced": false
     },
     "1920x1080@0.22,0.25 n3 rails": {
       "sha": "790295898d9e654d3e5decea4f16f5b394b4f6d82e0ed886b6bd61d9ccef4b99",
@@ -557,47 +557,47 @@
     },
     "1180x663@0.5,0.25 n3 rails": {
       "sha": "23bbff4656ae5cd09d7ac0444a19a455f7b74e861e89eef8af4d63b8b46ad9d8",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.25 n4 rails": {
       "sha": "de329accd61be8a8ff82e7f1b62ac751ce03d49305a119da7838ee287130926e",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.5 n3 rails": {
       "sha": "673079ec396a929e98dd7e21bc69cdaf6c82cbe5dc5be91dbbcc20f5b1703d1f",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.5 n4 rails": {
       "sha": "64d2f4e3cca2a322a437611ab03d13e9727f2bb452de179c1f2ab4d895f7a8a5",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.75 n3 rails": {
       "sha": "8e91f5ce13e2c3637cfa6af92f5564950e4415f16fba50f7a576dade9f336f5e",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.5,0.75 n4 rails": {
       "sha": "767ecea7d86f96c4c1450945a776f8a88449022293ec6660ec3b84f1bb44bf50",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.25 n3 rails": {
       "sha": "0171523c823c1138b7db1b3634f50cd3d7d48ffea023c14715e59e356f474fa4",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.5 n3 rails": {
       "sha": "50b479db4e07e1102bbcf75d2818b802892a0378f96a263e2104ec1b305bebe2",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.5 n4 rails": {
       "sha": "cec2b2abae28d8ccdef2ae5a6452c2938adf50cd4033af807b81d38ecb7ff608",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.75 n3 rails": {
       "sha": "9579762718d102b844ddb3a770c7059382b62451b06ba009bdb3e84d85059f86",
-      "reproduced": true
+      "reproduced": false
     },
     "1180x663@0.78,0.75 n4 rails": {
       "sha": "52ea814805d8b1f63dc4519838a08c5c11358f6b4434ba7a7502c93d55d0daea",
-      "reproduced": true
+      "reproduced": false
     }
   }
 }
