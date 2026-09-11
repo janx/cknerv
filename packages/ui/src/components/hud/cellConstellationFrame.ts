@@ -1612,7 +1612,9 @@ export function advanceConstellationFrame(
     // The one frame a refinement may run on: the picture is complete, the Cell
     // is where the picture was solved for, and nothing is pending.
     advanceRefinement(handles, desired, now);
-    return handles.lastSpecimen;
+    // Not `handles.lastSpecimen`: most of a journey's frames are settled ones,
+    // and the portrait is owed where the plate IS on each of them.
+    return currentSpecimenPlacement(handles);
   }
 
   // Past here the frame is asking a new question — the geometry changed, the
