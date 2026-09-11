@@ -4,10 +4,15 @@ import {
   ROUTE_GRID_PAIR_CAP,
   ROUTE_GRID_POINT_CAP,
   ROUTE_ORDER_CAP,
+  ROUTE_REFINE_GRID_PAIR_CAP,
+  ROUTE_REFINE_ORDER_CAP,
+  ROUTE_REFINE_POINT_BUDGET,
   constellationLayout,
   constellationPlacement,
+  refineConstellationRoutes,
   resetConstellationWorkStats,
   snapshotConstellationWorkStats,
+  type ConstellationLayout,
   type ConstellationPanel,
 } from '../../src/derives/cellConstellation.derive';
 import {
@@ -18,6 +23,8 @@ import {
   CONSTELLATION_SAFE_TOP,
   CONSTELLATION_STAGES,
   constellationChipReserved,
+  constellationMatrixCases,
+  constellationMatrixInput,
   railsForStage,
 } from '../fixtures/cellConstellationMatrix';
 
@@ -169,5 +176,71 @@ describe('cell constellation viewport matrix', () => {
     // again will.
     const ratio = routedMs / geometryMs;
     expect(ratio, `routed/geometry = ${ratio.toFixed(2)}`).toBeLessThan(4);
+  });
+
+  it('bounds every refinement by the caps it declares', () => {
+    // The refinement is allowed to spend what first paint may not, so what it
+    // may spend has to be a number rather than a hope. Every bound is read
+    // back off the work it bounded, which is exact and says the same thing on
+    // any machine: no start-end pair walks more than ROUTE_GRID_POINT_CAP grid
+    // points, no plate offers more than ROUTE_REFINE_GRID_PAIR_CAP pairs to the
+    // search, no layout is routed in more than ROUTE_REFINE_ORDER_CAP orders,
+    // and the whole pass stops at ROUTE_REFINE_POINT_BUDGET grid points with
+    // the best answer it has.
+    //
+    // Measured over the 25 matrix layouts that reach first paint with a
+    // fallback leader, 2026-09-12: the dearest refinement spends the budget
+    // exactly (three of them do), the dearest that SUCCEEDS spends 270,219,
+    // and the whole sweep of 25 costs about a second of wall clock.
+    const overCap: string[] = [];
+    const worse: string[] = [];
+    let refined = 0;
+    let widest = 0;
+    const degraded = (layout: ConstellationLayout) => layout.placements.filter(
+      (panel) => panel.route?.degraded === true,
+    ).length;
+    for (const matrixCase of constellationMatrixCases()) {
+      const input = constellationMatrixInput(matrixCase);
+      const first = constellationLayout(input);
+      const before = degraded(first);
+      if (before === 0) continue;
+      refined += 1;
+      resetConstellationWorkStats();
+      const after = refineConstellationRoutes(input, first);
+      const stats = snapshotConstellationWorkStats();
+      const where = matrixCase.key;
+      if (stats.routeGridPoints > ROUTE_REFINE_POINT_BUDGET) {
+        overCap.push(`${where}: ${stats.routeGridPoints} grid points over budget`);
+      }
+      if (stats.routeGridPoints > ROUTE_GRID_POINT_CAP * stats.searchedRouteAttempts) {
+        overCap.push(`${where}: ${stats.routeGridPoints} points over`
+          + ` ${stats.searchedRouteAttempts} pairs`);
+      }
+      if (stats.routeOrders > ROUTE_REFINE_ORDER_CAP) {
+        overCap.push(`${where}: ${stats.routeOrders} route orders`);
+      }
+      const pairCeiling = ROUTE_REFINE_GRID_PAIR_CAP * matrixCase.count
+        * ROUTE_REFINE_ORDER_CAP;
+      if (stats.searchedRouteAttempts > pairCeiling) {
+        overCap.push(`${where}: ${stats.searchedRouteAttempts} searched pairs`
+          + ` over ${pairCeiling}`);
+      }
+      widest = Math.max(widest, stats.routeGridPoints);
+      if (after === null) continue;
+      // A refinement may only ever hand back a better picture at the same
+      // seats. Anything else and the reader watches a leader get worse for no
+      // reason at all.
+      if (degraded(after) >= before) worse.push(`${where}: ${before} -> ${degraded(after)}`);
+      const moved = after.placements.filter((panel, index) => {
+        const seat = first.placements[index];
+        return panel.slot !== seat.slot || panel.x !== seat.x || panel.y !== seat.y
+          || panel.width !== seat.width || panel.height !== seat.height;
+      });
+      if (moved.length > 0) worse.push(`${where}: ${moved.length} seats moved`);
+    }
+    expect(refined).toBeGreaterThan(20);
+    expect(overCap).toEqual([]);
+    expect(worse).toEqual([]);
+    expect(widest).toBeGreaterThan(0);
   });
 });

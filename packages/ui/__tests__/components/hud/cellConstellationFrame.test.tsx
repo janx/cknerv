@@ -268,6 +268,10 @@ describe('the frame writer', () => {
       routeGridPoints: 0,
       routeCapHits: 0,
       unavailableHolds: 0,
+      refineStarts: 0,
+      refineLandings: 0,
+      refineUpgrades: 0,
+      refineDropped: 0,
       seatTweens: 0,
       chipRelocations: 0,
       cursorSlices: 0,
@@ -904,5 +908,259 @@ describe('what the writer asks for, and how often (P2)', () => {
     // hold. Measured 2026-09-11 before P1: 20 full solves per 60 frames.
     expect(stats.unavailableHolds).toBeGreaterThanOrEqual(55);
     expect(stats.unavailableHolds).toBeLessThanOrEqual(59);
+  });
+});
+
+describe('a second look at the leaders first paint could not draw (P2b)', () => {
+  // The stage this is about is the shipping desktop one. P2's router caps
+  // brought a four-panel first paint from seconds to milliseconds and cost
+  // twelve of the 149 clean matrix leaders their canonical route; ten of the
+  // twelve are 1920-wide under the HUD rails at the 0.22 and 0.78 anchors.
+  // The refinement is what gives them back, after the reader already has a
+  // constellation to look at.
+  function railed(
+    stageHeight: number,
+    slots: ReadonlyArray<readonly [string, number]> = [
+      ['analysis', 717], ['specimen', 314], ['reader', 340],
+    ],
+  ) {
+    const handles = createCellConstellationHandles();
+    for (const [slot, height] of slots) {
+      handles.panels[slot].host = document.createElement('div');
+      handles.panels[slot].present = true;
+      handles.panels[slot].height = height;
+      handles.leaders[slot].group = document.createElementNS(
+        'http://www.w3.org/2000/svg', 'g',
+      ) as SVGGElement;
+      handles.leaders[slot].under = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      handles.leaders[slot].over = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      handles.leaders[slot].dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      handles.leaders[slot].label = document.createElement('span');
+    }
+    handles.root = document.createElement('div');
+    handles.reticle = document.createElement('div');
+    handles.chip = document.createElement('div');
+    // The measured chip, so this writer run reproduces the matrix case of the
+    // same name exactly — the oracle and this test are looking at one picture.
+    handles.chipWidth = 376;
+    handles.chipHeight = 24;
+    return { handles, stageHeight };
+  }
+
+  /**
+   * One frame on a clock that ticks a whole millisecond per reading, so the
+   * 1.6 ms slice buys exactly two steps of the cursor whatever the machine is
+   * doing. The tests that need a refinement to still be IN FLIGHT on the next
+   * frame use this; a real clock would let a fast machine finish a 5 ms search
+   * inside one 1.6 ms slice and there would be nothing left to cancel.
+   */
+  function crawl(
+    handles: ReturnType<typeof railed>['handles'],
+    anchorX: number, anchorY: number, stageHeight: number, frame: number,
+  ): void {
+    let tick = 0;
+    advanceConstellationFrame(
+      handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+      () => { tick += 1; return tick; },
+    );
+  }
+
+  /** Frames until `done`, driving the writer on a real clock. */
+  function run(
+    handles: ReturnType<typeof railed>['handles'],
+    anchorX: number, anchorY: number, stageHeight: number,
+    limit: number, done: () => boolean, from = 0,
+  ): number {
+    let frame = from;
+    while (!done() && frame - from < limit) {
+      frame += 1;
+      advanceConstellationFrame(
+        handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+      );
+    }
+    return frame;
+  }
+
+  it('paints a fallback leader first and replaces it with a real one', () => {
+    // 1920x920 under the rails at 0.78, 0.25 — `1920x920@0.78,0.25 n3 rails`,
+    // one of the twelve. First paint routes two of the three plates and the
+    // third takes the dashed fallback; the refinement finds the third line in
+    // 30,912 grid points, about 5.5 ms of search on a quiet machine, spent
+    // 1.6 ms at a time behind a constellation that is already on screen.
+    const { handles, stageHeight } = railed(920);
+    const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
+    resetConstellationWorkStats();
+    // The first-paint gate is twenty frames and the target is three, for the
+    // reason the four-panel gate beside it carries: the writer spends a REAL
+    // clock against a fixed per-frame allowance, so on a loaded machine this
+    // counts the scheduler. Three-panel solves measured 7 ms at their dearest
+    // on 2026-09-12, against 1.6 + 1.6 + 8 ms of slicing in three frames.
+    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      () => handles.lastLayout !== null);
+    expect(painted, `frames to first paint: ${painted}`).toBeLessThanOrEqual(20);
+    expect(handles.lastLayout?.placements).toHaveLength(3);
+    expect(handles.lastLayout?.leaders).toBe('degraded');
+    expect(handles.root?.dataset.cellConstellationLeaders).toBe('degraded');
+    const fallbacks = ['analysis', 'specimen', 'reader'].filter(
+      (slot) => handles.leaders[slot].group?.dataset.cellLeaderDegraded === 'true',
+    );
+    expect(fallbacks).toHaveLength(1);
+    const dashed = fallbacks[0];
+    const before = handles.leaders[dashed].over?.getAttribute('d');
+    const seats = handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    );
+    const hosts = ['analysis', 'specimen', 'reader'].map(
+      (slot) => handles.panels[slot].host?.style.transform,
+    );
+
+    const settled = run(handles, anchorX, anchorY, stageHeight, 60,
+      () => handles.lastLayout?.leaders === 'clean', painted);
+    expect(handles.lastLayout?.leaders, `frames to a clean leader set: ${settled - painted}`)
+      .toBe('clean');
+    expect(settled - painted).toBeLessThanOrEqual(60);
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineStarts).toBe(1);
+    expect(stats.refineLandings).toBe(1);
+    expect(stats.refineUpgrades).toBe(1);
+    expect(stats.refineDropped).toBe(0);
+    // The picture changed where it had to and nowhere else.
+    expect(handles.root?.dataset.cellConstellationLeaders).toBe('clean');
+    expect(handles.leaders[dashed].group?.dataset.cellLeaderDegraded).toBe('false');
+    expect(handles.leaders[dashed].over?.getAttribute('d')).not.toBe(before);
+    // Not one seat moved, and no host was written to.
+    expect(handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    )).toEqual(seats);
+    expect(['analysis', 'specimen', 'reader'].map(
+      (slot) => handles.panels[slot].host?.style.transform,
+    )).toEqual(hosts);
+  });
+
+  it('never moves a seat, and stops asking once it has answered', () => {
+    // 1920x1080 under the rails at 0.22, 0.25 — also one of the twelve, and
+    // the one that proves the seat rule. Its refinement walks all six orders
+    // and finds nothing: at the seats P2's first paint chose there IS no clean
+    // route, and P1's clean answer lived at DIFFERENT seats, which a refinement
+    // may not go and get. What it must do is finish, change nothing, and not
+    // ask again.
+    const { handles, stageHeight } = railed(1080);
+    const anchorX = 1920 * 0.22; const anchorY = 1080 * 0.25;
+    resetConstellationWorkStats();
+    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      () => handles.lastLayout !== null);
+    expect(handles.lastLayout?.leaders).toBe('degraded');
+    const seats = handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    );
+    const hosts = ['analysis', 'specimen', 'reader'].map(
+      (slot) => handles.panels[slot].host?.style.transform,
+    );
+    run(handles, anchorX, anchorY, stageHeight, 90,
+      () => snapshotConstellationWorkStats().refineStarts > 0
+        && handles.refineJob === null, painted);
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineStarts).toBe(1);
+    expect(stats.refineLandings).toBe(0);
+    expect(stats.refineDropped).toBe(0);
+    expect(handles.lastLayout?.leaders).toBe('degraded');
+    expect(handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    )).toEqual(seats);
+    expect(['analysis', 'specimen', 'reader'].map(
+      (slot) => handles.panels[slot].host?.style.transform,
+    )).toEqual(hosts);
+    // Thirty more settled frames, and it does not start over.
+    for (let frame = 0; frame < 30; frame += 1) {
+      advanceConstellationFrame(
+        handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0,
+        painted + 200 + frame,
+      );
+    }
+    expect(snapshotConstellationWorkStats().refineStarts).toBe(1);
+  });
+
+  it('carries a refinement that finished after the cell drifted inside its bucket', () => {
+    const { handles, stageHeight } = railed(920);
+    const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
+    resetConstellationWorkStats();
+    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      () => handles.lastLayout !== null);
+    // One frame of refinement, then the Cell moves a fifth of a pixel: the same
+    // half-pixel bucket, so the same connector key and no new solve, but the
+    // routes now being searched belong to an anchor the reticle has left.
+    crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
+    expect(handles.refineJob).not.toBeNull();
+    const drifted = anchorX + 0.2;
+    // The request is only rebuilt when something it describes changed; drop it
+    // so this frame carries the moved anchor into a new one.
+    handles.lastRequest = null;
+    const landed = run(handles, drifted, anchorY, stageHeight, 60,
+      () => handles.lastLayout?.leaders === 'clean', painted + 1);
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineLandings, `frames: ${landed - painted}`).toBe(1);
+    expect(stats.refineDropped).toBe(0);
+    expect(handles.lastLayout?.leaders).toBe('clean');
+    // Every leader starts at an outlet of the anchor the reticle is on NOW.
+    const outlets = new Set([
+      drifted + 52, drifted - 52, drifted - 18, drifted + 18,
+    ].map((value) => value.toFixed(4)));
+    for (const placement of handles.lastLayout?.placements ?? []) {
+      expect(outlets.has(placement.route!.points[0].x.toFixed(4)),
+        `${placement.slot} starts at ${placement.route!.points[0].x}`).toBe(true);
+    }
+  });
+
+  it('drops a refinement when the cell leaves the picture it was routed for', () => {
+    const { handles, stageHeight } = railed(920);
+    const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
+    resetConstellationWorkStats();
+    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      () => handles.lastLayout !== null);
+    crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
+    expect(handles.refineJob).not.toBeNull();
+    // Past the 160 px hold radius: a new solve owns this frame.
+    advanceConstellationFrame(
+      handles, anchorX - 400, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0,
+      painted + 2,
+    );
+    expect(handles.refineJob).toBeNull();
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineStarts).toBe(1);
+    expect(stats.refineLandings).toBe(0);
+    expect(stats.refineDropped).toBe(0);
+    expect(stats.refineUpgrades).toBe(0);
+  });
+
+  it('drops a refinement when an instrument changes height under it', () => {
+    const { handles, stageHeight } = railed(920);
+    const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
+    resetConstellationWorkStats();
+    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      () => handles.lastLayout !== null);
+    crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
+    expect(handles.refineJob).not.toBeNull();
+    handles.panels.reader.height = 380;
+    advanceConstellationFrame(
+      handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, painted + 2,
+    );
+    expect(handles.refineJob).toBeNull();
+    expect(snapshotConstellationWorkStats().refineLandings).toBe(0);
+  });
+
+  it('drops a refinement when the channel is invalidated or the camera moves', () => {
+    for (const stop of ['invalidate', 'motion'] as const) {
+      const { handles, stageHeight } = railed(920);
+      const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
+      resetConstellationWorkStats();
+      const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+        () => handles.lastLayout !== null);
+      crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
+      expect(handles.refineJob, stop).not.toBeNull();
+      if (stop === 'invalidate') invalidateConstellationFrame(handles);
+      else suspendConstellationFrame(handles, anchorX, anchorY, 1920, stageHeight, EDGE);
+      expect(handles.refineJob, stop).toBeNull();
+      expect(snapshotConstellationWorkStats().refineLandings, stop).toBe(0);
+    }
   });
 });
