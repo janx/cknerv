@@ -4827,10 +4827,10 @@ describe('one ladder for time', () => {
       Object.entries(HUD_MOTION).filter(([, value]) => typeof value === 'number'),
     );
     expect(Object.fromEntries(declared)).toEqual(table);
-    expect(declared.size).toBe(6);
+    expect(declared.size).toBe(7);
 
-    // The rungs are ordered and none of them collides: six names for six
-    // speeds, which is the whole point of stopping at six.
+    // The rungs are ordered and none of them collides: seven names for seven
+    // speeds, which is the whole point of stopping where it stops.
     const values = [...declared.values()];
     expect(new Set(values).size).toBe(values.length);
     expect([...values].sort((a, b) => a - b)).toEqual(values);

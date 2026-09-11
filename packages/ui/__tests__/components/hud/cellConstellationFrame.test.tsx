@@ -15,10 +15,12 @@ import {
   commitConstellationFrame,
   createCellConstellationHandles,
   invalidateConstellationFrame,
+  resetConstellationSeats,
   setConstellationVisible,
   suspendConstellationFrame,
 } from '../../../src/components/hud/cellConstellationFrame';
 import {
+  resetConstellationLock,
   resetConstellationWorkStats,
   snapshotConstellationWorkStats,
 } from '../../../src/derives/cellConstellation.derive';
@@ -337,6 +339,13 @@ describe('the frame writer', () => {
     // The App reuses this channel across selected Cells. Invalidation forgets
     // every route signature, while the completed seats remain a usable holding
     // presentation during motion instead of snapping the new dossier to 0,0.
+    //
+    // The overlay does both of these on `cell.id`, and the second is what says
+    // the new dossier ARRIVES: without it the writer would read the old Cell's
+    // seats as seats to travel from, take `HUD_MOTION.seat` to cross the stage
+    // to the new ones, and hold every leader down for the journey.
+    resetConstellationLock(handles.lock);
+    resetConstellationSeats(handles);
     invalidateConstellationFrame(handles);
     handles.visible = false; // the new overlay root's entrance state
     suspendConstellationFrame(handles, 740, 420, 1920, 1080, EDGE);

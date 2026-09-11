@@ -30,6 +30,7 @@ import {
   advanceConstellationFrame,
   createCellConstellationHandles,
   invalidateConstellationFrame,
+  resetConstellationSeats,
   setConstellationVisible,
   suspendConstellationFrame,
   type CellConstellationHandles,
@@ -156,6 +157,7 @@ export function CellInspectionAnchor({
   useEffect(() => () => clearCellPortraitCardOrigin(), []);
   useEffect(() => {
     resetConstellationLock(handles.lock);
+    resetConstellationSeats(handles);
     invalidateConstellationFrame(handles);
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') invalidateConstellationFrame(handles);
@@ -283,6 +285,13 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   }, [onInspectionFieldChange]);
   useSceneInspectionDismiss(rootRef, onClose);
 
+  // A seat change is a motion a visitor can ask not to see. The frame writer
+  // runs inside `useFrame`, which is not a component and cannot hold a hook, so
+  // the answer is carried on the channel and kept current here.
+  useEffect(() => {
+    handles.reducedMotion = reduced;
+  }, [handles, reduced]);
+
   // The exit. Written imperatively for the reason the dim is: the frame writer
   // owns `opacity` on this element, so React's idea of the style is already
   // stale and re-rendering it would not move anything.
@@ -314,9 +323,13 @@ function CellInspectionOverlay(props: CellInspectionOverlayProps) {
   }, [handles, cell.id]);
 
   // A different Cell opens somewhere else on screen and owes nobody the rooms
-  // the last one chose.
+  // the last one chose — nor the places the last one's plates stood. Without
+  // the second line the new dossier would travel across the stage from the old
+  // Cell's seats, over `HUD_MOTION.seat`, instead of arriving with the
+  // chassis's one entrance. Nothing travels between two Cells.
   useEffect(() => {
     resetConstellationLock(handles.lock);
+    resetConstellationSeats(handles);
     invalidateConstellationFrame(handles);
     setFocusField(null);
   }, [cell.id, handles]);

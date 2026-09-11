@@ -13,6 +13,7 @@ import {
   observeConstellationRefineDropped,
   observeConstellationRefineLanding,
   observeConstellationRefineStart,
+  observeConstellationSeatTween,
   observeConstellationUnavailableHold,
   createConstellationLock,
   refineConstellationRoutesCursor,
@@ -20,6 +21,7 @@ import {
   constellationHeldRoomPx,
   CONSTELLATION_RETICLE_PX,
   CONSTELLATION_ROUTE_CLEARANCE_PX,
+  CONSTELLATION_SEAT_TRAVEL_MIN_PX,
   CONSTELLATION_UNAVAILABLE_RESOLVE_PX,
   type ConstellationChipInput,
   type ConstellationChipPlacement,
@@ -32,6 +34,7 @@ import {
   type ConstellationInput,
 } from '../../derives/cellConstellation.derive';
 import type { HudOcclusionRect } from '../hudOcclusion';
+import { HUD_MOTION } from './hudTheme';
 import {
   FRAME_BUDGET_PANEL_SOLVE,
   announceFrameBudgetWork,
@@ -49,6 +52,75 @@ import {
 
 const PANEL_SLICE_BUDGET = 1.6;
 const PANEL_FIRST_PAINT_DEADLINE_FRAMES = 3;
+
+/** One axis of a CSS cubic bezier, whose first and last control points are
+ *  pinned at 0 and 1 — so a curve is two numbers an axis, and this is the
+ *  polynomial for either of them. */
+function bezierAxis(first: number, second: number, t: number): number {
+  const rest = 1 - t;
+  return 3 * rest * rest * t * first + 3 * rest * t * t * second + t * t * t;
+}
+
+/** The four control numbers of a `cubic-bezier(...)` string, or the straight
+ *  line, because a keyword easing is not a curve this can sample. */
+function readCubicBezier(easing: string): readonly [number, number, number, number] {
+  const numbers = easing.match(/-?\d*\.?\d+/g);
+  if (numbers?.length !== 4) return [0, 0, 1, 1];
+  return [Number(numbers[0]), Number(numbers[1]), Number(numbers[2]), Number(numbers[3])];
+}
+
+/**
+ * The HUD's one bezier, sampled rather than declared.
+ *
+ * A CSS `transition` cannot carry this. The plates are positioned by a
+ * transform written sixty times a second from outside React — the galaxy turns
+ * under a selected Cell for as long as it is open — so a transition on that
+ * property would be re-triggered by every drift frame and the instruments would
+ * swim rather than travel. So the curve is READ OUT of `HUD_MOTION.enterEase`,
+ * the same string the stylesheet transitions with, and evaluated here: there is
+ * still exactly one bezier in this HUD.
+ *
+ * Bisection rather than Newton: twenty halvings put the parameter inside a
+ * millionth, it cannot diverge on a curve whose start is nearly flat, and it
+ * costs a few hundred nanoseconds for at most four plates a frame.
+ */
+const SEAT_EASE = readCubicBezier(HUD_MOTION.enterEase);
+function seatEase(progress: number): number {
+  if (!(progress > 0)) return 0;
+  if (progress >= 1) return 1;
+  let low = 0;
+  let high = 1;
+  let t = progress;
+  for (let step = 0; step < 20; step += 1) {
+    if (bezierAxis(SEAT_EASE[0], SEAT_EASE[2], t) < progress) low = t;
+    else high = t;
+    t = (low + high) / 2;
+  }
+  return bezierAxis(SEAT_EASE[1], SEAT_EASE[3], t);
+}
+
+/**
+ * A seat the reader is watching travel.
+ *
+ * `from` is where the plate stood when the landing arrived — which may itself
+ * be a point on the way somewhere else, because a landing during a travel
+ * retargets from wherever the plate has got to rather than from where it set
+ * out. `to` is the seat that landed.
+ *
+ * x, y and height move together on ONE eased parameter, and that is the only
+ * way a plate which grew UPWARD keeps its bottom edge: y and height both
+ * change, and their sum is constant through the travel exactly when one curve
+ * drives both. The width is not here; it is written at once.
+ */
+interface ConstellationSeatTween {
+  fromX: number;
+  fromY: number;
+  fromHeight: number;
+  toX: number;
+  toY: number;
+  toHeight: number;
+  startedMs: number;
+}
 
 interface ConstellationFrameRequest {
   connectorKey: string;
@@ -95,6 +167,26 @@ export interface ConstellationPanelHandle {
   width: number;
   height: number;
   present: boolean;
+  /** Where this plate was last WRITTEN, and to which host. It is kept here so
+   * a travel never has to read a transform back out of the DOM, and so a
+   * replacement DOM node — which has no seat of its own — is placed at once
+   * rather than flown in from the seat of the node it replaced. */
+  seatX: number;
+  seatY: number;
+  seatHeight: number;
+  seatHost: HTMLDivElement | null;
+  /** The seat this plate is HEADING for, which is the seat it stands on
+   * whenever nothing is travelling.
+   *
+   * ⚠️ A landing is a seat change when it differs from THIS, never when the
+   * placement key differs: `placementSignature` carries the height, so a plate
+   * that only grew has a new key and the same seat, and growing in place lands
+   * in one frame and must not travel anywhere. */
+  targetX: number;
+  targetY: number;
+  targetHeight: number;
+  /** The travel in flight, or null. */
+  tween: ConstellationSeatTween | null;
 }
 export interface ConstellationLeaderHandle {
   /** The <g> the two strokes, the endpoint and the mask live in. The writer
@@ -171,6 +263,30 @@ export interface CellConstellationHandles {
    * itself exactly as it does live, and the plates stand in flow, visible,
    * instead of waiting at `visibility: hidden` for a seat that never comes. */
   detached: boolean;
+  /** The visitor asked for stillness. `CellInspectionOverlay` keeps this
+   * current from `useReducedMotion` — a `useFrame` callback is not a component
+   * and cannot hold a hook — and a seat change is then written at once. */
+  reducedMotion: boolean;
+  /**
+   * The travel's own clock, in milliseconds.
+   *
+   * ⚠️ It is NOT the slice budget's `now`, and it is a field rather than a
+   * parameter on purpose. `HUD_MOTION.seat` is 240 real milliseconds, while
+   * the `now` the writer slices its solver with is a budget meter that the
+   * tests deliberately advance by a twentieth of a millisecond a reading (it
+   * would take 4,800 readings to cross one travel) and that the frame budget
+   * may hand out in any size at all. A travel is also stepped from four
+   * entrances — the frame, the drain, the motion suspend and the landing that
+   * starts it — and threading a clock argument through all of them would put a
+   * time parameter on functions with nothing else to do with time. A test sets
+   * this field and drives 240 ms in as many frames as it likes.
+   */
+  seatClock: () => number;
+  /** The visibility the writer last ASKED the leaders for. A travelling seat
+   * overrules it — a leader drawn to where a plate is GOING is a lie about
+   * where the instrument is — and this is what says what to restore when the
+   * travel is over. */
+  leadersWanted: boolean;
 }
 
 export const CONSTELLATION_SLOTS: readonly ConstellationSlot[] = [
@@ -191,6 +307,9 @@ export function createCellConstellationHandles(
       host: null, positionedHost: null, fallbackLabel: null,
       width: CONSTELLATION_WIDTH[slot] ?? 408,
       height: 0, present: false,
+      seatX: Number.NaN, seatY: Number.NaN, seatHeight: Number.NaN, seatHost: null,
+      targetX: Number.NaN, targetY: Number.NaN, targetHeight: Number.NaN,
+      tween: null,
     };
     leaders[slot] = {
       group: null, under: null, over: null, dot: null, label: null,
@@ -213,6 +332,9 @@ export function createCellConstellationHandles(
     provisionalBaseAnchorX: Number.NaN, provisionalBaseAnchorY: Number.NaN,
     provisionalVisible: false, presentationDirty: false, motionSuspended: false,
     detached: options.detached === true,
+    reducedMotion: false,
+    seatClock: () => performance.now(),
+    leadersWanted: false,
   };
 }
 
@@ -332,6 +454,12 @@ function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<str
     const panel = handles.panels[slot];
     if (panel.host) panel.host.style.visibility = 'hidden';
     panel.positionedHost = null;
+    // An instrument that is not in this picture has no seat to travel from;
+    // the next one it appears in places it outright.
+    panel.tween = null;
+    panel.seatHost = null;
+    panel.targetX = Number.NaN;
+    panel.targetY = Number.NaN;
     const leader = handles.leaders[slot];
     leader.under?.setAttribute('d', '');
     leader.over?.setAttribute('d', '');
@@ -348,25 +476,244 @@ function panelHostIsPositioned(panel: ConstellationPanelHandle): boolean {
     && panel.host.style.visibility !== 'hidden';
 }
 
+/** WHERE a plate stands, and the one record of it. Split from the size below
+ *  so the clamped-height presentation can tell a plate about its new rows
+ *  without taking the transform away from a travel that owns it. */
+function writePanelPosition(
+  panel: ConstellationPanelHandle,
+  host: HTMLDivElement,
+  x: number,
+  y: number,
+): void {
+  host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  panel.seatX = x;
+  panel.seatY = y;
+  panel.seatHost = host;
+}
+
+/** HOW BIG a plate is drawn, and whether its content is cut. The width is
+ *  always the answer's width — nothing about a seat change makes a plate a
+ *  different width — and the height is the one the caller is drawing at, which
+ *  during a travel is a point on the way to the landed one. */
+function writePanelSize(
+  panel: ConstellationPanelHandle,
+  host: HTMLDivElement,
+  width: number,
+  height: number,
+  capped: boolean,
+): void {
+  host.style.width = `${width}px`;
+  host.style.height = `${height}px`;
+  host.dataset.cellPanelCapped = capped ? 'true' : 'false';
+  panel.seatHeight = height;
+}
+
+/**
+ * Seat one plate, and say whether the reader is going to watch it get there.
+ *
+ * The one rule, and every path that writes a plate goes through it: a seat that
+ * MOVED under a plate already standing on screen is travelled to, from wherever
+ * that plate has got to, over `HUD_MOTION.seat`. Everything else is written at
+ * once — a first paint, a replacement DOM node, a plate the writer had
+ * withdrawn, a visitor who asked for stillness, a move under
+ * `CONSTELLATION_SEAT_TRAVEL_MIN_PX`, and a plate that only grew.
+ *
+ * ⚠️ The comparison is the SEAT, not the placement key. `placementSignature`
+ * carries the height, so a plate that grew has a new key and the same seat, and
+ * growing in place lands in one frame: it must be written and not travelled to.
+ * A plate that grew UPWARD did move its top, and is a genuine journey — a short
+ * one, which is why y and the height travel on the same parameter and its
+ * bottom edge stays where the reader left it.
+ */
 function writePanelPlacement(
+  handles: CellConstellationHandles,
   panel: ConstellationPanelHandle,
   placement: ConstellationPlacement,
   placementChanged: boolean,
-): void {
+): boolean {
   const host = panel.host;
-  if (!host) return;
+  if (!host) return false;
+  if (handles.reducedMotion && panel.tween) {
+    // Stillness was asked for in the middle of a journey: the plate is at the
+    // seat it was going to, now.
+    writeSeatTweenAt(panel, panel.tween, 1);
+    panel.tween = null;
+  }
   // A new selection or reopened slot owns fresh DOM even when its dimensions
   // happen to reproduce the previous placement signature. It is not seated
-  // until this exact host receives every placement field.
-  if (placementChanged || panel.positionedHost !== host) {
-    host.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
+  // until this exact host receives every placement field — and it has nowhere
+  // to travel from until it has been seated once.
+  const standing = panel.positionedHost === host
+    && panel.seatHost === host
+    && host.style.visibility !== 'hidden'
+    && Number.isFinite(panel.targetX)
+    && Number.isFinite(panel.targetY);
+  const travel = standing && !handles.reducedMotion
+    && Math.hypot(placement.x - panel.targetX, placement.y - panel.targetY)
+      >= CONSTELLATION_SEAT_TRAVEL_MIN_PX;
+  if (travel) {
+    panel.tween = {
+      fromX: panel.seatX,
+      fromY: panel.seatY,
+      fromHeight: Number.isFinite(panel.seatHeight) ? panel.seatHeight : placement.height,
+      toX: placement.x,
+      toY: placement.y,
+      toHeight: placement.height,
+      startedMs: handles.seatClock(),
+    };
+    // The width and the cut are the answer's, from this frame. Only the three
+    // quantities that carry the plate across the stage are travelled.
     host.style.width = `${placement.width}px`;
-    host.style.height = `${placement.height}px`;
     host.dataset.cellPanelCapped = placement.capped ? 'true' : 'false';
     host.dataset.cellPanelQuadrant = placement.quadrant;
+    writeSeatTweenAt(panel, panel.tween, 0);
+  } else if (placementChanged || panel.positionedHost !== host) {
+    writePanelSize(panel, host, placement.width, placement.height, placement.capped);
+    host.dataset.cellPanelQuadrant = placement.quadrant;
+    if (panel.tween) {
+      // A journey is in flight and this is not a new one: the clamped
+      // presentation writing measured rows into a plate on its way somewhere,
+      // or a landing correcting its destination by less than a gap. The rows go
+      // in at once — a measurement that arrived is not a thing to animate — and
+      // the journey keeps its clock and takes the corrected seat.
+      panel.tween.fromHeight = placement.height;
+      panel.tween.toHeight = placement.height;
+      panel.tween.toX = placement.x;
+      panel.tween.toY = placement.y;
+    } else {
+      writePanelPosition(panel, host, placement.x, placement.y);
+    }
+  }
+  if (travel || placementChanged || panel.positionedHost !== host) {
+    panel.targetX = placement.x;
+    panel.targetY = placement.y;
+    panel.targetHeight = placement.height;
   }
   panel.positionedHost = host;
   host.style.visibility = 'visible';
+  return travel;
+}
+
+/** One re-composition is one thing to watch, however many instruments it
+ *  carries: the count is per seat change, and the leaders go down together. */
+function noteSeatTravel(handles: CellConstellationHandles, travelling: boolean): void {
+  if (!travelling) return;
+  observeConstellationSeatTween();
+  applyLeaderVisibility(handles);
+}
+
+function seatTweenActive(handles: CellConstellationHandles): boolean {
+  for (const slot of CONSTELLATION_SLOTS) {
+    if (handles.panels[slot].tween) return true;
+  }
+  return false;
+}
+
+function writeSeatTweenAt(
+  panel: ConstellationPanelHandle,
+  tween: ConstellationSeatTween,
+  eased: number,
+): void {
+  const host = panel.host;
+  if (!host) return;
+  const x = tween.fromX + (tween.toX - tween.fromX) * eased;
+  const y = tween.fromY + (tween.toY - tween.fromY) * eased;
+  const height = tween.fromHeight + (tween.toHeight - tween.fromHeight) * eased;
+  writePanelPosition(panel, host, x, y);
+  host.style.height = `${height}px`;
+  panel.seatHeight = height;
+}
+
+/**
+ * Step every travel in flight and write what it says this frame.
+ *
+ * Called from the top of every frame the writer owns, including the frames it
+ * does no other work on: a travel is 240 ms of real time and the frames that
+ * carry it are mostly frames the constellation has nothing else to say. When
+ * the last one finishes, the leaders are drawn again — with the routes of the
+ * layout the plates have just arrived at, which the landing already wrote and
+ * this restores — and the ordinary settled path re-anchors them to the live
+ * anchor on the frames after, exactly as it does for a picture that never moved.
+ */
+function advanceSeatTweens(handles: CellConstellationHandles): void {
+  let ended = false;
+  let now = Number.NaN;
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    const tween = panel.tween;
+    if (!tween) continue;
+    if (!Number.isFinite(now)) now = handles.seatClock();
+    const progress = HUD_MOTION.seat > 0 ? (now - tween.startedMs) / HUD_MOTION.seat : 1;
+    if (!(progress < 1)) {
+      writeSeatTweenAt(panel, tween, 1);
+      panel.tween = null;
+      ended = true;
+      continue;
+    }
+    writeSeatTweenAt(panel, tween, seatEase(progress));
+  }
+  // The routes on screen are already the ones the plates have just arrived at:
+  // the landing wrote them, and every settled frame since re-anchored them to
+  // the live anchor behind the journey. Nothing to redraw — only to show.
+  if (ended && !seatTweenActive(handles)) applyLeaderVisibility(handles);
+}
+
+/** Put every travel at its end at once. Camera motion takes this: the leaders
+ *  are down for the whole motion window anyway, so there is nothing left for
+ *  the travel to protect, and a plate still drifting when the camera stops
+ *  would be a second motion on top of the one the visitor made. */
+function snapSeatTweens(handles: CellConstellationHandles): void {
+  let snapped = false;
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    const tween = panel.tween;
+    if (!tween) continue;
+    writeSeatTweenAt(panel, tween, 1);
+    panel.tween = null;
+    snapped = true;
+  }
+  if (snapped) applyLeaderVisibility(handles);
+}
+
+/** Stop every travel where it has got to, and let that be the seat. The
+ *  picture is being re-asked, so the plate stays under the reader's eye rather
+ *  than jumping to a seat the next solve may not agree with; the landing after
+ *  this travels from here. */
+function dropSeatTweens(handles: CellConstellationHandles): void {
+  let dropped = false;
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    if (!panel.tween) continue;
+    panel.tween = null;
+    panel.targetX = panel.seatX;
+    panel.targetY = panel.seatY;
+    panel.targetHeight = panel.seatHeight;
+    dropped = true;
+  }
+  if (dropped) applyLeaderVisibility(handles);
+}
+
+/**
+ * Forget where every plate stood.
+ *
+ * A DIFFERENT Cell is a different constellation, not a re-seating of this one:
+ * its instruments arrive at their seats with the overlay's own entrance, and
+ * nothing travels across the stage from the Cell the reader just closed. The
+ * overlay calls this beside `resetConstellationLock`, which is the same
+ * statement about the same event.
+ */
+export function resetConstellationSeats(handles: CellConstellationHandles): void {
+  for (const slot of CONSTELLATION_SLOTS) {
+    const panel = handles.panels[slot];
+    panel.tween = null;
+    panel.seatHost = null;
+    panel.seatX = Number.NaN;
+    panel.seatY = Number.NaN;
+    panel.seatHeight = Number.NaN;
+    panel.targetX = Number.NaN;
+    panel.targetY = Number.NaN;
+    panel.targetHeight = Number.NaN;
+  }
 }
 
 /** The one place a leader's strokes, endpoint, tag and fallback mark are
@@ -399,15 +746,26 @@ function writeLeader(handles: CellConstellationHandles,
   writeFallback(handles.panels[placement.slot].fallbackLabel, route.label.inPanel);
 }
 
+/**
+ * The specimen seat the portrait is scissored into — where the plate IS, not
+ * where it is going.
+ *
+ * The braid is painted on the main canvas beneath the whole DOM HUD and cut to
+ * the specimen's transparent window, so the scene needs the panel's origin
+ * every frame it moves. A travelling seat moves it on every one of them, and a
+ * scissor left at the landed seat would draw the braid a plate's width away
+ * from the plate for a quarter of a second.
+ */
 function currentSpecimenPlacement(
   handles: CellConstellationHandles,
   placement: ConstellationPlacement | null = handles.lastSpecimen,
 ): ConstellationPlacement | null {
-  return placement?.slot === 'specimen'
-    && handles.panels.specimen.present
-    && panelHostIsPositioned(handles.panels.specimen)
-    ? placement
-    : null;
+  const panel = handles.panels.specimen;
+  if (!(placement?.slot === 'specimen' && panel.present && panelHostIsPositioned(panel))) {
+    return null;
+  }
+  if (!panel.tween) return placement;
+  return { ...placement, x: panel.seatX, y: panel.seatY, height: panel.seatHeight };
 }
 
 function allPresentPanelHostsPositioned(handles: CellConstellationHandles): boolean {
@@ -478,7 +836,11 @@ function holdStaleSeats(
     if (measured <= 0 || Math.abs(measured - placement.height) < 0.5) return placement;
     // The room this seat has is the derive's answer, not a second opinion:
     // `constellationHeldRoomPx` is what `growInPlaceSeats` grows into, so the
-    // plate drawn here is the plate the solve behind it will land.
+    // plate drawn here is the plate the solve behind it will land. `kept` is
+    // the LANDED layout's placements, never a travelling plate's live position:
+    // the room a seat has is a fact about the seats, and measuring it from a
+    // plate halfway across the stage would clamp a growing instrument to the
+    // gap it happens to have this frame.
     const room = constellationHeldRoomPx(request.input, kept, index);
     const height = Math.min(measured, Math.max(placement.height, room));
     if (Math.abs(height - placement.height) < 0.5) return placement;
@@ -486,14 +848,18 @@ function holdStaleSeats(
   });
   let specimen: ConstellationPlacement | null = null;
   let grew = false;
+  let travelling = false;
   for (let index = 0; index < presented.length; index += 1) {
     const placement = presented[index];
     if (placement !== kept[index]) {
-      writePanelPlacement(handles.panels[placement.slot], placement, true);
+      if (writePanelPlacement(handles, handles.panels[placement.slot], placement, true)) {
+        travelling = true;
+      }
       grew = true;
     }
     if (placement.slot === 'specimen') specimen = placement;
   }
+  noteSeatTravel(handles, travelling);
   // Only a HEIGHT change earns this second look. Every other way of arriving
   // here — a viewport, a rail, an instrument opening — has already had the same
   // question asked of the same base layout by `showValidatedProvisional` and
@@ -521,7 +887,22 @@ function holdStaleSeats(
   setLeadersVisible(handles, true);
   return currentSpecimenPlacement(handles, specimen);
 }
+/**
+ * Ask for the leaders. A travelling seat overrules the answer.
+ *
+ * A leader is a line from the Cell to where an instrument IS. While a plate is
+ * crossing the stage the routes on screen are the ones solved for where it is
+ * GOING, so drawing them would point at nothing for a quarter of a second —
+ * which is why `HUD_MOTION.seat` is as short as it is. What is asked for is
+ * remembered, and restored the moment the last plate arrives.
+ */
 function setLeadersVisible(handles: CellConstellationHandles, visible: boolean): void {
+  handles.leadersWanted = visible;
+  applyLeaderVisibility(handles);
+}
+function applyLeaderVisibility(handles: CellConstellationHandles): void {
+  const travelling = seatTweenActive(handles);
+  const visible = handles.leadersWanted && !travelling;
   const visibility = visible ? '' : 'hidden';
   for (const slot of CONSTELLATION_SLOTS) {
     const leader = handles.leaders[slot];
@@ -529,7 +910,10 @@ function setLeadersVisible(handles: CellConstellationHandles, visible: boolean):
     if (leader.over) leader.over.style.visibility = visibility;
     if (leader.dot) leader.dot.style.visibility = visibility;
     if (leader.label) leader.label.style.visibility = visibility;
-    if (!visible) writeFallback(handles.panels[slot].fallbackLabel, false);
+    // The in-panel fallback is not a leader: it is the instrument's own name,
+    // set in its head, and it travels WITH the plate. A journey takes the line
+    // down and gives it back; it does not un-write what the route asked for.
+    if (!visible && !travelling) writeFallback(handles.panels[slot].fallbackLabel, false);
   }
 }
 function writeFallback(label: HTMLElement | null, visible: boolean): void {
@@ -918,6 +1302,10 @@ export function suspendConstellationFrame(
   stageHeight: number,
   edge: number,
 ): ConstellationPlacement | null {
+  // A travel has nothing left to protect here: the leaders are down for the
+  // whole motion window, and a plate still crossing the stage when the camera
+  // stops would be a second motion on top of the visitor's own.
+  snapSeatTweens(handles);
   // The camera is moving and no solve runs here, but the seats on screen are
   // still the seats the chip has to keep out of, so it is computed against
   // them by the same function the layout uses.
@@ -988,6 +1376,7 @@ function applyLayout(handles: CellConstellationHandles,
   clearAbsent(handles, present);
   let specimen: ConstellationPlacement | null = null;
   let quadrantsMoved = false;
+  let travelling = false;
   for (const current of layout.placements) {
     const panel = handles.panels[current.slot];
     if (current.slot === 'specimen') specimen = current;
@@ -995,11 +1384,12 @@ function applyLayout(handles: CellConstellationHandles,
       handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
-    writePanelPlacement(panel, current, placementChanged);
+    if (writePanelPlacement(handles, panel, current, placementChanged)) travelling = true;
     writeLeader(handles, current);
   }
   if (maskChanged) writeMasks(handles, layout.masks);
   handles.lastSpecimen = specimen;
+  noteSeatTravel(handles, travelling);
   if (quadrantsMoved) notifyQuadrants(handles);
   return currentSpecimenPlacement(handles, specimen);
 }
@@ -1029,6 +1419,7 @@ function applyProvisionalRoutes(
   }
   let specimen: ConstellationPlacement | null = null;
   let quadrantsMoved = false;
+  let travelling = false;
   const present = new Set(layout.placements.map((panel) => panel.slot));
   clearAbsent(handles, present);
   for (const current of layout.placements) {
@@ -1038,11 +1429,12 @@ function applyProvisionalRoutes(
       handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
-    writePanelPlacement(panel, current, placementChanged);
+    if (writePanelPlacement(handles, panel, current, placementChanged)) travelling = true;
     writeLeader(handles, current);
   }
   handles.provisionalVisible = provisional;
   handles.presentationDirty = provisional;
+  noteSeatTravel(handles, travelling);
   if (quadrantsMoved) notifyQuadrants(handles);
   return currentSpecimenPlacement(handles, specimen);
 }
@@ -1072,6 +1464,7 @@ function applyPanelPresentation(
   clearAbsent(handles, present);
   let specimen: ConstellationPlacement | null = null;
   let quadrantsMoved = false;
+  let travelling = false;
   for (const current of layout.placements) {
     if (current.slot === 'specimen') specimen = current;
     const panel = handles.panels[current.slot];
@@ -1079,8 +1472,9 @@ function applyPanelPresentation(
       handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
-    writePanelPlacement(panel, current, placementChanged);
+    if (writePanelPlacement(handles, panel, current, placementChanged)) travelling = true;
   }
+  noteSeatTravel(handles, travelling);
   if (quadrantsMoved) notifyQuadrants(handles);
   return currentSpecimenPlacement(handles, specimen);
 }
@@ -1116,6 +1510,7 @@ export function commitConstellationFrame(
   obstacles: readonly HudOcclusionRect[],
   obstacleVersion = 0,
 ): ConstellationPlacement | null {
+  advanceSeatTweens(handles);
   const request = prepareRequest(
     handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
     obstacles, obstacleVersion,
@@ -1174,6 +1569,10 @@ export function advanceConstellationFrame(
   handles.motionSuspended = false;
   if (handles.root) delete handles.root.dataset.cellConstellationMotion;
   beginFrameBudget(frameToken);
+  // Before anything else the frame might decide, and on every frame including
+  // the ones it decides nothing on: a travel is 240 real milliseconds and most
+  // of the frames that carry it are frames the constellation is settled on.
+  advanceSeatTweens(handles);
   const desired = prepareRequest(
     handles, anchorX, anchorY, stageWidth, stageHeight, safeTop, edge,
     obstacles, obstacleVersion,
@@ -1358,6 +1757,13 @@ export function setConstellationVisible(handles: CellConstellationHandles, visib
 export function invalidateConstellationFrame(handles: CellConstellationHandles): void {
   cancelLayoutJob(handles);
   cancelRefineJob(handles);
+  // The picture is being asked again — a viewport, a rail, an instrument that
+  // opened or measured itself taller. Whatever was travelling stops where it
+  // has got to and that becomes its seat, so the answer this invalidation is
+  // waiting for travels from under the reader's eye rather than from a seat
+  // nothing is standing on. A NEW CELL is not this event: the overlay calls
+  // `resetConstellationSeats` for that, and its instruments arrive.
+  dropSeatTweens(handles);
   handles.refinedKey = '';
   handles.frameKey = '';
   handles.layoutKey = '';

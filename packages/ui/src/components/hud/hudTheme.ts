@@ -616,13 +616,20 @@ export function viewportMinusSafeArea(
 //   rate that has nothing to do with a reader's attention. Neither can mean
 //   anything while any file may reach for either.
 //
-// SIX RUNGS, and they are about WHAT MOVES rather than about how long:
+// SEVEN RUNGS, and they are about WHAT MOVES rather than about how long:
 //
 //   flip    120   A state change with no travel: a colour, a background, a
 //                 caret sliding to the row it belongs to, a lamp. And a card
 //                 LEAVING, which is the same event — going is not an arrival
 //                 played backwards, it is the end of one, and a slow exit
 //                 reads as hesitation.
+//   seat    240   Something ALREADY HERE moving to another place it will
+//                 keep. The cell constellation stepping after its Cell: the
+//                 instruments travel, together, to seats the reader goes on
+//                 reading in. Shorter than an arrival because nothing is
+//                 appearing — the reader is following a thing they are
+//                 already looking at, and the leaders that name it are down
+//                 for exactly this long.
 //   reveal  260   Something becoming visible IN PLACE. The reveal ghost every
 //                 staged card wears, a fact's value arriving under the probe,
 //                 the card chassis itself, a panel giving way under one.
@@ -700,6 +707,7 @@ export function viewportMinusSafeArea(
 // in the overlay and every visual timer constant, and holds them to this.
 export const HUD_MOTION = {
   flip: 120,
+  seat: 240,
   reveal: 260,
   enter: 360,
   linger: 700,

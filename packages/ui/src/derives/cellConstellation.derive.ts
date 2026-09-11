@@ -31,6 +31,23 @@ export const CONSTELLATION_RETICLE_PX = 92;
 export const CONSTELLATION_MIN_GAP_PX = 16;
 export const CONSTELLATION_PREFERRED_GAP_PX = 24;
 /**
+ * The shortest move a seat is TRAVELLED to rather than simply written.
+ *
+ * A travel costs the leaders. A line drawn to where a plate is GOING points at
+ * nothing while it is on the way, so every leader is down for `HUD_MOTION.seat`
+ * from the moment any plate starts moving. That is the right trade for a
+ * re-composition — the constellation steps after its Cell about every
+ * `CONSTELLATION_HOLD_RADIUS_PX` and the reader's eye has something to follow —
+ * and the wrong one for a nudge, where there is nothing to follow and a quarter
+ * of a second without a leader costs more than the jump it saved. So the floor
+ * is the smallest distance this composition treats as a distance at all: the
+ * minimum gap it will leave between two instruments. A move no wider than the
+ * thinnest gap on the stage is written and forgotten. Raising it leaves more
+ * small re-seats as jumps; lowering it takes every leader down more often, for
+ * less.
+ */
+export const CONSTELLATION_SEAT_TRAVEL_MIN_PX = CONSTELLATION_MIN_GAP_PX;
+/**
  * The shortest a cappable instrument is allowed to be while any composition
  * short of the last one is still on offer.
  *
@@ -538,6 +555,14 @@ export function observeConstellationRefineLanding(upgrades: number): void {
  * are no longer the seats on screen. */
 export function observeConstellationRefineDropped(): void {
   constellationWorkStats.refineDropped += 1;
+}
+
+/** A landing moved seats the reader was already reading, and the frame writer
+ * travelled to them over `HUD_MOTION.seat` instead of writing them at once.
+ * Counted per SEAT CHANGE, not per plate: one re-composition that moves three
+ * instruments together is one tween, because it is one thing to watch. */
+export function observeConstellationSeatTween(): void {
+  constellationWorkStats.seatTweens += 1;
 }
 
 /** The name chip was written somewhere other than its preferred position, to
