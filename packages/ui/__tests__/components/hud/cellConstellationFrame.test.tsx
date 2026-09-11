@@ -1080,6 +1080,111 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     expect(snapshotConstellationWorkStats().refineStarts).toBe(1);
   });
 
+  /**
+   * `1920x920@0.78,0.25 n3 rails` — one of the twelve leaders P2's caps cost —
+   * with the Cell drifting for the whole run. `perFrame` is the drift and
+   * `clock` decides whether a frame's work is measured honestly or a whole
+   * millisecond per reading, which is how a refinement is kept in flight.
+   */
+  function drifter(stageHeight: number, handles: ReturnType<typeof railed>['handles']) {
+    const anchorY = 920 * 0.25;
+    let anchorX = 1920 * 0.78;
+    let resolves = 0;
+    const step = (perFrame: number, frame: number, real: boolean): void => {
+      anchorX += perFrame;
+      // The anchor moves every frame, so the request has to be rebuilt every
+      // frame; inside a half-pixel bucket the writer would otherwise hand back
+      // the one it has.
+      handles.lastRequest = null;
+      const before = handles.connectorKey;
+      let tick = 0;
+      advanceConstellationFrame(
+        handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+        real ? undefined : () => { tick += 1; return tick; },
+      );
+      if (before && handles.connectorKey !== before) resolves += 1;
+    };
+    const until = (
+      perFrame: number, limit: number, done: () => boolean, from: number, real = true,
+    ): number => {
+      let frame = from;
+      while (!done() && frame - from < limit) { frame += 1; step(perFrame, frame, real); }
+      return frame;
+    };
+    return {
+      until, step,
+      get anchorX() { return anchorX; },
+      get resolves() { return resolves; },
+    };
+  }
+
+  it('keeps looking while the canopy turns the cell under it', () => {
+    // The galaxy never stops: a selected Cell's canopy turns at 12 %, so the
+    // anchor drifts about 0.07 px a frame for as long as the reader reads, and
+    // crosses a half-pixel bucket every seventh frame or so. A refinement gated
+    // on a still anchor would never get the frames it needs, and the dashed
+    // leader it exists to take back would survive every reading.
+    const { handles, stageHeight } = railed(920);
+    const cell = drifter(stageHeight, handles);
+    resetConstellationWorkStats();
+    const painted = cell.until(0.07, 20, () => handles.lastLayout !== null, 0);
+    expect(handles.lastLayout?.leaders).toBe('degraded');
+    const seats = handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    );
+    const settled = cell.until(
+      0.07, 60, () => handles.lastLayout?.leaders === 'clean', painted,
+    );
+    expect(handles.lastLayout?.leaders, `frames: ${settled - painted}`).toBe('clean');
+    expect(settled - painted).toBeLessThanOrEqual(60);
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineStarts).toBe(1);
+    expect(stats.refineLandings).toBe(1);
+    expect(stats.refineUpgrades).toBe(1);
+    expect(stats.refineDropped).toBe(0);
+    // Not one seat moved while it looked.
+    expect(handles.lastLayout?.placements.map(
+      (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
+    )).toEqual(seats);
+    // And every leader starts at an outlet of the anchor the reticle is on NOW,
+    // not the one the refinement was routed for several pixels ago.
+    const outlets = new Set([
+      cell.anchorX + 52, cell.anchorX - 52, cell.anchorX - 18, cell.anchorX + 18,
+    ].map((value) => value.toFixed(4)));
+    for (const placement of handles.lastLayout?.placements ?? []) {
+      expect(outlets.has(placement.route!.points[0].x.toFixed(4)),
+        `${placement.slot} starts at ${placement.route!.points[0].x}`).toBe(true);
+    }
+  });
+
+  it('survives the locked re-solves a drifting cell runs under it', () => {
+    // The mechanism the test above depends on, made deterministic. At 0.6 px a
+    // frame — a slow orbit, and what probe I drifts at — EVERY frame leaves the
+    // settled branch, runs a locked solve and lands the same seats again. The
+    // refinement is started once, before the drift begins, on the clock that
+    // ticks a whole millisecond a reading so it is certainly still in flight;
+    // then it crosses one of those frames per drifting frame. If a locked
+    // re-solve cancelled it, the next frame would start a second one.
+    const { handles, stageHeight } = railed(920);
+    const cell = drifter(stageHeight, handles);
+    resetConstellationWorkStats();
+    const painted = cell.until(0, 20, () => handles.lastLayout !== null, 0);
+    expect(handles.lastLayout?.leaders).toBe('degraded');
+    cell.step(0, painted + 1, false);
+    expect(handles.refineJob).not.toBeNull();
+    expect(cell.resolves).toBe(0);
+    const settled = cell.until(
+      0.6, 60, () => handles.lastLayout?.leaders === 'clean', painted + 1,
+    );
+    expect(handles.lastLayout?.leaders, `frames: ${settled - painted}`).toBe('clean');
+    expect(cell.resolves, 'locked re-solves while it looked').toBeGreaterThan(0);
+    const stats = snapshotConstellationWorkStats();
+    expect(stats.refineStarts).toBe(1);
+    expect(stats.refineLandings).toBe(1);
+    expect(stats.refineUpgrades).toBe(1);
+    expect(stats.refineDropped).toBe(0);
+  });
+
   it('carries a refinement that finished after the cell drifted inside its bucket', () => {
     const { handles, stageHeight } = railed(920);
     const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;

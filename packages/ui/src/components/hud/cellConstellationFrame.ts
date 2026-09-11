@@ -777,17 +777,26 @@ function applyRefinedRoutes(
 /**
  * Look again for the leaders first paint could not afford to find.
  *
- * Called only from the settled frame — the Cell is where it was, every host is
- * seated, and nothing is being solved. One refinement is started per landed
- * picture that shows a fallback leader, advanced at the ordinary interaction
- * slice against the same ledger the locked cursor uses, and never at the
- * first-paint allowance: the constellation is already on screen and nothing is
- * waiting for this.
+ * One refinement is started per landed picture that shows a fallback leader,
+ * advanced at the ordinary interaction slice against the same ledger the
+ * locked cursor uses, and never at the first-paint allowance: the
+ * constellation is already on screen and nothing is waiting for this.
+ *
+ * It is keyed on the SEATS, not on the anchor. A selected Cell drifts
+ * continuously — the canopy turns at 12 % while a Cell is open — so a
+ * refinement gated on a still anchor would never get the frames it needs, and
+ * the dashed leaders it exists to take back would survive every reading. So it
+ * runs on a settled frame and on a drifting frame whose locked solve landed on
+ * the same seats, and its routes are carried to the live anchor when it lands.
+ * `budgetMs` is what is left of the constellation's own interaction slice: on
+ * a drifting frame the locked solve has already spent some of it, and the two
+ * together may not cost more than one.
  */
 function advanceRefinement(
   handles: CellConstellationHandles,
   request: ConstellationFrameRequest,
   now: () => number,
+  budgetMs: number = PANEL_SLICE_BUDGET,
 ): void {
   let job = handles.refineJob;
   if (job && (job.request.layoutKey !== request.layoutKey
@@ -810,12 +819,12 @@ function advanceRefinement(
     handles.refineJob = job;
     observeConstellationRefineStart();
   }
-  announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
-  if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) return;
+  announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, budgetMs);
+  if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, budgetMs)) return;
   const started = now();
   const sliceProbe = beginCpuProbe(PERFORMANCE_PROBE_LABELS.inspectionLayoutSlice);
   const available = frameBudgetRemainingMs(FRAME_BUDGET_PANEL_SOLVE);
-  const allowance = Math.min(PANEL_SLICE_BUDGET, available || PANEL_SLICE_BUDGET);
+  const allowance = Math.min(budgetMs, available || budgetMs);
   let step = job.cursor.next();
   while (!step.done && now() - started < allowance) step = job.cursor.next();
   const elapsed = now() - started;
@@ -875,6 +884,7 @@ export function suspendConstellationFrame(
 
 function applyLayout(handles: CellConstellationHandles,
   request: ConstellationFrameRequest, layout: ConstellationLayout): ConstellationPlacement | null {
+  const previousLayoutKey = handles.layoutKey;
   handles.frameKey = request.connectorKey;
   handles.connectorKey = request.connectorKey;
   handles.layoutKey = request.layoutKey;
@@ -888,16 +898,20 @@ function applyLayout(handles: CellConstellationHandles,
   handles.provisionalBaseAnchorY = request.input.anchorY;
   handles.provisionalVisible = false;
   handles.presentationDirty = false;
-  // A new canonical answer earns a new second look. Without this, a locked
-  // re-solve that lost a leader again at the same seats would be suppressed by
-  // the refinement that ran for the picture before it.
-  handles.refinedKey = '';
   setConstellationVisible(handles, true);
   setLeadersVisible(handles, true);
   publishLock(handles.lock, request.input.lock as ConstellationLock);
   const nextPlacementKey = placementSignature(layout.placements);
   const placementChanged = nextPlacementKey !== handles.placementKey;
   handles.placementKey = nextPlacementKey;
+  // A new PICTURE earns a new second look — new seats, or a new geometry to
+  // seat them in. A landing that put the same seats back does not: a drifting
+  // Cell lands one of those on every frame, and clearing the key there would
+  // start the same refinement over again forever, each one cancelled by the
+  // next before it could finish.
+  if (placementChanged || previousLayoutKey !== request.layoutKey) {
+    handles.refinedKey = '';
+  }
   const nextMaskKey = rectKey(layout.masks);
   const maskChanged = nextMaskKey !== handles.maskKey;
   handles.maskKey = nextMaskKey;
@@ -1141,9 +1155,11 @@ export function advanceConstellationFrame(
 
   // Past here the frame is asking a new question — the geometry changed, the
   // Cell moved to another bucket, or a host is not seated yet — and a solve is
-  // about to start. A refinement belongs to the picture that is up, so it does
-  // not survive any of that.
-  cancelRefineJob(handles);
+  // about to start. A refinement belongs to the SEATS that are up rather than
+  // to the anchor they were solved at, so a Cell that has only moved keeps it
+  // and a geometry change takes it away. The seat-change cancel is
+  // `advanceRefinement`'s own: it compares the seats to the pixel.
+  if (desired.layoutKey !== handles.layoutKey) cancelRefineJob(handles);
 
   const geometryPending = desired.layoutKey !== handles.layoutKey;
   const provisionalGeometryValid = handles.provisionalBaseLayout !== null
@@ -1183,6 +1199,12 @@ export function advanceConstellationFrame(
     job = startLayoutJob(desired, handles.lastLayout !== null && !geometryPending);
     handles.layoutJob = job;
   }
+  // A FULL solve is a new composition by definition: whatever it lands will not
+  // be the seats a pending refinement was routed for, so the refinement goes
+  // now rather than be dropped when it finishes. A LOCKED solve is the same
+  // seats at a new anchor, and the refinement survives it — including the
+  // frames where it does not finish inside the slice.
+  if (!job.lockedOnly) cancelRefineJob(handles);
   announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
   handles.layoutPendingFrames += 1;
   if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) {
@@ -1247,6 +1269,19 @@ export function advanceConstellationFrame(
   endCpuProbe(sliceProbe);
   if (landed !== undefined) observeConstellationCursorLanding();
   else if (handles.provisionalVisible) observeConstellationProvisionalFrame();
+  // The locked cursor may have given up inside the loop and handed the frame to
+  // a full solve; that is the same new composition as above.
+  if (handles.layoutJob !== null && !handles.layoutJob.lockedOnly) {
+    cancelRefineJob(handles);
+  } else if (landed !== undefined && desired.layoutKey === handles.layoutKey
+    && layoutFullyPresented(handles)) {
+    // The Cell moved and the locked path put the same seats back. The picture
+    // is complete and nothing is pending, so a refinement that was already
+    // looking at those seats keeps looking, on what the solve left of the
+    // slice — the two together may not cost more than one interaction slice.
+    const left = PANEL_SLICE_BUDGET - elapsed;
+    if (left > 0.1) advanceRefinement(handles, desired, now, left);
+  }
   return landed === undefined
     ? (provisional ?? panelPresentation ?? heldSeats ?? null)
     : landed;
