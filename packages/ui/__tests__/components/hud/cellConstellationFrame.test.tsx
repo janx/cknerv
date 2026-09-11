@@ -1034,7 +1034,45 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     );
   }
 
-  /** Frames until `done`, driving the writer on a real clock. */
+  /**
+   * Frames until `done`, on a clock that ticks a fixed twentieth of a
+   * millisecond per reading.
+   *
+   * ⚠️ THESE FRAME COUNTS ARE A BUDGET, NOT A STOPWATCH — deliberately.
+   *
+   * On a real clock the writer spends a fixed per-frame allowance against
+   * whatever the machine can do inside it, so the number of frames a solve
+   * takes measures the SCHEDULER as much as the work: the same case that paints
+   * in 3 frames on a quiet machine took more than 20 inside a full parallel
+   * `pnpm test` at load average 36 on 2026-09-12, and the gate below failed for
+   * that and nothing else. A clock that advances by a fixed step per reading
+   * buys the cursor the same number of steps per frame on every machine, so
+   * these counts are a pure function of the work and the same everywhere.
+   *
+   * What the counts are NOT is milliseconds. The real-clock figures, measured
+   * on this machine and recorded in the 2026-09-12 ledger, are: first paint in
+   * 3-6 frames and a clean leader set 5-9 frames after it. What is asserted
+   * here is that the sliced work finishes at all, inside a budget with room,
+   * and that the picture it leaves is the right one.
+   */
+  const SLICE_TICK_MS = 0.05;
+  /**
+   * The budgets, in those frames, with the figures they were measured at on
+   * 2026-09-12. They are deterministic — the same on every machine — so the
+   * headroom is against a future change in the work, not against load.
+   *
+   *   first paint            16 frames at 1920x1080 (0.22, 0.25), 23 at 1920x920
+   *                          (0.78, 0.25), 23 again with the Cell drifting
+   *   a clean leader set     115 frames after first paint, 122 while drifting
+   *   a refinement that      216 frames, at the anchor where no clean route
+   *   finds nothing          exists at the seats first paint chose
+   *
+   * On a real clock, quiet, the same cases painted in 3-6 frames and went clean
+   * 5-9 frames later (2026-09-12 ledger).
+   */
+  const FIRST_PAINT_FRAMES = 60;
+  const REFINE_FRAMES = 300;
+  const EXHAUSTED_FRAMES = 600;
   function run(
     handles: ReturnType<typeof railed>['handles'],
     anchorX: number, anchorY: number, stageHeight: number,
@@ -1043,8 +1081,10 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     let frame = from;
     while (!done() && frame - from < limit) {
       frame += 1;
+      let tick = 0;
       advanceConstellationFrame(
         handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+        () => { tick += SLICE_TICK_MS; return tick; },
       );
     }
     return frame;
@@ -1064,9 +1104,10 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     // clock against a fixed per-frame allowance, so on a loaded machine this
     // counts the scheduler. Three-panel solves measured 7 ms at their dearest
     // on 2026-09-12, against 1.6 + 1.6 + 8 ms of slicing in three frames.
-    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+    const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
       () => handles.lastLayout !== null);
-    expect(painted, `frames to first paint: ${painted}`).toBeLessThanOrEqual(20);
+    expect(painted, `frames to first paint: ${painted}`)
+      .toBeLessThanOrEqual(FIRST_PAINT_FRAMES);
     expect(handles.lastLayout?.placements).toHaveLength(3);
     expect(handles.lastLayout?.leaders).toBe('degraded');
     expect(handles.root?.dataset.cellConstellationLeaders).toBe('degraded');
@@ -1083,11 +1124,11 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
       (slot) => handles.panels[slot].host?.style.transform,
     );
 
-    const settled = run(handles, anchorX, anchorY, stageHeight, 60,
+    const settled = run(handles, anchorX, anchorY, stageHeight, REFINE_FRAMES,
       () => handles.lastLayout?.leaders === 'clean', painted);
     expect(handles.lastLayout?.leaders, `frames to a clean leader set: ${settled - painted}`)
       .toBe('clean');
-    expect(settled - painted).toBeLessThanOrEqual(60);
+    expect(settled - painted).toBeLessThanOrEqual(REFINE_FRAMES);
     const stats = snapshotConstellationWorkStats();
     expect(stats.refineStarts).toBe(1);
     expect(stats.refineLandings).toBe(1);
@@ -1116,7 +1157,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(1080);
     const anchorX = 1920 * 0.22; const anchorY = 1080 * 0.25;
     resetConstellationWorkStats();
-    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+    const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
       () => handles.lastLayout !== null);
     expect(handles.lastLayout?.leaders).toBe('degraded');
     const seats = handles.lastLayout?.placements.map(
@@ -1125,7 +1166,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const hosts = ['analysis', 'specimen', 'reader'].map(
       (slot) => handles.panels[slot].host?.style.transform,
     );
-    run(handles, anchorX, anchorY, stageHeight, 90,
+    run(handles, anchorX, anchorY, stageHeight, EXHAUSTED_FRAMES,
       () => snapshotConstellationWorkStats().refineStarts > 0
         && handles.refineJob === null, painted);
     const stats = snapshotConstellationWorkStats();
@@ -1151,9 +1192,11 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
 
   /**
    * `1920x920@0.78,0.25 n3 rails` — one of the twelve leaders P2's caps cost —
-   * with the Cell drifting for the whole run. `perFrame` is the drift and
-   * `clock` decides whether a frame's work is measured honestly or a whole
-   * millisecond per reading, which is how a refinement is kept in flight.
+   * with the Cell drifting for the whole run. `perFrame` is the drift; `real`
+   * chooses the ordinary step budget `run` uses (see the note there: a
+   * twentieth of a millisecond a reading, so a frame buys the same work on
+   * every machine) or a whole millisecond a reading, which leaves a refinement
+   * still in flight on the next frame so there is something to cancel.
    */
   function drifter(stageHeight: number, handles: ReturnType<typeof railed>['handles']) {
     const anchorY = 920 * 0.25;
@@ -1167,9 +1210,10 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
       handles.lastRequest = null;
       const before = handles.connectorKey;
       let tick = 0;
+      const perReading = real ? SLICE_TICK_MS : 1;
       advanceConstellationFrame(
         handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
-        real ? undefined : () => { tick += 1; return tick; },
+        () => { tick += perReading; return tick; },
       );
       if (before && handles.connectorKey !== before) resolves += 1;
     };
@@ -1196,16 +1240,16 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(920);
     const cell = drifter(stageHeight, handles);
     resetConstellationWorkStats();
-    const painted = cell.until(0.07, 20, () => handles.lastLayout !== null, 0);
+    const painted = cell.until(0.07, FIRST_PAINT_FRAMES, () => handles.lastLayout !== null, 0);
     expect(handles.lastLayout?.leaders).toBe('degraded');
     const seats = handles.lastLayout?.placements.map(
       (panel) => `${panel.slot}:${panel.x},${panel.y},${panel.width},${panel.height}`,
     );
     const settled = cell.until(
-      0.07, 60, () => handles.lastLayout?.leaders === 'clean', painted,
+      0.07, REFINE_FRAMES, () => handles.lastLayout?.leaders === 'clean', painted,
     );
     expect(handles.lastLayout?.leaders, `frames: ${settled - painted}`).toBe('clean');
-    expect(settled - painted).toBeLessThanOrEqual(60);
+    expect(settled - painted).toBeLessThanOrEqual(REFINE_FRAMES);
     const stats = snapshotConstellationWorkStats();
     expect(stats.refineStarts).toBe(1);
     expect(stats.refineLandings).toBe(1);
@@ -1237,7 +1281,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(920);
     const cell = drifter(stageHeight, handles);
     resetConstellationWorkStats();
-    const painted = cell.until(0, 20, () => handles.lastLayout !== null, 0);
+    const painted = cell.until(0, FIRST_PAINT_FRAMES, () => handles.lastLayout !== null, 0);
     expect(handles.lastLayout?.leaders).toBe('degraded');
     cell.step(0, painted + 1, false);
     expect(handles.refineJob).not.toBeNull();
@@ -1272,7 +1316,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(920);
     const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
     resetConstellationWorkStats();
-    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+    const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
       () => handles.lastLayout !== null);
     // One frame of refinement, then the Cell moves a fifth of a pixel: the same
     // half-pixel bucket, so the same connector key and no new solve, but the
@@ -1283,7 +1327,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     // The request is only rebuilt when something it describes changed; drop it
     // so this frame carries the moved anchor into a new one.
     handles.lastRequest = null;
-    const landed = run(handles, drifted, anchorY, stageHeight, 60,
+    const landed = run(handles, drifted, anchorY, stageHeight, REFINE_FRAMES,
       () => handles.lastLayout?.leaders === 'clean', painted + 1);
     const stats = snapshotConstellationWorkStats();
     expect(stats.refineLandings, `frames: ${landed - painted}`).toBe(1);
@@ -1303,7 +1347,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(920);
     const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
     resetConstellationWorkStats();
-    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+    const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
       () => handles.lastLayout !== null);
     crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
     expect(handles.refineJob).not.toBeNull();
@@ -1324,7 +1368,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const { handles, stageHeight } = railed(920);
     const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
     resetConstellationWorkStats();
-    const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+    const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
       () => handles.lastLayout !== null);
     crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
     const inFlight = handles.refineJob;
@@ -1347,7 +1391,7 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
       const { handles, stageHeight } = railed(920);
       const anchorX = 1920 * 0.78; const anchorY = 920 * 0.25;
       resetConstellationWorkStats();
-      const painted = run(handles, anchorX, anchorY, stageHeight, 20,
+      const painted = run(handles, anchorX, anchorY, stageHeight, FIRST_PAINT_FRAMES,
         () => handles.lastLayout !== null);
       crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
       expect(handles.refineJob, stop).not.toBeNull();
