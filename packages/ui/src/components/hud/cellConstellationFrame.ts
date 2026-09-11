@@ -11,6 +11,8 @@ import {
   createConstellationLock,
   revalidateConstellationLayoutForAnchor,
   CONSTELLATION_RETICLE_PX,
+  CONSTELLATION_ROUTE_CLEARANCE_PX,
+  CONSTELLATION_UNAVAILABLE_RESOLVE_PX,
   type ConstellationLayout,
   type ConstellationLock,
   type ConstellationPanel,
@@ -65,6 +67,10 @@ export interface ConstellationPanelHandle {
   present: boolean;
 }
 export interface ConstellationLeaderHandle {
+  /** The <g> the two strokes, the endpoint and the mask live in. The writer
+   * marks it `data-cell-leader-degraded` so the injected sheet can dash a
+   * fallback leader without anything re-rendering. */
+  group: SVGGElement | null;
   under: SVGPathElement | null;
   over: SVGPathElement | null;
   dot: SVGCircleElement | null;
@@ -129,7 +135,7 @@ export function createCellConstellationHandles(): CellConstellationHandles {
       height: 0, present: false,
     };
     leaders[slot] = {
-      under: null, over: null, dot: null, label: null,
+      group: null, under: null, over: null, dot: null, label: null,
       labelWidth: slot === 'specimen' ? 78 : 62, labelHeight: 20,
     };
   }
@@ -234,6 +240,7 @@ function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<str
     const leader = handles.leaders[slot];
     leader.under?.setAttribute('d', '');
     leader.over?.setAttribute('d', '');
+    if (leader.group) leader.group.dataset.cellLeaderDegraded = 'false';
     if (leader.dot) leader.dot.style.display = 'none';
     if (leader.label) leader.label.style.display = 'none';
     writeFallback(handles.panels[slot].fallbackLabel, false);
@@ -267,6 +274,36 @@ function writePanelPlacement(
   host.style.visibility = 'visible';
 }
 
+/** The one place a leader's strokes, endpoint, tag and fallback mark are
+ * written. A degraded leader is marked on its group so the injected sheet can
+ * dash it without React touching the tree. */
+function writeLeader(handles: CellConstellationHandles,
+  placement: ConstellationPlacement): void {
+  const leader = handles.leaders[placement.slot];
+  const route = placement.route;
+  if (!route || !leader) return;
+  const d = pathData(route.points);
+  leader.under?.setAttribute('d', d);
+  leader.over?.setAttribute('d', d);
+  if (leader.group) {
+    leader.group.dataset.cellLeaderDegraded = route.degraded ? 'true' : 'false';
+  }
+  const end = route.points[route.points.length - 1];
+  if (leader.dot) {
+    leader.dot.style.display = '';
+    leader.dot.setAttribute('cx', `${end.x}`);
+    leader.dot.setAttribute('cy', `${end.y}`);
+  }
+  if (leader.label) {
+    leader.label.style.display = route.label.inPanel ? 'none' : '';
+    if (!route.label.inPanel) {
+      leader.label.style.transform =
+        `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
+    }
+  }
+  writeFallback(handles.panels[placement.slot].fallbackLabel, route.label.inPanel);
+}
+
 function currentSpecimenPlacement(
   handles: CellConstellationHandles,
   placement: ConstellationPlacement | null = handles.lastSpecimen,
@@ -284,6 +321,51 @@ function allPresentPanelHostsPositioned(handles: CellConstellationHandles): bool
     if (panel.present && panel.height > 0 && !panelHostIsPositioned(panel)) return false;
   }
   return true;
+}
+
+/** Whether the published layout is fully on screen. An `unavailable` layout
+ * has no host to position and is complete the moment it lands; reading it as
+ * "not published yet" is what made a roomless stage re-solve every frame. */
+function layoutFullyPresented(handles: CellConstellationHandles): boolean {
+  return allPresentPanelHostsPositioned(handles)
+    || handles.lastLayout?.status === 'unavailable';
+}
+
+/**
+ * Keep finished seats on screen while the next layout is still being solved.
+ *
+ * A plate is withdrawn only when the Cell has walked into its seat — the
+ * reticle would be underneath it — or when the seat has left the stage. Every
+ * other plate stays exactly where the reader last saw it. Its leaders are
+ * hidden by the caller, because a leader belongs to an anchor and this one is
+ * stale; a seat does not.
+ */
+function holdStaleSeats(
+  handles: CellConstellationHandles,
+  request: ConstellationFrameRequest,
+): ConstellationPlacement | null {
+  const layout = handles.provisionalBaseLayout ?? handles.lastLayout;
+  if (!layout) return null;
+  const { anchorX, anchorY, stageWidth, stageHeight, safeTop, edge } = request.input;
+  const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
+  let specimen: ConstellationPlacement | null = null;
+  for (const placement of layout.placements) {
+    const panel = handles.panels[placement.slot];
+    if (!panel?.host) continue;
+    const nearestX = Math.max(placement.x, Math.min(anchorX, placement.x + placement.width));
+    const nearestY = Math.max(placement.y, Math.min(anchorY, placement.y + placement.height));
+    const standingOnTheCell = Math.hypot(nearestX - anchorX, nearestY - anchorY) < core;
+    const offStage = placement.x < edge - 0.5 || placement.y < safeTop - 0.5
+      || placement.x + placement.width > stageWidth - edge + 0.5
+      || placement.y + placement.height > stageHeight - edge + 0.5;
+    if (standingOnTheCell || offStage) {
+      panel.host.style.visibility = 'hidden';
+      panel.positionedHost = null;
+      continue;
+    }
+    if (placement.slot === 'specimen') specimen = placement;
+  }
+  return currentSpecimenPlacement(handles, specimen);
 }
 function setLeadersVisible(handles: CellConstellationHandles, visible: boolean): void {
   const visibility = visible ? '' : 'hidden';
@@ -411,7 +493,7 @@ function writeMovingMarks(
 
 function cancelLayoutJob(handles: CellConstellationHandles): void {
   handles.layoutJob?.cursor.return({
-    status: 'unavailable', template: null, placements: [], masks: [],
+    status: 'unavailable', template: null, placements: [], masks: [], leaders: 'clean',
   });
   if (handles.layoutJob) observeConstellationCursorCancel();
   handles.layoutJob = null;
@@ -491,6 +573,7 @@ function applyLayout(handles: CellConstellationHandles,
   handles.maskKey = nextMaskKey;
   if (handles.root) {
     handles.root.dataset.cellConstellationStatus = layout.status;
+    handles.root.dataset.cellConstellationLeaders = layout.leaders;
     if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
     else delete handles.root.dataset.cellConstellationTemplate;
   }
@@ -506,26 +589,7 @@ function applyLayout(handles: CellConstellationHandles,
       quadrantsMoved = true;
     }
     writePanelPlacement(panel, current, placementChanged);
-    const route = current.route;
-    const leader = handles.leaders[current.slot];
-    if (!route || !leader) continue;
-    const d = pathData(route.points);
-    leader.under?.setAttribute('d', d);
-    leader.over?.setAttribute('d', d);
-    const end = route.points[route.points.length - 1];
-    if (leader.dot) {
-      leader.dot.style.display = '';
-      leader.dot.setAttribute('cx', `${end.x}`);
-      leader.dot.setAttribute('cy', `${end.y}`);
-    }
-    if (leader.label) {
-      leader.label.style.display = route.label.inPanel ? 'none' : '';
-      if (!route.label.inPanel) {
-        leader.label.style.transform =
-          `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
-      }
-    }
-    writeFallback(panel.fallbackLabel, route.label.inPanel);
+    writeLeader(handles, current);
   }
   if (maskChanged) writeMasks(handles, layout.masks);
   handles.lastSpecimen = specimen;
@@ -552,6 +616,7 @@ function applyProvisionalRoutes(
   }
   if (handles.root) {
     handles.root.dataset.cellConstellationStatus = layout.status;
+    handles.root.dataset.cellConstellationLeaders = layout.leaders;
     if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
     else delete handles.root.dataset.cellConstellationTemplate;
   }
@@ -561,32 +626,13 @@ function applyProvisionalRoutes(
   clearAbsent(handles, present);
   for (const current of layout.placements) {
     if (current.slot === 'specimen') specimen = current;
-    const route = current.route;
     const panel = handles.panels[current.slot];
     if (handles.quadrant[current.slot] !== current.quadrant) {
       handles.quadrant[current.slot] = current.quadrant;
       quadrantsMoved = true;
     }
     writePanelPlacement(panel, current, placementChanged);
-    const leader = handles.leaders[current.slot];
-    if (!route || !leader) continue;
-    const d = pathData(route.points);
-    leader.under?.setAttribute('d', d);
-    leader.over?.setAttribute('d', d);
-    const end = route.points[route.points.length - 1];
-    if (leader.dot) {
-      leader.dot.style.display = '';
-      leader.dot.setAttribute('cx', `${end.x}`);
-      leader.dot.setAttribute('cy', `${end.y}`);
-    }
-    if (leader.label) {
-      leader.label.style.display = route.label.inPanel ? 'none' : '';
-      if (!route.label.inPanel) {
-        leader.label.style.transform =
-          `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
-      }
-    }
-    writeFallback(panel.fallbackLabel, route.label.inPanel);
+    writeLeader(handles, current);
   }
   handles.provisionalVisible = provisional;
   handles.presentationDirty = provisional;
@@ -611,6 +657,7 @@ function applyPanelPresentation(
   handles.placementKey = nextPlacementKey;
   if (handles.root) {
     handles.root.dataset.cellConstellationStatus = layout.status;
+    handles.root.dataset.cellConstellationLeaders = layout.leaders;
     if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
     else delete handles.root.dataset.cellConstellationTemplate;
   }
@@ -673,7 +720,7 @@ export function commitConstellationFrame(
     request.chipX,
     request.chipY,
   );
-  if (request.connectorKey === handles.connectorKey && allPresentPanelHostsPositioned(handles)) {
+  if (request.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
     return currentSpecimenPlacement(handles);
   }
   const layout = constellationLayout(request.input);
@@ -731,7 +778,22 @@ export function advanceConstellationFrame(
     desired.chipY,
   );
   handles.desiredRequest = desired;
-  if (desired.connectorKey === handles.connectorKey && allPresentPanelHostsPositioned(handles)) {
+  // An `unavailable` verdict is a statement about the stage, not about the
+  // half pixel the anchor stands on. Hold it while the Cell drifts inside
+  // CONSTELLATION_UNAVAILABLE_RESOLVE_PX of where it was asked, and write only
+  // the two marks that say which Cell this is. A geometry change re-asks at
+  // once, because `layoutKey` carries the viewport, the rails and every panel
+  // measure.
+  if (handles.lastLayout?.status === 'unavailable'
+    && desired.layoutKey === handles.layoutKey
+    && Math.hypot(anchorX - handles.appliedAnchorX, anchorY - handles.appliedAnchorY)
+      < CONSTELLATION_UNAVAILABLE_RESOLVE_PX) {
+    cancelLayoutJob(handles);
+    handles.desiredRequest = desired;
+    setConstellationVisible(handles, true);
+    return null;
+  }
+  if (desired.connectorKey === handles.connectorKey && layoutFullyPresented(handles)) {
     cancelLayoutJob(handles);
     setConstellationVisible(handles, true);
     if (handles.lastLayout && handles.presentationDirty) {
@@ -751,22 +813,29 @@ export function advanceConstellationFrame(
     && constellationLayoutHardValid(desired.input, handles.provisionalBaseLayout);
   let provisional = showValidatedProvisional(handles, desired);
   let panelPresentation: ConstellationPlacement | null | undefined;
+  let heldSeats: ConstellationPlacement | null | undefined;
   if (provisional === undefined) {
     if (provisionalGeometryValid) {
       panelPresentation = applyPanelPresentation(
         handles, handles.provisionalBaseLayout as ConstellationLayout,
       );
     } else {
+      // The held seats no longer answer the current request, but they are
+      // still where the reader's eyes are. Keep them, hide the leaders, and
+      // withdraw only a plate the Cell has walked into. The root's opacity
+      // belongs to the off-screen test and to the exit, both in the overlay.
       setLeadersVisible(handles, false);
       handles.provisionalVisible = false;
-      setConstellationVisible(handles, false);
+      handles.presentationDirty = true;
+      setConstellationVisible(handles, true);
+      heldSeats = holdStaleSeats(handles, desired);
     }
   }
 
   let job = handles.layoutJob;
   if (job && job.request.layoutKey !== desired.layoutKey) {
     job.cursor.return({
-      status: 'unavailable', template: null, placements: [], masks: [],
+      status: 'unavailable', template: null, placements: [], masks: [], leaders: 'clean',
     });
     observeConstellationCursorCancel();
     job = null;
@@ -780,9 +849,7 @@ export function advanceConstellationFrame(
   handles.layoutPendingFrames += 1;
   if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) {
     if (handles.provisionalVisible) observeConstellationProvisionalFrame();
-    return provisional !== undefined || panelPresentation !== undefined
-      ? (provisional ?? panelPresentation ?? null)
-      : (geometryPending || !provisionalGeometryValid ? null : handles.lastSpecimen);
+    return provisional ?? panelPresentation ?? heldSeats ?? null;
   }
 
   const started = now();
@@ -843,9 +910,7 @@ export function advanceConstellationFrame(
   if (landed !== undefined) observeConstellationCursorLanding();
   else if (handles.provisionalVisible) observeConstellationProvisionalFrame();
   return landed === undefined
-    ? (provisional !== undefined || panelPresentation !== undefined
-      ? (provisional ?? panelPresentation ?? null)
-      : (geometryPending || !provisionalGeometryValid ? null : handles.lastSpecimen))
+    ? (provisional ?? panelPresentation ?? heldSeats ?? null)
     : landed;
 }
 
