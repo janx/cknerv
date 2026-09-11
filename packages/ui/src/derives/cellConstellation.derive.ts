@@ -569,13 +569,19 @@ export interface ConstellationLock {
    * the label is re-placed from the route that survives. */
   routes: { [slot: string]: readonly ConstellationPoint[] | undefined };
   geometryKey: string;
+  /** The same question WITHOUT the panel heights: the stage, the safe top, the
+   * edge, each instrument's slot and width, the rails and the chip's measure.
+   * Equal shape keys and different geometry keys is exactly one thing — the
+   * content of an instrument grew or shrank — and it is the one change the
+   * constellation answers by extending a plate rather than re-composing. */
+  shapeKey: string;
   anchorX: number;
   anchorY: number;
 }
 export function createConstellationLock(): ConstellationLock {
   return {
     quadrant: {}, template: null, placements: {}, routes: {},
-    geometryKey: '', anchorX: 0, anchorY: 0,
+    geometryKey: '', shapeKey: '', anchorX: 0, anchorY: 0,
   };
 }
 export function resetConstellationLock(lock: ConstellationLock): void {
@@ -584,6 +590,7 @@ export function resetConstellationLock(lock: ConstellationLock): void {
   for (const key of Object.keys(lock.routes)) delete lock.routes[key];
   lock.template = null;
   lock.geometryKey = '';
+  lock.shapeKey = '';
   lock.anchorX = 0;
   lock.anchorY = 0;
 }
@@ -2233,16 +2240,33 @@ function* bestCandidatesSteps(
   if (dropped) constellationWorkStats.routeCapHits += 1;
   return best.map(({ candidate }) => candidate);
 }
-function geometryKey(input: ConstellationInput, panels: readonly ConstellationPanel[]): string {
-  const part = (value: number) => Math.round(value * 2);
-  let key = `${part(input.stageWidth)},${part(input.stageHeight)},${part(input.safeTop)},${part(input.edge)}`;
-  for (const panel of panels) key += `|${panel.slot}:${part(panel.width)}:${part(panel.height)}`;
+const keyPart = (value: number) => Math.round(value * 2);
+/**
+ * Everything the layout question is made of EXCEPT how tall the instruments
+ * are: the stage, the safe area, each instrument's slot and width, the rails,
+ * and the chip's measure.
+ *
+ * Two requests with the same shape key and different geometry keys differ in
+ * exactly one way — an instrument's content grew or shrank — which is the one
+ * change `growInPlaceSeats` may answer without re-composing.
+ */
+function geometryShapeKey(
+  input: ConstellationInput, panels: readonly ConstellationPanel[],
+): string {
+  let key = `${keyPart(input.stageWidth)},${keyPart(input.stageHeight)}`
+    + `,${keyPart(input.safeTop)},${keyPart(input.edge)}`;
+  for (const panel of panels) key += `|${panel.slot}:${keyPart(panel.width)}`;
   for (const rect of input.obstacles ?? []) {
-    key += `|${part(rect.left)},${part(rect.top)},${part(rect.right)},${part(rect.bottom)}`;
+    key += `|${keyPart(rect.left)},${keyPart(rect.top)},${keyPart(rect.right)},${keyPart(rect.bottom)}`;
   }
   for (const rect of input.reserved ?? []) {
-    key += `|r${part(rect.right - rect.left)},${part(rect.bottom - rect.top)}`;
+    key += `|r${keyPart(rect.right - rect.left)},${keyPart(rect.bottom - rect.top)}`;
   }
+  return key;
+}
+function geometryKey(input: ConstellationInput, panels: readonly ConstellationPanel[]): string {
+  let key = geometryShapeKey(input, panels);
+  for (const panel of panels) key += `|h${keyPart(panel.height)}`;
   return key;
 }
 /**
@@ -2282,6 +2306,7 @@ function slideToClear(
   box: Box,
   blockers: readonly Box[],
   input: ConstellationInput,
+  axis: 'both' | 'y' = 'both',
 ): Box | null {
   const minX = input.edge; const minY = input.safeTop;
   const maxX = input.stageWidth - input.edge; const maxY = input.stageHeight - input.edge;
@@ -2293,13 +2318,21 @@ function slideToClear(
     && moved.x + moved.width <= maxX + 0.5 && moved.y + moved.height <= maxY + 0.5
     && all.every((other) => intersectionArea(moved, other) <= 0.25);
   if (fits(box)) return box;
-  const options: Array<{ dx: number; dy: number }> = [
+  // `axis: 'y'` is the column question: a neighbour that has to get out of a
+  // growing plate's way slides ALONG the column it shares with it, because a
+  // sideways move there is not "the same arrangement, one plate further down",
+  // it is a different composition.
+  const sideways = axis === 'both';
+  const options: Array<{ dx: number; dy: number }> = [];
+  if (sideways) options.push(
     { dx: minX - box.x, dy: 0 }, { dx: maxX - box.width - box.x, dy: 0 },
-    { dx: 0, dy: minY - box.y }, { dx: 0, dy: maxY - box.height - box.y },
-  ];
+  );
+  options.push({ dx: 0, dy: minY - box.y }, { dx: 0, dy: maxY - box.height - box.y });
   for (const other of all) {
-    options.push({ dx: other.x - (box.x + box.width), dy: 0 });
-    options.push({ dx: other.x + other.width - box.x, dy: 0 });
+    if (sideways) {
+      options.push({ dx: other.x - (box.x + box.width), dy: 0 });
+      options.push({ dx: other.x + other.width - box.x, dy: 0 });
+    }
     options.push({ dx: 0, dy: other.y - (box.y + box.height) });
     options.push({ dx: 0, dy: other.y + other.height - box.y });
   }
@@ -2311,6 +2344,135 @@ function slideToClear(
     if (fits(moved)) return moved;
   }
   return null;
+}
+
+/**
+ * Extend the instruments that grew, where they stand.
+ *
+ * The one change a reader makes without asking for it: the register's scan
+ * reveals another twenty rows, the reader loads its bytes, enrichment lands on
+ * a bare Cell. Until 2026-09-12 any of those re-composed the whole
+ * constellation around the new heights — F5 of the review measured the register
+ * going x 760 -> 376 -> 1192 and top 666 -> 104 -> 468 as it grew from 400 to
+ * 560 px, with the specimen and the reader travelling with it, every time,
+ * while the reader was reading.
+ *
+ * So a height change is answered by moving as little as possible, in this order
+ * for each instrument that changed:
+ *
+ *   1. shrink, or grow downward: the x and the TOP edge are kept and the plate
+ *      extends toward its asked height, as far as the stage edge or the next
+ *      plate below it less the gap allows. Growing downward is the only move
+ *      that leaves the content the reader is looking at where it was.
+ *   2. grow upward: if the room below cannot reach the asked height, the BOTTOM
+ *      edge is kept and the plate extends up instead — but only if that reaches
+ *      the asked height. Moving the top is worth it to stop an instrument
+ *      scrolling; it is not worth it to scroll a little less.
+ *   3. slide one neighbour: if a plate in the same column is what stands in the
+ *      way, and moving it along the column by the smallest amount that clears
+ *      lets the growth reach the asked height, it moves. One plate, once.
+ *   4. stay, and scroll: the top and x are kept and the height takes whatever
+ *      room is below it. The instrument caps, which is what `capped` has always
+ *      meant — the plate scrolls and the fade marks the cut — and nothing on
+ *      the stage moves.
+ *
+ * The answer must then pass `hardValid` against the chip RELOCATED for it
+ * (`heldChipInput`), like every other held path; when it does not, the caller
+ * falls through to the full solve, which carries the continuity term against
+ * these same seats. The lock's anchor is deliberately not moved: these seats
+ * were solved for that anchor and the Cell has not gone anywhere.
+ */
+function growInPlaceSeats(
+  input: ConstellationInput,
+  panels: readonly ConstellationPanel[],
+  held: readonly ConstellationPlacement[],
+): ConstellationPlacement[] | null {
+  const gap = CONSTELLATION_MIN_GAP_PX;
+  const core = CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
+  const stageBottom = input.stageHeight - input.edge;
+  const boxes: Box[] = held.map((seat, index) => ({
+    x: seat.x, y: seat.y, width: panels[index].width, height: seat.height,
+  }));
+  const sharesColumn = (a: Box, b: Box): boolean => (
+    b.x - gap < a.x + a.width && b.x + b.width + gap > a.x
+  );
+  // How close to the Cell this plate's vertical span may come. A plate whose
+  // x-span is further from the anchor than the core needs no vertical room at
+  // all; one standing over it must keep the whole core.
+  const cellClearance = (box: Box): number => {
+    const dx = Math.max(box.x - input.anchorX, input.anchorX - (box.x + box.width), 0);
+    return dx >= core ? 0 : Math.sqrt(core * core - dx * dx);
+  };
+  const roomBelow = (index: number): number => {
+    const box = boxes[index];
+    let limit = stageBottom;
+    if (box.y >= input.anchorY) limit = Math.min(limit, stageBottom);
+    else limit = Math.min(limit, input.anchorY - cellClearance(box));
+    for (let other = 0; other < boxes.length; other += 1) {
+      if (other === index || !sharesColumn(box, boxes[other])) continue;
+      if (boxes[other].y >= box.y + box.height - 0.5) {
+        limit = Math.min(limit, boxes[other].y - gap);
+      }
+    }
+    return limit - box.y;
+  };
+  const topAbove = (index: number): number => {
+    const box = boxes[index];
+    let limit = input.safeTop;
+    if (box.y + box.height <= input.anchorY) limit = Math.max(limit, input.safeTop);
+    else limit = Math.max(limit, input.anchorY + cellClearance(box));
+    for (let other = 0; other < boxes.length; other += 1) {
+      if (other === index || !sharesColumn(box, boxes[other])) continue;
+      if (boxes[other].y + boxes[other].height <= box.y + 0.5) {
+        limit = Math.max(limit, boxes[other].y + boxes[other].height + gap);
+      }
+    }
+    return limit;
+  };
+  for (let index = 0; index < panels.length; index += 1) {
+    const asked = panels[index].height;
+    const box = boxes[index];
+    if (asked <= box.height + 0.5) { box.height = asked; continue; }
+    const down = roomBelow(index);
+    if (asked <= down + 0.5) { box.height = asked; continue; }
+    const bottom = box.y + box.height;
+    if (bottom - asked >= topAbove(index) - 0.5) {
+      box.y = bottom - asked; box.height = asked; continue;
+    }
+    // One neighbour, once, along the column. The plate it would have to be is
+    // whichever one sets the limit that failed, below first because growing
+    // down is the move that keeps the reader's place.
+    const wanted: Box = { ...box, height: asked };
+    let slid = false;
+    for (const other of [...boxes.keys()].filter((candidate) => candidate !== index
+      && sharesColumn(box, boxes[candidate]))) {
+      const blockers = boxes
+        .filter((_seat, at) => at !== index && at !== other)
+        .map((seat) => expanded(seat, gap))
+        .concat(expanded(wanted, gap), (input.reserved ?? []).map(rectBox));
+      const moved = slideToClear(boxes[other], blockers, input, 'y');
+      if (!moved) continue;
+      const before = boxes[other];
+      boxes[other] = moved;
+      if (asked <= roomBelow(index) + 0.5) { box.height = asked; slid = true; break; }
+      const room = box.y + box.height - asked;
+      if (room >= topAbove(index) - 0.5) {
+        box.y = room; box.height = asked; slid = true; break;
+      }
+      boxes[other] = before;
+    }
+    if (slid) continue;
+    // Nothing moves: the instrument takes the room it has and scrolls the rest.
+    box.height = Math.max(box.height, Math.min(asked, down));
+  }
+  return panels.map((panel, index) => {
+    const seat = placement(
+      panel, boxes[index].height, boxes[index].x, boxes[index].y,
+      input.anchorX, input.anchorY,
+    );
+    seat.quadrant = held[index].quadrant;
+    return seat;
+  });
 }
 
 /**
@@ -2326,9 +2488,15 @@ function slideToClear(
  * `hardValid` at the current gap like every other, and each is scored like
  * every other — they simply start from where the reader left off.
  *
- * Only a lock over the SAME geometry qualifies. A stage, a rail or a panel
- * height that changed makes the held heights a statement about a different
- * question; that case is grow-in-place, and it is not this.
+ * A lock over the same geometry qualifies, and so does one whose only
+ * difference is a HEIGHT: an instrument whose content grew is still standing
+ * where the reader left it, and a full solve that runs because grow-in-place
+ * could not place it must still be able to hold on to those seats. Such a
+ * candidate carries the ASKED height, clamped to the room between its held top
+ * and the stage edge — the taller plate at the seat it already has — and it is
+ * `capped` when the clamp bites, exactly as the enumerated arrangements are. A
+ * stage or a rail that changed is a different question altogether and offers
+ * nothing back.
  */
 function heldCandidates(
   input: ConstellationInput,
@@ -2336,7 +2504,8 @@ function heldCandidates(
   key: string,
 ): Candidate[] {
   const lock = input.lock;
-  if (!lock || lock.template === null || lock.geometryKey !== key) return [];
+  if (!lock || lock.template === null) return [];
+  if (lock.geometryKey !== key && lock.shapeKey !== geometryShapeKey(input, panels)) return [];
   let heldCount = 0;
   for (const slot of Object.keys(lock.placements)) {
     if (lock.placements[slot]) heldCount += 1;
@@ -2344,9 +2513,17 @@ function heldCandidates(
   if (heldCount !== panels.length) return [];
   if (!panels.every((panel) => lock.placements[panel.slot] !== undefined)) return [];
   const held = panels.map((panel) => lock.placements[panel.slot] as ConstellationPlacement);
+  // A seat offered back carries the height it was seated at, unless the
+  // heights are what changed — then it carries what the instrument is now
+  // asking for, clamped to the room between its held top and the stage edge.
+  // Anything else would offer the solver a plate of a size nobody asked for.
+  const grew = lock.geometryKey !== key;
+  const heightAt = (index: number, y: number): number => (grew
+    ? Math.min(panels[index].height, input.stageHeight - input.edge - y)
+    : held[index].height);
   const seat = (index: number, x: number, y: number, keepQuadrant: boolean) => {
     const next = placement(
-      panels[index], held[index].height, x, y, input.anchorX, input.anchorY,
+      panels[index], heightAt(index, y), x, y, input.anchorX, input.anchorY,
     );
     if (keepQuadrant) next.quadrant = held[index].quadrant;
     return next;
@@ -2388,7 +2565,9 @@ function heldCandidates(
         .map((seated) => expanded(boxOf(seated), CONSTELLATION_MIN_GAP_PX)),
       ...reserved,
     ];
-    const slid = slideToClear(boxOf(held[index]), blockers, input);
+    const slid = slideToClear(
+      { ...boxOf(held[index]), height: heightAt(index, held[index].y) }, blockers, input,
+    );
     if (!slid) return out;
     const moved = Math.abs(slid.x - held[index].x) > 0.5
       || Math.abs(slid.y - held[index].y) > 0.5;
@@ -2410,25 +2589,38 @@ function* lockedLayoutSteps(
     && Math.hypot(input.anchorX - lock.anchorX, input.anchorY - lock.anchorY)
       <= CONSTELLATION_HOLD_RADIUS_PX) {
     const previousSlots = Object.keys(lock.placements).filter((slot) => lock.placements[slot]);
+    const sameSlots = panels.every((panel) => lock.placements[panel.slot] !== undefined)
+      && panels.length === previousSlots.length;
     const removedOnly = panels.every((panel) => lock.placements[panel.slot] !== undefined)
       && panels.length < previousSlots.length;
-    if (lock.geometryKey === key || removedOnly) {
+    // Only the heights changed, and the instruments are the same ones. That is
+    // the one question a growing plate asks, and it is answered by extending
+    // the plate rather than by composing the stage again.
+    const grewOnly = lock.geometryKey !== key && sameSlots
+      && lock.shapeKey === geometryShapeKey(input, panels);
+    if (lock.geometryKey === key || removedOnly || grewOnly) {
       const sameGeometry = lock.geometryKey === key;
-      const placements = panels.map((panel) => {
-        const held = lock.placements[panel.slot] as ConstellationPlacement;
-        const next = placement(panel, sameGeometry ? held.height : panel.height, held.x, held.y,
-          input.anchorX, input.anchorY);
-        next.quadrant = held.quadrant;
-        return next;
-      });
+      const heldSeats = panels.map(
+        (panel) => lock.placements[panel.slot] as ConstellationPlacement,
+      );
+      const placements = grewOnly
+        ? growInPlaceSeats(input, panels, heldSeats)
+        : panels.map((panel, index) => {
+          const seated = heldSeats[index];
+          const next = placement(panel, sameGeometry ? seated.height : panel.height,
+            seated.x, seated.y, input.anchorX, input.anchorY);
+          next.quadrant = seated.quadrant;
+          return next;
+        });
       // The chip yields before the seats do. It is the one claim that moves
       // with the Cell, and a held plate is worth more than the chip's
       // preferred position: relocating it costs the reader a chip that stands
       // beside the Cell instead of under it, where breaking the lock costs
       // them the whole constellation jumping. Only when no listed position is
       // clear does this fall through to the full solve.
-      const held = heldChipInput(input, placements);
-      if (hardValid(held.input, placements, CONSTELLATION_MIN_GAP_PX)) {
+      const held = placements === null ? null : heldChipInput(input, placements);
+      if (placements !== null && held !== null
+        && hardValid(held.input, placements, CONSTELLATION_MIN_GAP_PX)) {
         // Route reuse and the fast two-leg pass, and nothing else. This runs
         // inside a pointer interaction on a Cell the reader is already looking
         // at: a plate whose held line no longer reaches it takes the fallback
@@ -2442,6 +2634,18 @@ function* lockedLayoutSteps(
           : null;
         constellationWorkStats.lockedReuses += 1;
         constellationWorkStats.degradedRoutes += routed?.degraded ?? 0;
+        if (grewOnly) {
+          // The lock now holds the grown seats at the SAME anchor: the plates
+          // answer a new question and the Cell has not moved. Routes are left
+          // as they are — each is re-anchored against the new boxes on every
+          // frame, and one that no longer reaches its plate degrades for that
+          // frame and is taken back by the refinement behind it.
+          lock.geometryKey = key;
+          for (const panel of placements) {
+            lock.placements[panel.slot] = { ...panel, route: undefined };
+            lock.quadrant[panel.slot] = panel.quadrant;
+          }
+        }
         return {
           status: placements.some((panel) => panel.capped) ? 'compressed' : 'normal',
           template: lock.template,
@@ -2575,6 +2779,7 @@ function* solveLayoutSteps(
   constellationWorkStats.degradedRoutes += bestDegraded;
   if (input.lock) {
     input.lock.template = best.template; input.lock.geometryKey = key;
+    input.lock.shapeKey = geometryShapeKey(input, panels);
     input.lock.anchorX = input.anchorX; input.lock.anchorY = input.anchorY;
     for (const slot of Object.keys(input.lock.placements)) delete input.lock.placements[slot];
     for (const slot of Object.keys(input.lock.routes)) delete input.lock.routes[slot];

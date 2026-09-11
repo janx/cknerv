@@ -495,6 +495,7 @@ function cloneLock(lock: ConstellationLock): ConstellationLock {
     // costs nothing and the clone is read, never written through.
     routes: { ...lock.routes },
     geometryKey: lock.geometryKey,
+    shapeKey: lock.shapeKey,
     anchorX: lock.anchorX,
     anchorY: lock.anchorY,
   };
@@ -504,6 +505,7 @@ function publishLock(target: ConstellationLock, source: ConstellationLock): void
   resetLockObject(target);
   target.template = source.template;
   target.geometryKey = source.geometryKey;
+  target.shapeKey = source.shapeKey;
   target.anchorX = source.anchorX;
   target.anchorY = source.anchorY;
   Object.assign(target.quadrant, source.quadrant);
@@ -520,6 +522,7 @@ function resetLockObject(lock: ConstellationLock): void {
   for (const slot of Object.keys(lock.routes)) delete lock.routes[slot];
   lock.template = null;
   lock.geometryKey = '';
+  lock.shapeKey = '';
   lock.anchorX = 0;
   lock.anchorY = 0;
 }

@@ -1258,13 +1258,19 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
     const painted = run(handles, anchorX, anchorY, stageHeight, 20,
       () => handles.lastLayout !== null);
     crawl(handles, anchorX, anchorY, stageHeight, painted + 1);
-    expect(handles.refineJob).not.toBeNull();
+    const inFlight = handles.refineJob;
+    expect(inFlight).not.toBeNull();
     handles.panels.reader.height = 380;
     advanceConstellationFrame(
       handles, anchorX, anchorY, 1920, stageHeight, SAFE_TOP, EDGE, RAILS_1920, 0, painted + 2,
     );
-    expect(handles.refineJob).toBeNull();
+    // The refinement that was looking at the old heights is gone and applied
+    // nothing. Since P3 §5.3 the height change is answered in place on the same
+    // frame, so the new picture may already have earned a second look of its
+    // own — what may never happen is the OLD one landing on it.
+    expect(handles.refineJob).not.toBe(inFlight);
     expect(snapshotConstellationWorkStats().refineLandings).toBe(0);
+    expect(snapshotConstellationWorkStats().refineDropped).toBe(0);
   });
 
   it('drops a refinement when the channel is invalidated or the camera moves', () => {

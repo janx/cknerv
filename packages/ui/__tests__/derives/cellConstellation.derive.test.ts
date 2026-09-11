@@ -798,8 +798,7 @@ describe('the seats hold while the galaxy turns the cell (F4)', () => {
 });
 
 describe('an instrument whose content grows stays where the reader left it (F5)', () => {
-  // RED until P3 — grow in place.
-  it.fails('extends the register in place and moves neither of its neighbours', () => {
+  it('extends the register in place and moves neither of its neighbours', () => {
     // Measured 2026-09-11 at a fixed anchor: the register's x went
     // 760 → 376 → 1192 and its top 666 → 104 → 468 as its content grew, and
     // the specimen and the reader moved with it every time.
@@ -835,6 +834,143 @@ describe('an instrument whose content grows stays where the reader left it (F5)'
       expect(analysis.y, `register top at ${height}`).toBe(firstTop);
       expect(others, `neighbours at ${height}`).toBe(neighbours);
     }
+  });
+
+  // The two cases the probe's anchor cannot show, built by seating the lock by
+  // hand: the first solve decides where a plate stands and these are about what
+  // happens NEXT, so the seats are stated rather than searched for. A lock may
+  // be seated this way because `geometryKey` is a function of the INPUT, not of
+  // the placements: overwriting the seats at the same heights leaves the lock
+  // answering for the same question.
+  const seatedLock = (
+    panels: ConstellationPanel[],
+    anchorX: number,
+    anchorY: number,
+    seats: Array<{ slot: string; x: number; y: number; height: number }>,
+  ) => {
+    const base = {
+      panels, anchorX, anchorY, stageWidth: 1920, stageHeight: 1080,
+      reserved: [] as HudOcclusionRect[], safeTop: SAFE_TOP, edge: EDGE,
+    };
+    const lock = createConstellationLock();
+    const first = constellationLayout({ ...base, lock });
+    expect(first.status).not.toBe('unavailable');
+    for (const seat of seats) {
+      const panel = panels.find((candidate) => candidate.slot === seat.slot)!;
+      lock.placements[seat.slot] = {
+        slot: seat.slot as ConstellationPlacement['slot'],
+        quadrant: 'br',
+        x: seat.x,
+        y: seat.y,
+        width: panel.width,
+        height: seat.height,
+        capped: false,
+      };
+      lock.quadrant[seat.slot] = 'br';
+    }
+    return { base, lock };
+  };
+
+  it('keeps the bottom edge and grows upward where the stage is below it', () => {
+    // The register stands on the stage's bottom edge with clear air above it.
+    // Growing down is not possible at any price, so the plate keeps its bottom
+    // and its x and extends UP — which costs the reader the top of the plate
+    // moving, and is worth it because the alternative is an instrument that
+    // scrolls when it does not have to.
+    const panels: ConstellationPanel[] = [
+      { slot: 'analysis', width: 440, height: 300, labelWidth: 62, labelHeight: 20 },
+    ];
+    const { base, lock } = seatedLock(panels, 960, 200, [
+      { slot: 'analysis', x: 1200, y: 766, height: 300 },
+    ]);
+    const grown = constellationLayout({
+      ...base,
+      panels: [{ ...panels[0], height: 500 }],
+      lock,
+    });
+    const analysis = grown.placements.find((panel) => panel.slot === 'analysis')!;
+    expect(analysis.x).toBe(1200);
+    expect(analysis.height).toBe(500);
+    expect(analysis.y + analysis.height).toBe(1066);
+    expect(analysis.y).toBe(566);
+    expect(analysis.capped).toBe(false);
+  });
+
+  it('slides one neighbour down the column, once, rather than cap the plate', () => {
+    // Below the register is the reader, above it is the Cell. Neither the room
+    // below nor the room above reaches the asked height, so the ONE plate in
+    // the way moves along the column by the smallest step that clears — and
+    // the register gets its full height with its top edge unmoved.
+    const panels: ConstellationPanel[] = [
+      { slot: 'analysis', width: 440, height: 300, labelWidth: 62, labelHeight: 20 },
+      { slot: 'reader', width: 408, height: 200, labelWidth: 62, labelHeight: 20 },
+    ];
+    const { base, lock } = seatedLock(panels, 1300, 300, [
+      { slot: 'analysis', x: 1200, y: 400, height: 300 },
+      { slot: 'reader', x: 1200, y: 716, height: 200 },
+    ]);
+    const grown = constellationLayout({
+      ...base,
+      panels: [{ ...panels[0], height: 400 }, panels[1]],
+      lock,
+    });
+    const analysis = grown.placements.find((panel) => panel.slot === 'analysis')!;
+    const reader = grown.placements.find((panel) => panel.slot === 'reader')!;
+    expect(analysis.x).toBe(1200);
+    expect(analysis.y).toBe(400);
+    expect(analysis.height).toBe(400);
+    expect(analysis.capped).toBe(false);
+    // The neighbour moved along its column and nowhere else, by exactly the
+    // amount that clears the sixteen-pixel gap.
+    expect(reader.x).toBe(1200);
+    expect(reader.y).toBe(816);
+    expect(reader.height).toBe(200);
+  });
+
+  it('never re-composes a stage because one instrument shrank', () => {
+    // The other half of a height change, and the cheap one: a plate whose
+    // content went away keeps its seat and gives the room back.
+    const panels: ConstellationPanel[] = [
+      { slot: 'analysis', width: 440, height: 400, labelWidth: 62, labelHeight: 20 },
+      { slot: 'reader', width: 408, height: 200, labelWidth: 62, labelHeight: 20 },
+    ];
+    const { base, lock } = seatedLock(panels, 1300, 300, [
+      { slot: 'analysis', x: 1200, y: 400, height: 400 },
+      { slot: 'reader', x: 1200, y: 816, height: 200 },
+    ]);
+    const shrunk = constellationLayout({
+      ...base,
+      panels: [{ ...panels[0], height: 220 }, panels[1]],
+      lock,
+    });
+    const analysis = shrunk.placements.find((panel) => panel.slot === 'analysis')!;
+    const reader = shrunk.placements.find((panel) => panel.slot === 'reader')!;
+    expect(`${analysis.x},${analysis.y},${analysis.height}`).toBe('1200,400,220');
+    expect(`${reader.x},${reader.y},${reader.height}`).toBe('1200,816,200');
+  });
+
+  it('solves again when the grown seats would not be legal', () => {
+    // Grow-in-place is an answer, not an override: a plate that cannot be
+    // extended and cannot stand where it is falls through to the full solve,
+    // which carries the continuity term against these same seats.
+    const panels: ConstellationPanel[] = [
+      { slot: 'analysis', width: 440, height: 300, labelWidth: 62, labelHeight: 20 },
+    ];
+    const { base, lock } = seatedLock(panels, 960, 200, [
+      // Seated illegally on purpose: standing on the Cell. Nothing grow-in-place
+      // does moves a plate sideways, so this can only be answered by a solve.
+      { slot: 'analysis', x: 900, y: 160, height: 300 },
+    ]);
+    resetConstellationWorkStats();
+    const grown = constellationLayout({
+      ...base,
+      panels: [{ ...panels[0], height: 400 }],
+      lock,
+    });
+    expect(snapshotConstellationWorkStats().fullSolves).toBe(1);
+    const analysis = grown.placements.find((panel) => panel.slot === 'analysis')!;
+    expect(analysis.height).toBe(400);
+    expect(analysis.y).not.toBe(160);
   });
 });
 
