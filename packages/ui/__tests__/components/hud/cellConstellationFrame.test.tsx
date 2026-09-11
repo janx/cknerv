@@ -24,6 +24,7 @@ import {
   resetConstellationWorkStats,
   snapshotConstellationWorkStats,
 } from '../../../src/derives/cellConstellation.derive';
+import { HUD_MOTION } from '../../../src/components/hud/hudTheme';
 import { RAILS_1920 } from '../../fixtures/cellConstellationMatrix';
 
 afterEach(cleanup);
@@ -1409,5 +1410,349 @@ describe('a second look at the leaders first paint could not draw (P2b)', () => 
       expect(handles.refineJob, stop).toBeNull();
       expect(snapshotConstellationWorkStats().refineLandings, stop).toBe(0);
     }
+  });
+});
+
+describe('a seat that moved is travelled to (P4)', () => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const OPEN = ['analysis', 'specimen', 'reader'] as const;
+  const transformOf = (panel: { x: number; y: number }) =>
+    `translate3d(${panel.x}px, ${panel.y}px, 0)`;
+
+  /**
+   * Probe I's picture — the shipping desktop stage under the HUD rails with
+   * three instruments open — and TWO clocks, because the writer has two.
+   *
+   * The slice budget's `now` ticks a fixed twentieth of a millisecond a
+   * reading, so a frame buys the same work on every machine and these counts
+   * are a pure function of the work (A4's note on `run`, still true). The
+   * JOURNEY's clock is separate and the test moves it by hand: `HUD_MOTION.seat`
+   * is 240 real milliseconds, and nothing on a step budget is milliseconds.
+   */
+  function opened() {
+    const handles = createCellConstellationHandles();
+    for (const [slot, height] of [
+      ['analysis', 717], ['specimen', 314], ['reader', 340],
+    ] as const) {
+      handles.panels[slot].host = document.createElement('div');
+      handles.panels[slot].present = true;
+      handles.panels[slot].height = height;
+      handles.leaders[slot].group = document.createElementNS(NS, 'g') as SVGGElement;
+      handles.leaders[slot].under = document.createElementNS(NS, 'path');
+      handles.leaders[slot].over = document.createElementNS(NS, 'path');
+      handles.leaders[slot].dot = document.createElementNS(NS, 'circle');
+      handles.leaders[slot].label = document.createElement('span');
+    }
+    handles.root = document.createElement('div');
+    handles.reticle = document.createElement('div');
+    handles.chip = document.createElement('div');
+    handles.chipWidth = 376;
+    handles.chipHeight = 24;
+    let journeyMs = 0;
+    handles.seatClock = () => journeyMs;
+    let frame = 0;
+    let anchorX = 900;
+    let anchorY = 520;
+    const step = (x = anchorX, y = anchorY, perReading = 0.05) => {
+      anchorX = x;
+      anchorY = y;
+      frame += 1;
+      let tick = 0;
+      return advanceConstellationFrame(
+        handles, x, y, 1920, 1080, SAFE_TOP, EDGE, RAILS_1920, 0, frame,
+        () => { tick += perReading; return tick; },
+      );
+    };
+    const until = (done: () => boolean, x = anchorX, y = anchorY, limit = 200) => {
+      let count = 0;
+      while (!done() && count < limit) { step(x, y); count += 1; }
+      expect(count, 'the writer never got there').toBeLessThan(limit);
+      return count;
+    };
+    return {
+      handles,
+      step,
+      until,
+      journey: (ms: number) => { journeyMs = ms; },
+      seatOf: (slot: string) => handles.lastLayout?.placements.find(
+        (panel) => panel.slot === slot,
+      ),
+      landed: () => (handles.lastLayout?.placements ?? []).map(transformOf),
+      transforms: () => OPEN.map((slot) => handles.panels[slot].host?.style.transform),
+      travelling: () => OPEN.some((slot) => handles.panels[slot].tween !== null),
+      leaderShown: () => OPEN.some(
+        (slot) => handles.leaders[slot].over?.style.visibility === '',
+      ),
+    };
+  }
+
+  /**
+   * Land a picture, then walk the Cell down the stage far enough that the
+   * constellation steps after it — past `CONSTELLATION_HOLD_RADIUS_PX`, which
+   * is where the continuity reference stops being the held seats themselves.
+   *
+   * Straight down, and 200 px of it, because that is a step this geometry takes
+   * without the Cell walking into any of the three seats on the way: a plate the
+   * reticle has entered is WITHDRAWN by §5.5 and re-seated fresh, and a plate
+   * that was not on screen has nowhere to travel from.
+   */
+  function reSeated() {
+    const cell = opened();
+    cell.until(() => cell.handles.lastLayout !== null && cell.handles.layoutJob === null);
+    const before = cell.transforms();
+    resetConstellationWorkStats();
+    cell.until(() => snapshotConstellationWorkStats().seatTweens > 0, 900, 720);
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(1);
+    // The landing frame itself moves nothing: a journey starts where the plates
+    // already are.
+    expect(cell.transforms()).toEqual(before);
+    expect(cell.transforms()).not.toEqual(cell.landed());
+    return cell;
+  }
+
+  it('writes a plate on its way, and hands the portrait where it has got to', () => {
+    const cell = reSeated();
+    const landed = cell.landed();
+    const seen: string[] = [];
+    for (const at of [40, 80, 120, 160, 200]) {
+      cell.journey(at);
+      const specimen = cell.step();
+      // The braid's scissor is where the plate IS, never where it is going.
+      const panel = cell.handles.panels.specimen;
+      expect(specimen?.x).toBe(panel.seatX);
+      expect(specimen?.y).toBe(panel.seatY);
+      expect(specimen?.y).not.toBe(cell.seatOf('specimen')?.y);
+      seen.push(cell.handles.panels.analysis.host!.style.transform);
+    }
+    // Five frames, five places, and none of them the seat it is going to.
+    expect(new Set(seen).size).toBe(seen.length);
+    for (const written of seen) expect(landed).not.toContain(written);
+
+    cell.journey(HUD_MOTION.seat);
+    const arrived = cell.step();
+    expect(cell.transforms()).toEqual(landed);
+    expect(cell.travelling()).toBe(false);
+    expect(arrived?.x).toBe(cell.seatOf('specimen')?.x);
+    expect(arrived?.y).toBe(cell.seatOf('specimen')?.y);
+  });
+
+  it('takes every leader down for the journey and gives them back on arrival', () => {
+    const cell = reSeated();
+    const routes = OPEN.map((slot) => cell.handles.leaders[slot].over?.getAttribute('d'));
+    for (const at of [0, 60, 120, 239]) {
+      cell.journey(at);
+      cell.step();
+      expect(cell.travelling(), `at ${at}ms`).toBe(true);
+      expect(cell.leaderShown(), `at ${at}ms`).toBe(false);
+    }
+    cell.journey(HUD_MOTION.seat);
+    cell.step();
+    expect(cell.travelling()).toBe(false);
+    expect(cell.leaderShown()).toBe(true);
+    // …with the routes of the seats the plates have just arrived at, which the
+    // landing drew and nothing since has had a reason to redraw.
+    expect(OPEN.map((slot) => cell.handles.leaders[slot].over?.getAttribute('d')))
+      .toEqual(routes);
+  });
+
+  it('retargets from where the plate has got to, without moving it a pixel', () => {
+    const cell = reSeated();
+    cell.journey(120);
+    cell.step();
+    const midway = cell.transforms();
+    const analysis = cell.handles.panels.analysis;
+    const mid = { x: analysis.seatX, y: analysis.seatY };
+    expect(mid.y).not.toBe(analysis.targetY);
+
+    // A second step of the same walk, landing while the first is still in
+    // flight. The journey's clock is held for the whole of it, so anything that
+    // moves moved because of the landing and not because of the travel.
+    cell.until(() => snapshotConstellationWorkStats().seatTweens > 1, 700, 720);
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(2);
+    expect(cell.transforms()).toEqual(midway);
+    expect(analysis.tween?.fromX).toBe(mid.x);
+    expect(analysis.tween?.fromY).toBe(mid.y);
+    expect(analysis.tween?.toX).toBe(cell.seatOf('analysis')?.x);
+    expect(analysis.tween?.toY).toBe(cell.seatOf('analysis')?.y);
+    expect(cell.leaderShown()).toBe(false);
+
+    cell.journey(120 + HUD_MOTION.seat);
+    cell.step();
+    expect(cell.transforms()).toEqual(cell.landed());
+    expect(cell.leaderShown()).toBe(true);
+  });
+
+  it('writes the answer at once for a visitor who asked for stillness', () => {
+    const cell = opened();
+    cell.handles.reducedMotion = true;
+    cell.until(() => cell.handles.lastLayout !== null && cell.handles.layoutJob === null);
+    const before = cell.transforms();
+    resetConstellationWorkStats();
+    cell.until(() => cell.transforms().join() !== before.join(), 900, 720);
+    expect(cell.travelling()).toBe(false);
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(0);
+    expect(cell.transforms()).toEqual(cell.landed());
+    expect(cell.leaderShown()).toBe(true);
+  });
+
+  it('puts a journey at its end when the camera starts moving', () => {
+    const cell = reSeated();
+    cell.journey(60);
+    cell.step();
+    expect(cell.travelling()).toBe(true);
+    expect(cell.transforms()).not.toEqual(cell.landed());
+
+    const landed = cell.landed();
+    suspendConstellationFrame(cell.handles, 900, 720, 1920, 1080, EDGE);
+    expect(cell.travelling()).toBe(false);
+    expect(cell.transforms()).toEqual(landed);
+    // The leaders are down for the whole motion window, as they always were —
+    // which is why there was nothing left for the journey to protect.
+    expect(cell.leaderShown()).toBe(false);
+  });
+
+  it('extends a plate downward in one frame, and does not call that a journey', () => {
+    // `placementSignature` carries the height, so a grow-in-place has a new
+    // placement key and the SAME seat. Reading the key as a seat change would
+    // animate a plate that never moved. Measured on the case P3 §5.5 is stated
+    // at: a 400 px register high on the stage with real room under it.
+    const { handles, hosts } = wired();
+    handles.panels.analysis.height = 400;
+    let journeyMs = 0;
+    handles.seatClock = () => journeyMs;
+    expect(commitConstellationFrame(
+      handles, 960, 240, 1920, 1080, SAFE_TOP, EDGE, [],
+    )).not.toBeNull();
+    const seat = hosts.analysis.style.transform;
+    resetConstellationWorkStats();
+
+    handles.panels.analysis.height += 40;
+    commitConstellationFrame(handles, 960, 240, 1920, 1080, SAFE_TOP, EDGE, []);
+
+    expect(hosts.analysis.style.transform).toBe(seat);
+    expect(hosts.analysis.style.height).toBe('440px');
+    expect(handles.panels.analysis.tween).toBeNull();
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(0);
+  });
+
+  it('keeps the bottom edge of a plate that grew upward on every frame of it', () => {
+    // The other half of §5.3, and the reason y and the height travel on ONE
+    // eased parameter: a register standing on the stage's bottom edge grows UP,
+    // so its top moves — a genuine journey — and its bottom must not move at
+    // all, on any frame, or the reader's eye loses the line it was reading.
+    // The seat is stated rather than searched for, exactly as the derive's own
+    // grow-in-place cases state theirs.
+    const handles = createCellConstellationHandles();
+    const host = document.createElement('div');
+    handles.panels.analysis.host = host;
+    handles.panels.analysis.present = true;
+    handles.panels.analysis.height = 300;
+    handles.root = document.createElement('div');
+    handles.reticle = document.createElement('div');
+    handles.chip = document.createElement('div');
+    let journeyMs = 0;
+    handles.seatClock = () => journeyMs;
+    const commitAt200 = () =>
+      commitConstellationFrame(handles, 960, 200, 1920, 1080, SAFE_TOP, EDGE, []);
+    commitAt200();
+    handles.lock.placements.analysis = {
+      slot: 'analysis', quadrant: 'br', x: 1200, y: 766, width: 440, height: 300,
+      capped: false,
+    };
+    handles.lock.quadrant.analysis = 'br';
+    // Seated at once, so the journey under test is the growth and not the move
+    // onto the stated seat.
+    handles.reducedMotion = true;
+    invalidateConstellationFrame(handles);
+    commitAt200();
+    expect(handles.lastLayout?.placements[0]).toMatchObject({ x: 1200, y: 766, height: 300 });
+    handles.reducedMotion = false;
+
+    resetConstellationWorkStats();
+    handles.panels.analysis.height = 500;
+    invalidateConstellationFrame(handles);
+    commitAt200();
+    expect(handles.lastLayout?.placements[0]).toMatchObject({ x: 1200, y: 566, height: 500 });
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(1);
+    const tops = new Set<number>();
+    for (const at of [0, 40, 120, 200, HUD_MOTION.seat]) {
+      journeyMs = at;
+      advanceConstellationFrame(
+        handles, 960, 200, 1920, 1080, SAFE_TOP, EDGE, [], 0, 900 + at,
+      );
+      const top = Number.parseFloat(host.style.transform.split(', ')[1]);
+      const height = Number.parseFloat(host.style.height);
+      expect(top + height, `the bottom edge at ${at}ms`).toBeCloseTo(1066, 6);
+      tops.add(top);
+    }
+    // It really did travel: five readings, five tops.
+    expect(tops.size).toBe(5);
+    expect(host.style.height).toBe('500px');
+    expect(host.style.transform).toBe('translate3d(1200px, 566px, 0)');
+  });
+
+  it('writes a measurement into a plate that is still on its way', () => {
+    // §5.5's clamped presentation, under a journey. The rows the reader just
+    // loaded go into the plate on the frame they are measured, wherever that
+    // plate happens to be standing; the transform belongs to the journey and
+    // this may not take it away.
+    const cell = reSeated();
+    cell.journey(100);
+    cell.step();
+    const midway = cell.transforms();
+    // The specimen is one of the two plates this step moves, and its seat has
+    // room under it — the register's does not, and a plate clamped to the room
+    // it already had is not a measurement arriving.
+    const before = cell.handles.panels.specimen.host!.style.height;
+
+    cell.handles.panels.specimen.height += 60;
+    // A whole millisecond a reading, so the 1.6 ms slice buys two steps of the
+    // cursor and the solve is still in flight when this frame is over — which
+    // is the only state the clamped presentation exists for.
+    cell.step(undefined, undefined, 1);
+
+    expect(cell.handles.layoutJob).not.toBeNull();
+    expect(cell.transforms()).toEqual(midway);
+    expect(cell.handles.panels.specimen.host!.style.height).not.toBe(before);
+    expect(cell.handles.panels.specimen.tween).not.toBeNull();
+    // …and the journey it is on still ends where it was going.
+    expect(cell.handles.panels.specimen.tween?.toY).toBe(cell.seatOf('specimen')?.y);
+  });
+
+  it('steps after a drifting cell once, and shows no leader while it walks', () => {
+    // Probe I's shape: the desktop stage under the rails, three instruments,
+    // the canopy turning the Cell 0.6 px a frame after the first second. P3
+    // brought this from seven seat changes and an 856 px jump to one step of
+    // 160 px. P4 is what the reader watches that step look like, and the clock
+    // here runs at a sixtieth of a second a frame, as the browser's does.
+    const cell = opened();
+    resetConstellationWorkStats();
+    let anchorX = 900;
+    let seatKey = '';
+    let changes = 0;
+    let shownWhileTravelling = 0;
+    let travelledFrames = 0;
+    for (let frame = 1; frame <= 400; frame += 1) {
+      cell.journey(frame * 16);
+      cell.step(anchorX);
+      const next = (cell.handles.lastLayout?.placements ?? []).map(
+        (panel) => `${panel.slot}:${panel.x},${panel.y}`,
+      ).join('|');
+      if (next && seatKey && next !== seatKey) changes += 1;
+      if (next) seatKey = next;
+      if (cell.travelling()) {
+        travelledFrames += 1;
+        if (cell.leaderShown()) shownWhileTravelling += 1;
+      }
+      if (frame >= 60) anchorX += 0.6;
+    }
+    expect(changes).toBe(1);
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(changes);
+    expect(shownWhileTravelling).toBe(0);
+    // 240 ms at a sixtieth of a second a frame is fifteen of them.
+    expect(travelledFrames).toBe(Math.ceil(HUD_MOTION.seat / 16));
+    // It arrived, and the leaders came back with it.
+    expect(cell.travelling()).toBe(false);
+    expect(cell.leaderShown()).toBe(true);
   });
 });
