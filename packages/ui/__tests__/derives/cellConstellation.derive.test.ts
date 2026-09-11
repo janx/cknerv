@@ -839,18 +839,31 @@ describe('an instrument whose content grows stays where the reader left it (F5)'
 });
 
 describe('a leader survives a one-pixel move (F7)', () => {
-  // RED until P3 — the re-anchor tolerance.
-  it.fails('re-anchors every matrix layout for a move of two pixels or less', () => {
+  it('re-anchors every matrix layout for a move of two pixels or less', () => {
     // Measured 2026-09-11: null on +1 px in about 20 % of 108 geometries and on
     // +30 px in about 45 %, because the canonical routes hug the expanded
     // obstacle edges exactly. A leader that vanishes on a pixel of drift is a
     // leader that vanishes whenever the galaxy turns.
+    //
+    // Three things had to be true before this could pass, and only the first
+    // is the tolerance the plan named. `REVALIDATE_TOLERANCE_PX` judges a
+    // carried line three pixels more kindly than a drawn one and lets an
+    // interior leg slide by up to the same three. The re-anchor's stage box
+    // stopped being the GRID SEARCH's corridor, which the fast two-leg pass
+    // that draws most clean leaders never consulted, so a leader landing on a
+    // plate edge near the stage edge could never be carried at all (53 of the
+    // 648 checks below). And a prior route is clipped against the ring the
+    // Cell had when it was DRAWN as well as the one it has now, so a segment
+    // that was under the reticle does not become an obstacle because the Cell
+    // moved two pixels off it (the 54th).
     const failed: string[] = [];
     let checked = 0;
     for (const answer of matrixMatrix()) {
       if (answer.routed.status === 'unavailable') continue;
       if (!answer.routed.placements.every((panel) => panel.route)) continue;
-      for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2]] as const) {
+      for (const [dx, dy] of [
+        [1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [-1, -1],
+      ] as const) {
         checked += 1;
         const moved = {
           ...answer.input,

@@ -310,6 +310,31 @@ export const ROUTE_REFINE_POINT_BUDGET = 320_000;
  */
 export const CONSTELLATION_UNAVAILABLE_RESOLVE_PX = 24;
 
+/**
+ * How much of the route clearance a RE-ANCHORED leader may give back.
+ *
+ * The canonical router draws its lines against obstacles expanded by
+ * `CONSTELLATION_ROUTE_CLEARANCE_PX`, and the shortest legal line hugs that
+ * expanded edge exactly — which is what F7 of the 2026-09-11 review measured:
+ * a one-pixel move of the Cell pushed about a fifth of the matrix's leaders a
+ * fraction of a pixel inside an obstacle they had been touching, the
+ * re-anchor returned null, and the leaders disappeared until the locked cursor
+ * landed. A leader that vanishes on a pixel of drift is a leader that vanishes
+ * whenever the galaxy turns.
+ *
+ * So carrying a PROVEN line across a move judges it three pixels more kindly
+ * than drawing a new one, and may slide the leg that follows the translated
+ * head by up to the same three to clear something. The trade is visible and
+ * small: a carried leader may pass 5 px from a plate where a fresh one keeps
+ * 8. What it buys is the leader staying on screen. The target plate and the
+ * reticle are NOT given the tolerance — a line that entered the plate it
+ * points at, or the ring it leaves from, would be wrong rather than tight.
+ *
+ * The canonical router never sees this, so the oracle is untouched: only the
+ * locked path's route reuse and the presentation re-anchor go through here.
+ */
+export const REVALIDATE_TOLERANCE_PX = 3;
+
 export interface ConstellationPanel {
   slot: ConstellationSlot;
   width: number;
@@ -1277,33 +1302,59 @@ interface ReanchorContext {
   target: Box;
   /** Everything the route must miss, already expanded by the caller — the
    * other plates, the chip claim, the visible rails, the labels and the routes
-   * that were drawn before this one, plus the target and the reticle at their
-   * exact bounds. */
+   * that were drawn before this one. A carried line is judged against these
+   * shrunk by `REVALIDATE_TOLERANCE_PX`. */
   obstacles: readonly Box[];
+  /** The target plate and the reticle, at their exact bounds. These get no
+   * tolerance: a leader may land on the plate's edge and leave the ring, and
+   * it may enter neither. */
+  exact: readonly Box[];
   bounds: Box;
 }
 
 /**
  * Carry one already-proven route across a move of the anchor.
  *
- * Three attempts, cheapest first, and every one of them is judged by the same
- * `valid` predicate that the canonical router's own answers satisfy: the route
- * leaves one of the eight outlets, lands on the target's boundary, stays
- * inside the stage and clears every obstacle it is given. First the whole
- * polyline is translated at its head and the leg that follows is snapped back
- * to its axis — the ordinary one-pixel orbit frame. Then an outlet is
- * reconnected to a later point of the proven route, which rescues a leader
- * whose first leg alone has been blocked. Last a bounded two-leg pass over the
- * outlets and the plate's own edge points, for a camera jump that left the old
- * line on the wrong side entirely. Nothing here enters the orthogonal grid
- * search, and `null` means the caller must route or degrade this plate.
+ * Four attempts, cheapest first, and every one of them is judged by the same
+ * `valid` predicate: the route leaves one of the eight outlets, lands on the
+ * target's boundary, stays inside the stage and clears every obstacle it is
+ * given — the moveable ones shrunk by `REVALIDATE_TOLERANCE_PX`, the target
+ * and the reticle exact. First the whole polyline is translated at its head
+ * and the leg that follows is snapped back to its axis — the ordinary
+ * one-pixel orbit frame. Then that same leg is slid along its own axis by up
+ * to the tolerance, which is the smallest thing that rescues a line the move
+ * pressed against something. Then an outlet is reconnected to a later point of
+ * the proven route, which rescues a leader whose first leg alone has been
+ * blocked. Last a bounded two-leg pass over the outlets and the plate's own
+ * edge points, for a camera jump that left the old line on the wrong side
+ * entirely. Nothing here enters the orthogonal grid search, and `null` means
+ * the caller must route or degrade this plate.
  */
 function reanchorRoutePoints(
   old: readonly ConstellationPoint[],
   context: ReanchorContext,
 ): ConstellationPoint[] | null {
   if (old.length < 2) return null;
-  const { target, obstacles, bounds } = context;
+  const { target } = context;
+  // ⚠️ THE STAGE, NOT THE ROUTER'S SEARCH BOX.
+  //
+  // `bounds` is the corridor the GRID search may put a bend in — the stage
+  // inset by the route clearance — and the fast two-leg pass, which draws most
+  // of the clean leaders, never consults it. Judging a carried line by it
+  // therefore refused lines the router itself had drawn: a leader landing on a
+  // plate edge within 8 px of the stage edge could never be re-anchored, in
+  // any direction, however small the move. Measured 2026-09-12 over the
+  // matrix, that was 53 of 648 two-pixel moves on its own.
+  const bounds = expanded(context.bounds, CONSTELLATION_ROUTE_CLEARANCE_PX);
+  // A carried line is judged three pixels more kindly than a drawn one; the
+  // target and the reticle keep their exact bounds. `expanded` by a negative
+  // amount can invert a small box, which `pointInside` and `segmentClear`
+  // read as "blocks nothing" — the right answer for something the tolerance
+  // has shrunk away entirely.
+  const obstacles: Box[] = [
+    ...context.obstacles.map((box) => expanded(box, -REVALIDATE_TOLERANCE_PX)),
+    ...context.exact,
+  ];
   const outlets = routeOutlets(context.anchorX, context.anchorY);
   const valid = (candidate: ConstellationPoint[]): boolean => {
     if (candidate.length < 2 || candidate.length - 2 > CONSTELLATION_ROUTE_MAX_BENDS) return false;
@@ -1334,8 +1385,29 @@ function reanchorRoutePoints(
   translated[0].y += context.anchorY - context.previousAnchorY;
   if (Math.abs(old[0].x - old[1].x) < 0.01) translated[1].x = translated[0].x;
   else translated[1].y = translated[0].y;
+  const snapped = translated.map((point) => ({ ...point }));
   translated = simplify(translated);
   if (valid(translated)) return translated;
+  // The leg that follows the translated head, slid along its own axis — and
+  // then each interior leg after it, for a line with more than one bend.
+  //
+  // Sliding a leg means moving BOTH its ends along the axis it does not run
+  // on. The legs either side of it are perpendicular by construction, so they
+  // only get longer or shorter: nothing cascades, the line stays orthogonal,
+  // and the last point stays on the plate's edge (`valid` re-checks that it
+  // did not slide off the end of one). The head itself never moves, because it
+  // has to stay on an outlet of the ring.
+  for (let leg = 1; leg + 1 < snapped.length; leg += 1) {
+    // The leg's own axis: a vertical leg may move in x, a horizontal one in y.
+    const vertical = Math.abs(snapped[leg].x - snapped[leg + 1].x) < 0.01;
+    for (const offset of [1, -1, 2, -2, REVALIDATE_TOLERANCE_PX, -REVALIDATE_TOLERANCE_PX]) {
+      const slid = snapped.map((point) => ({ ...point }));
+      if (vertical) { slid[leg].x += offset; slid[leg + 1].x += offset; }
+      else { slid[leg].y += offset; slid[leg + 1].y += offset; }
+      const candidate = simplify(slid);
+      if (valid(candidate)) return candidate;
+    }
+  }
   for (const start of outlets) {
     for (let join = 1; join < old.length; join += 1) {
       const prefix = fastOrthogonalRoute(start, old[join], obstacles);
@@ -1464,14 +1536,18 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
       width: Math.max(8, Math.abs(a.x - b.x) + 8),
       height: Math.max(8, Math.abs(a.y - b.y) + 8),
     }));
-    const obstacles = [
+    // Everything a NEW line must clear, at the full route clearance. A line
+    // that is merely being carried across the Cell's move is judged against
+    // these shrunk by `REVALIDATE_TOLERANCE_PX`, which is why they are kept
+    // apart from the two that get no tolerance at all.
+    const softObstacles = [
       ...panelBoxes.filter((box) => box !== target), ...reserved, ...hud, ...placedLabels,
       ...priorRouteBoxes,
     ].map((box) => expanded(box, CONSTELLATION_ROUTE_CLEARANCE_PX));
     // The target itself stays at its exact boundary: the route may land on an
     // edge but may never enter the body and emerge at another edge.
-    obstacles.push(target);
-    obstacles.push(reticle);
+    const exactObstacles: Box[] = [target, reticle];
+    const obstacles = [...softObstacles, ...exactObstacles];
     const starts: ConstellationPoint[] = routeOutlets(input.anchorX, input.anchorY)
       .filter((point) => !usedOutlets.has(`${point.x},${point.y}`))
       .sort((a, b) => Math.hypot(a.x - (target.x + target.width / 2), a.y - (target.y + target.height / 2))
@@ -1497,7 +1573,8 @@ function* addRoutesInOrderSteps(input: ConstellationInput,
         previousAnchorX: mode.held?.anchorX ?? input.anchorX,
         previousAnchorY: mode.held?.anchorY ?? input.anchorY,
         target,
-        obstacles,
+        obstacles: softObstacles,
+        exact: exactObstacles,
         bounds,
       });
       if (reanchored && !crossesPrior(reanchored)) best = reanchored;
@@ -1955,15 +2032,14 @@ export function revalidateConstellationLayoutForAnchor(
       continue;
     }
     const target = panelBoxes[placementIndex];
-    const obstacles = [
+    const softObstacles = [
       ...panelBoxes.filter((_box, index) => index !== placementIndex),
       ...reserved,
       ...hud,
     ].map((box) => expanded(box, CONSTELLATION_ROUTE_CLEARANCE_PX));
-    obstacles.push(target, reticle);
     // Canonical routing leaves a twelve-pixel channel around prior segments
     // (four-pixel stroke box plus the eight-pixel route clearance).
-    obstacles.push(...outsideRoutes.flatMap((route) => route.map(([a, b]) => ({
+    softObstacles.push(...outsideRoutes.flatMap((route) => route.map(([a, b]) => ({
       x: Math.min(a.x, b.x) - 12,
       y: Math.min(a.y, b.y) - 12,
       width: Math.abs(a.x - b.x) + 24,
@@ -1975,13 +2051,26 @@ export function revalidateConstellationLayoutForAnchor(
       previousAnchorX,
       previousAnchorY,
       target,
-      obstacles,
+      obstacles: softObstacles,
+      exact: [target, reticle],
       bounds,
     });
     if (!points) return null;
+    // ⚠️ CLIPPED AGAINST BOTH RINGS, THE CELL'S OLD ONE AND ITS NEW ONE.
+    //
+    // Near the reticle the eight outlets fan out and the leaders necessarily
+    // cross each other's channels, which is why a route is an obstacle only
+    // where it runs OUTSIDE the ring. Move the Cell two pixels and a segment
+    // that was under the old ring is suddenly outside the new one, and a
+    // neighbour's leader that never had to miss it is refused — measured
+    // 2026-09-12: exactly one of the 648 two-pixel moves in the matrix, and it
+    // would be every leader that leaves its outlet alongside another. A
+    // segment that was inside the ring when it was drawn stays exempt.
     const outside = routeOutsideReticle(
       points, input.anchorX, input.anchorY, CONSTELLATION_RETICLE_PX / 2,
-    );
+    ).flatMap(([a, b]) => routeOutsideReticle(
+      [a, b], previousAnchorX, previousAnchorY, CONSTELLATION_RETICLE_PX / 2,
+    ));
     outsideRoutes.push(outside);
     translated.push({
       ...current,
