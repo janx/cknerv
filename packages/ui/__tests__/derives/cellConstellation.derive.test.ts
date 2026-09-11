@@ -4,10 +4,15 @@ import {
   CONSTELLATION_CONTINUITY_CAP_PX,
   CONSTELLATION_CONTINUITY_PX_WEIGHT,
   CONSTELLATION_HOLD_RADIUS_PX,
+  CONSTELLATION_FIELD_MIN_STAGE_PX,
   CONSTELLATION_MIN_HEIGHT_PX,
   CONSTELLATION_MIN_GAP_PX,
+  CONSTELLATION_SQUEEZE_LEVELS,
+  CONSTELLATION_STACK_MIN_PX,
   CONSTELLATION_ORDER,
+  CONSTELLATION_PREFERRED_GAP_PX,
   CONSTELLATION_RETICLE_PX,
+  CONSTELLATION_ROUTE_CLEARANCE_PX,
   constellationKeepoutPx,
   constellationLeader,
   constellationLayout,
@@ -952,5 +957,111 @@ describe('a held constellation routes inside the interaction (P2)', () => {
       expect(drifted.placements.length).toBe(3);
       expect(drifted.placements.every((panel) => panel.route)).toBe(true);
     }
+  });
+});
+
+describe('the floor an instrument is read at, and the field it stands off (F8)', () => {
+  // Until 2026-09-12 `CONSTELLATION_MIN_HEIGHT_PX` was exported, documented and
+  // never read: every rung of the squeeze ladder floored a cappable plate at
+  // the 120 px stack minimum, so the review measured 1024 x 600 seating both
+  // the register and the reader at 120 px — five lines of a list in a plate
+  // that says it is an instrument.
+  const SMALL: ConstellationPanel[] = [
+    { slot: 'analysis', width: 440, height: 717, labelWidth: 62, labelHeight: 20 },
+    { slot: 'specimen', width: 280, height: 314, labelWidth: 78, labelHeight: 20 },
+    { slot: 'reader', width: 408, height: 340, labelWidth: 62, labelHeight: 20 },
+  ];
+
+  it('reads the ladder from one statement, and cuts to the stack minimum only at its foot', () => {
+    const floors = CONSTELLATION_SQUEEZE_LEVELS.map((level) => level.floor);
+    expect(floors.slice(0, -1).every((floor) => floor === CONSTELLATION_MIN_HEIGHT_PX)).toBe(true);
+    expect(floors[floors.length - 1]).toBe(CONSTELLATION_STACK_MIN_PX);
+    // The foot is the rung that shipped before the readable floor existed, so
+    // no stage can lose its constellation to the higher one.
+    const last = CONSTELLATION_SQUEEZE_LEVELS[CONSTELLATION_SQUEEZE_LEVELS.length - 1];
+    expect(last.ratio).toBe(CONSTELLATION_SQUEEZE_LEVELS[CONSTELLATION_SQUEEZE_LEVELS.length - 2].ratio);
+  });
+
+  const small = (stageWidth: number, stageHeight: number, count = 3) => constellationLayout({
+    panels: SMALL.slice(0, count),
+    anchorX: stageWidth / 2,
+    anchorY: stageHeight / 2,
+    stageWidth,
+    stageHeight,
+    reserved: constellationChipReserved(stageWidth / 2, stageHeight / 2, stageWidth),
+    safeTop: SAFE_TOP,
+    edge: EDGE,
+  });
+
+  it('seats a crowded stage at the readable floor rather than the stack minimum', () => {
+    // 768 x 1024 in portrait: the reader used to be cut to 136 px here because
+    // the ratio said so and nothing said it was unreadable.
+    const layout = small(768, 1024);
+    expect(layout.status).not.toBe('unavailable');
+    for (const panel of layout.placements) {
+      if (panel.slot === 'specimen') continue;
+      expect(panel.height, `${panel.slot} at 768x1024`)
+        .toBeGreaterThanOrEqual(CONSTELLATION_MIN_HEIGHT_PX);
+    }
+  });
+
+  it('gives a stage with no readable answer the one it had, rather than none', () => {
+    // ⚠️ 1024 x 600 is the case the review named and the case that does NOT
+    // move: 142 px of room above the reticle and 232 below hold one 120 px
+    // instrument each and no 168 px one at all. Every rung with the readable
+    // floor fails, the last rung answers, and the picture is the one that
+    // shipped. This is what makes the higher floor safe.
+    const layout = small(1024, 600);
+    expect(layout.status).toBe('compressed');
+    expect(layout.placements.map((panel) => `${panel.slot}:${panel.height}`)).toEqual([
+      'analysis:120', 'specimen:314', 'reader:120',
+    ]);
+  });
+
+  it('never cuts an instrument below the readable floor where the whole matrix has an answer', () => {
+    // Across the 162 matrix cases the only heights below the readable floor are
+    // the ones the LAST rung produced, and a plate that asked for less than the
+    // floor keeps what it asked for.
+    const short: string[] = [];
+    for (const answer of matrixMatrix()) {
+      for (const panel of answer.routed.placements) {
+        if (panel.slot === 'specimen' || !panel.capped) continue;
+        if (panel.height < CONSTELLATION_STACK_MIN_PX - 0.5) {
+          short.push(`${answer.key} ${panel.slot}:${panel.height}`);
+        }
+      }
+    }
+    expect(short).toEqual([]);
+  });
+
+  it('names the stage width at which the cell gets a field, in one place', () => {
+    // The three candidate enumerators and the held-seat margin all read the
+    // same threshold, and the test is that they agree — measured through the
+    // answer, one pixel either side of it, on the same stage otherwise. Below
+    // it an instrument may stand at the reticle's own clearance; at it the Cell
+    // keeps its whole field. The values are the clearance plus the preferred
+    // gap: 54 + 24 and 120 + 24.
+    const nearest = (stageWidth: number) => {
+      const anchorX = stageWidth / 2;
+      const out = constellationPlacement({
+        panels: SMALL.slice(0, 2),
+        anchorX,
+        anchorY: 540,
+        stageWidth,
+        stageHeight: 1080,
+        safeTop: SAFE_TOP,
+        edge: EDGE,
+      });
+      return Math.min(...out.map((panel) => Math.hypot(
+        Math.max(panel.x - anchorX, anchorX - (panel.x + panel.width), 0),
+        Math.max(panel.y - 540, 540 - (panel.y + panel.height), 0),
+      )));
+    };
+    const field = constellationKeepoutPx(CONSTELLATION_FIELD_MIN_STAGE_PX, 1080);
+    expect(nearest(CONSTELLATION_FIELD_MIN_STAGE_PX))
+      .toBe(field + CONSTELLATION_PREFERRED_GAP_PX);
+    expect(nearest(CONSTELLATION_FIELD_MIN_STAGE_PX - 1))
+      .toBe(CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX
+        + CONSTELLATION_PREFERRED_GAP_PX);
   });
 });

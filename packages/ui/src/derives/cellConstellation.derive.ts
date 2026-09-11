@@ -30,10 +30,91 @@ export const CONSTELLATION_ORDER: readonly ConstellationSlot[] = [
 export const CONSTELLATION_RETICLE_PX = 92;
 export const CONSTELLATION_MIN_GAP_PX = 16;
 export const CONSTELLATION_PREFERRED_GAP_PX = 24;
+/**
+ * The shortest a cappable instrument is allowed to be while any composition
+ * short of the last one is still on offer.
+ *
+ * An instrument that is capped scrolls, so a floor is not about what fits — it
+ * is about what can be READ without scrolling for every line. 168 px is about
+ * five rows of the register plus its head, which is the smallest a scan reads
+ * as a list rather than as a slot. Below it the plate stops being an
+ * instrument and becomes a label with a scrollbar.
+ *
+ * Until 2026-09-12 this constant was dead: `panelHeight` floored every rung of
+ * the squeeze ladder at `CONSTELLATION_STACK_MIN_PX`, so the effective minimum
+ * was 120 px everywhere and F8 of the 2026-09-11 review recorded it. What
+ * changes is the crowded stages where the old floor was actually reached:
+ * 1180 x 663 with four instruments went from four 120 px plates to four 168 px
+ * ones, 1280 x 800 and 820 x 1078 from a 136 px reader to a 168 px one, and 48
+ * of the 162 matrix layouts move, all of them toward taller plates.
+ *
+ * ⚠️ 1024 x 600 — the case the review named — does NOT change, and that is the
+ * point of the ladder's last rung. Its band is 482 px tall with the Cell in the
+ * middle: 142 px of room above the reticle and 232 below, which holds a 120 px
+ * instrument above and one below and holds no 168 px one at all. So every rung
+ * with the readable floor fails, the last rung answers with the 120 px stack
+ * minimum, and the picture is byte for byte the one that shipped. A higher
+ * floor can ask a stage to re-compose; it can never take its constellation
+ * away.
+ */
 export const CONSTELLATION_MIN_HEIGHT_PX = 168;
+/**
+ * The shortest a cappable instrument is allowed to be on the LAST squeeze
+ * level, where the question has stopped being "can this be read" and become
+ * "is there a seat set at all".
+ */
 export const CONSTELLATION_STACK_MIN_PX = 120;
 export const CONSTELLATION_ROUTE_CLEARANCE_PX = 8;
 export const CONSTELLATION_ROUTE_MAX_BENDS = 3;
+
+/** One rung of the compression ladder: how much of its asked height a cappable
+ * instrument keeps, and how short it may be made at this rung. */
+export interface ConstellationSqueezeLevel { ratio: number; floor: number }
+
+/**
+ * How much height the solver takes back at each level of compression, and how
+ * short an instrument may be cut at each.
+ *
+ * Compression is escalated only when NO candidate at the current level seats,
+ * so the ladder is read top to bottom and stops at the first rung with an
+ * answer. The first five rungs floor every cappable plate at the READABLE
+ * minimum: an instrument the reader cannot read is not an answer while another
+ * arrangement exists. The sixth is the answer of last resort — the same
+ * 0.16 ratio at the 120 px stack minimum that shipped before 2026-09-12 — so
+ * no stage can lose a constellation to the higher floor, it can only be asked
+ * to re-compose before it is cut that far.
+ *
+ * The fifth rung is what the extra floor costs and what it buys: a plate that
+ * used to be cut to 120 px at ratio 0.4 is now either seated at 168 px there
+ * or seated at 168 px one rung lower, where a taller neighbour gives up its
+ * own height instead. Measured over the 162-case matrix: 22 layouts move, all
+ * of them toward taller plates, and none becomes `unavailable`.
+ */
+export const CONSTELLATION_SQUEEZE_LEVELS: readonly ConstellationSqueezeLevel[] = [
+  { ratio: 1, floor: CONSTELLATION_MIN_HEIGHT_PX },
+  { ratio: 0.76, floor: CONSTELLATION_MIN_HEIGHT_PX },
+  { ratio: 0.56, floor: CONSTELLATION_MIN_HEIGHT_PX },
+  { ratio: 0.4, floor: CONSTELLATION_MIN_HEIGHT_PX },
+  { ratio: 0.16, floor: CONSTELLATION_MIN_HEIGHT_PX },
+  { ratio: 0.16, floor: CONSTELLATION_STACK_MIN_PX },
+];
+
+/**
+ * The narrowest stage that gets a keep-out FIELD around the selected Cell.
+ *
+ * Below it the instruments stand at the reticle's own clearance, because a
+ * field wide enough to read as one would leave no room for a plate; at and
+ * above it the Cell keeps a proportional field (`constellationKeepoutPx`) so
+ * the reticle has air around it and the leaders have somewhere to bend. 1280
+ * is the narrowest stage this product treats as a desktop one, and it is the
+ * width at which a 440 px register plus a 280 px specimen plus two gaps and a
+ * 120 px field still fit side by side.
+ *
+ * It has four readers: the three candidate enumerators and `anchorKeepoutPx`,
+ * which is what any path that offers a held seat back to the solver measures
+ * against. They were four separate literals until 2026-09-12 (F8).
+ */
+export const CONSTELLATION_FIELD_MIN_STAGE_PX = 1280;
 
 /**
  * How far the Cell may travel from the anchor its seats were solved at before
@@ -535,10 +616,18 @@ const orderedPanels = (panels: readonly ConstellationPanel[]): ConstellationPane
     .filter((panel): panel is ConstellationPanel => panel !== undefined)
 );
 const cappable = (slot: ConstellationSlot): boolean => slot !== 'specimen';
-function panelHeight(panel: ConstellationPanel, squeeze: number): number {
+/**
+ * How tall one instrument stands at one rung of the compression ladder.
+ *
+ * A plate shorter than it asked for is `capped` and scrolls; a plate that was
+ * never cappable (the specimen, whose window is a square) is handed back
+ * untouched at every rung. A plate whose asked height is already below the
+ * rung's floor keeps it: a floor raises nothing, it only refuses to cut.
+ */
+function panelHeight(panel: ConstellationPanel, level: ConstellationSqueezeLevel): number {
   if (!cappable(panel.slot)) return panel.height;
-  const floor = Math.min(panel.height, CONSTELLATION_STACK_MIN_PX);
-  return Math.min(panel.height, Math.max(floor, panel.height * squeeze));
+  const floor = Math.min(panel.height, level.floor);
+  return Math.min(panel.height, Math.max(floor, panel.height * level.ratio));
 }
 function placement(panel: ConstellationPanel, height: number, x: number, y: number,
   ax: number, ay: number): ConstellationPlacement {
@@ -566,7 +655,7 @@ function distributedCandidate(
   input: ConstellationInput,
   panels: readonly ConstellationPanel[],
   sides: readonly ('l' | 'r' | 't' | 'b')[],
-  squeeze: number,
+  squeeze: ConstellationSqueezeLevel,
   gap: number,
 ): Candidate | null {
   const groups = { l: [] as ConstellationPanel[], r: [] as ConstellationPanel[],
@@ -575,7 +664,7 @@ function distributedCandidate(
   const out: ConstellationPlacement[] = [];
   const minY = input.safeTop; const maxY = input.stageHeight - input.edge;
   const minX = input.edge; const maxX = input.stageWidth - input.edge;
-  const coreGap = (input.stageWidth >= 1280
+  const coreGap = (input.stageWidth >= CONSTELLATION_FIELD_MIN_STAGE_PX
     ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
     : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX) + gap;
   const reserved = input.reserved ?? [];
@@ -707,13 +796,13 @@ function expandCandidate(
   input: ConstellationInput,
   panels: readonly ConstellationPanel[],
   direction: 'left' | 'right',
-  squeeze: number,
+  squeeze: ConstellationSqueezeLevel,
   gap: number,
 ): Candidate | null {
   const near = panels.filter((panel) => panel.slot === 'specimen' || panel.slot === 'reader');
   const far = panels.filter((panel) => panel.slot === 'analysis' || panel.slot === 'trace');
   if (near.length === 0 || far.length === 0) return null;
-  const keepout = input.stageWidth >= 1280
+  const keepout = input.stageWidth >= CONSTELLATION_FIELD_MIN_STAGE_PX
     ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
     : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX;
   const reserved = input.reserved ?? [];
@@ -768,7 +857,8 @@ function shelfRows(panels: readonly ConstellationPanel[], maxWidth: number,
  * This covers the 820px portrait trace case where no side column fits and no
  * single top/bottom row can hold all four instruments. */
 function foldCandidate(input: ConstellationInput, panels: readonly ConstellationPanel[],
-  topSlots: ReadonlySet<ConstellationSlot>, squeeze: number, gap: number): Candidate | null {
+  topSlots: ReadonlySet<ConstellationSlot>, squeeze: ConstellationSqueezeLevel,
+  gap: number): Candidate | null {
   const top = panels.filter((panel) => topSlots.has(panel.slot));
   const bottom = panels.filter((panel) => !topSlots.has(panel.slot));
   if (top.length === 0 || bottom.length === 0) return null;
@@ -781,7 +871,7 @@ function foldCandidate(input: ConstellationInput, panels: readonly Constellation
     gap * Math.max(0, rows.length - 1),
   );
   const topHeight = heightOf(topRows); const bottomHeight = heightOf(bottomRows);
-  const core = (input.stageWidth >= 1280
+  const core = (input.stageWidth >= CONSTELLATION_FIELD_MIN_STAGE_PX
     ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
     : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX) + gap;
   const reserved = input.reserved ?? [];
@@ -2080,11 +2170,11 @@ function geometryKey(input: ConstellationInput, panels: readonly ConstellationPa
  * without this margin: 126 full solves over 240 drifting frames where three
  * had been enough.
  *
- * (1280 is the same field threshold the three enumerators spell out; P3 §5.6
- * names it `CONSTELLATION_FIELD_MIN_STAGE_PX`, and these are its other sites.)
+ * (`CONSTELLATION_FIELD_MIN_STAGE_PX` is the same threshold the three
+ * candidate enumerators read; this is its fourth site.)
  */
 function anchorKeepoutPx(input: ConstellationInput): number {
-  return (input.stageWidth >= 1280
+  return (input.stageWidth >= CONSTELLATION_FIELD_MIN_STAGE_PX
     ? constellationKeepoutPx(input.stageWidth, input.stageHeight)
     : CONSTELLATION_RETICLE_PX / 2 + CONSTELLATION_ROUTE_CLEARANCE_PX)
     + CONSTELLATION_MIN_GAP_PX;
@@ -2308,7 +2398,7 @@ function* solveLayoutSteps(
   // Squeeze outer, gap inner. Compression is escalated only when NO candidate
   // at the current squeeze passes `hardValid` at either gap — never because a
   // leader could not be drawn, and never before the 16 px gap has been tried.
-  for (const squeeze of [1, 0.76, 0.56, 0.4, 0.16]) {
+  for (const squeeze of CONSTELLATION_SQUEEZE_LEVELS) {
     let seatedAtThisSqueeze = false;
     for (const gap of [CONSTELLATION_PREFERRED_GAP_PX, CONSTELLATION_MIN_GAP_PX]) {
       const candidates: Candidate[] = [];
@@ -2316,7 +2406,7 @@ function* solveLayoutSteps(
       // fits at this squeeze, the composition has to change and holding a seat
       // is no longer the question. They lead the list so a tie with a freshly
       // enumerated arrangement is settled in favour of standing still.
-      if (squeeze === 1) candidates.push(...alreadySeated);
+      if (squeeze.ratio === 1) candidates.push(...alreadySeated);
       const right = expandCandidate(input, panels, 'right', squeeze, gap);
       const left = expandCandidate(input, panels, 'left', squeeze, gap);
       if (right) candidates.push(right);
