@@ -12,7 +12,7 @@
 // while its semantics, its lens and its trace went null would empty the card as
 // it faded, which is a worse ending than the cut.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export interface InspectionExit {
   /** True while a card is on its way out. Handed to the overlay, which fades
@@ -60,5 +60,12 @@ export function useInspectionExit(exitMs: number): InspectionExit {
     }
     timer.current = null;
   }, []);
-  return { leaving, close, cancel };
+  // ⭐ ONE IDENTITY, or the hold defeats every memo under App. `close` and
+  // `cancel` are stable, but a fresh WRAPPER each render is just as fatal:
+  // App keys `clearCellSelection` on this object and `handleSelect` on that,
+  // so a new object per render meant a new `onSelect` per render — and
+  // `memo(CellGalaxy)`, `memo(NetworkColony)` and `memo(CellInspectionOverlay)`
+  // re-ran on every mempool tick, health poll and peers poll (report L6-1).
+  // `leaving` is the only member that moves, and it moves twice per exit.
+  return useMemo(() => ({ leaving, close, cancel }), [leaving, close, cancel]);
 }
