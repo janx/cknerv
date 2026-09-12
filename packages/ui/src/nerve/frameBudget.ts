@@ -138,14 +138,39 @@ export function beginFrameBudget(token?: number): void {
   estimateOvershootMs = 0;
 }
 
+/** The most a promise about a LATER frame may take out of this one.
+ *
+ *  A cross-frame reservation is held on every frame until the work it describes
+ *  finishes, and the panel solver's is its first-paint allowance — 8 of the 12
+ *  — held for as long as a full solve is pending, which for four instruments
+ *  is up to ~234 frames. At that size nothing of lower rank could ever satisfy
+ *  `committed + estimate <= FRAME_HEAVY_BUDGET_MS`, so every one of them
+ *  reached the frame it ran on through the three-frame starvation escape
+ *  instead: measured on the ledger, a block landing's drain moved from frame 2
+ *  to frame 12, its bridge from 6 to 21, and seven frames in two hundred went
+ *  over budget by rule.
+ *
+ *  Half the budget is the line because it is the line that keeps the OTHER
+ *  half spendable: a consumer whose own grain fits in 6 ms is admitted on the
+ *  frame it asks, and the escape goes back to being insurance. It costs the
+ *  announcing consumer nothing — `frameBudgetRemainingMs` never counted a
+ *  consumer's own reservation against it, so a held panel solve still gets its
+ *  8 ms on the frame it finally runs. */
+export const MAX_PENDING_RESERVATION_MS = FRAME_HEAVY_BUDGET_MS / 2;
+
 /** Keep room for a bounded cursor on following frames, before callbacks with
- * lower precedence can consume it. */
+ * lower precedence can consume it.
+ *
+ * ⚠️ NOT `reserveFrameBudget`: that one is a promise about THIS frame, made by
+ * the owner on behalf of a deadline consumer that has not asked yet, and it is
+ * released the moment that consumer spends. This one outlives the frame, and
+ * that is why it is capped. */
 export function announceFrameBudgetWork(
   consumer: FrameBudgetConsumer,
   estimateMs: number,
 ): void {
   pendingReservationMs[consumer] = Number.isFinite(estimateMs) && estimateMs > 0
-    ? Math.min(FRAME_HEAVY_BUDGET_MS, estimateMs)
+    ? Math.min(MAX_PENDING_RESERVATION_MS, estimateMs)
     : 0;
 }
 
