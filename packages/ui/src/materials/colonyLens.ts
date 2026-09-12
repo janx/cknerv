@@ -1467,6 +1467,7 @@ export function makeCohortLensMaterial(): THREE.ShaderMaterial {
     premultipliedAlpha: true,
     toneMapped: false,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
     uniforms: {
       uNoise: { value: makeMistNoiseTexture() },
       uLod: { value: COHORT_LENS_LOD },

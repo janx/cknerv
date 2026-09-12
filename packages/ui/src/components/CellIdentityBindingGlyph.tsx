@@ -222,6 +222,7 @@ export default function CellIdentityBindingGlyph({
                 depthWrite={false}
                 toneMapped={false}
                 side={THREE.DoubleSide}
+                forceSinglePass
               />
             </mesh>
             <mesh position={[0.31, 0, 0]} renderOrder={17}>
@@ -238,6 +239,7 @@ export default function CellIdentityBindingGlyph({
                 depthWrite={false}
                 toneMapped={false}
                 side={THREE.DoubleSide}
+                forceSinglePass
               />
             </mesh>
             <mesh
@@ -258,6 +260,7 @@ export default function CellIdentityBindingGlyph({
                 depthWrite={false}
                 toneMapped={false}
                 side={THREE.DoubleSide}
+                forceSinglePass
               />
             </mesh>
           </group>
@@ -275,6 +278,7 @@ export default function CellIdentityBindingGlyph({
           depthWrite={false}
           toneMapped={false}
           side={THREE.DoubleSide}
+          forceSinglePass
         />
       </mesh>
       <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={19}>
@@ -289,6 +293,7 @@ export default function CellIdentityBindingGlyph({
           depthWrite={false}
           toneMapped={false}
           side={THREE.DoubleSide}
+          forceSinglePass
         />
       </mesh>
     </group>

@@ -150,6 +150,7 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
     // colorspace_fragment include at the end of the fragment shader.
     toneMapped: false,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
     vertexShader: /* glsl */ `
       attribute vec2 aWave;
 

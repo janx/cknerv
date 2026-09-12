@@ -74,6 +74,7 @@ export default function CellSemanticOrbit({ cell, record, source }: {
                 depthWrite={false}
                 toneMapped={false}
                 side={THREE.DoubleSide}
+                forceSinglePass
               />
             </mesh>
             {composition.segments.map((segment) => (
@@ -95,6 +96,7 @@ export default function CellSemanticOrbit({ cell, record, source }: {
                   depthWrite={false}
                   toneMapped={false}
                   side={THREE.DoubleSide}
+                  forceSinglePass
                 />
               </mesh>
             ))}
@@ -119,6 +121,7 @@ export default function CellSemanticOrbit({ cell, record, source }: {
               depthWrite={false}
               toneMapped={false}
               side={THREE.DoubleSide}
+              forceSinglePass
             />
           </mesh>
         ) : null}

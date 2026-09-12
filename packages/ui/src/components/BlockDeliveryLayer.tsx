@@ -174,6 +174,7 @@ function makeHopBatchMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
     side: THREE.DoubleSide,
+    forceSinglePass: true,
   });
 }
 

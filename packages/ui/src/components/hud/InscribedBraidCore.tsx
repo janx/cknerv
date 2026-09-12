@@ -339,6 +339,11 @@ export default function InscribedBraidCore({
       opacity: 0.3,
       blending: THREE.NormalBlending,
       side: THREE.DoubleSide,
+      // ⚠️ The ribbon crosses itself under normal blending, so one pass trades
+      // back-faces-then-front-faces for index order. Eye-gated 2026-09-12; every
+      // other two-sided material in this tree is a flat facing or additive, where
+      // the two orders are the same picture.
+      forceSinglePass: true,
       depthWrite: false,
       toneMapped: false,
     });

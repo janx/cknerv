@@ -793,6 +793,7 @@ export function CkbNodeAnchor({
             transparent
             opacity={presentation.fillOpacity}
             side={THREE.DoubleSide}
+            forceSinglePass
             depthWrite={false}
             blending={THREE.AdditiveBlending}
             toneMapped={false}
