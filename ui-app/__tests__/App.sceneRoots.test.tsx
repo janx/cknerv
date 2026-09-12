@@ -270,13 +270,37 @@ describe('colony topology signature', () => {
     // ping onto 16 steps, while the adapter deliberately admits a
     // telemetry-only refresh whose own structural key excludes latency — so at
     // raw resolution the whole colony rebuilds on jitter, mid-flood.
+    //
+    // The step is also HELD: half a step of hysteresis, so a ping straddling a
+    // boundary stops re-keying the colony on alternate refreshes (L5-3). The
+    // held ring lives in a ref written during render, and the rule itself is
+    // `heldLatencyPlacementStep`, pinned by `peers.derive.test.ts`.
     const sig = APP_SOURCE.slice(
       APP_SOURCE.indexOf('const peersSig = useMemo('),
       APP_SOURCE.indexOf('const networkRoster ='),
     );
-    expect(sig).toContain('${p.node_id}|${latencyPlacementStep(p.latency_ms)}|${p.direction}|${p.version ?? \'\'}');
+    expect(sig).toContain('heldLatencyPlacementStep(p.latency_ms, held.get(p.node_id))');
+    expect(sig).toContain('${p.node_id}|${step}|${p.direction}|${p.version ?? \'\'}');
+    expect(sig).not.toContain('latencyPlacementStep(p.latency_ms)');
     expect(sig).not.toContain('p.latency_ms ??');
     expect(sig).not.toContain('best_known');
+  });
+
+  it('keys the sighted tier on what the crawl says, not on which round said it', () => {
+    // The server republishes the roster whenever `crawl_round` moves, without
+    // comparing content (L5-2), so the record's identity is a clock and not a
+    // fact: keying the topology on it rebuilt the whole colony once a minute.
+    // What the geometry and the mark read is the node id and the state
+    // (`stageSighted`, `sightedStop`) — and the card that prints freshness
+    // keeps reading the record itself.
+    const sig = memoBody('rosterSig');
+    expect(sig).toContain('networkRoster.entries.map((e) => `${e.node_id}|${e.state}`)');
+    expect(sig).not.toContain('crawl_round');
+    expect(sig).not.toContain('updated_at_ms');
+    const topology = memoBody('topology');
+    expect(topology).toContain('rosterSig');
+    expect(topology.slice(topology.indexOf('// eslint-disable-next-line')))
+      .not.toContain('networkRoster');
   });
 
   it('keys the producer tail on its key set, and on nothing a block moves', () => {

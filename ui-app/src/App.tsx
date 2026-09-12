@@ -49,7 +49,7 @@ import {
   deriveConsensusMemoryTraceEndpoints,
   deriveStreamHealthSummary,
   inferredTopology,
-  latencyPlacementStep,
+  heldLatencyPlacementStep,
   livePulseDepartureDelayS,
   CellGalaxy,
   CellGalaxyProvider,
@@ -1021,17 +1021,54 @@ export default function App({
   // topology on that refresh and the whole colony — flood, edges, clouds,
   // courier schedule — rebuilds for a move the ring cannot show. A ping that
   // crosses a step is a real move and still rebuilds.
+  //
+  // And the step a peer is PLACED on is held against jitter: a ping straddling
+  // a boundary crosses it on alternate refreshes, which re-keyed the colony
+  // every ~32 s for a 1.4 world-unit move (L5-3). `heldLatencyPlacementStep`
+  // releases only half a step past the boundary, so the ring the peer already
+  // stands on wins a tie with itself. The map is written during render and the
+  // function is idempotent in its held value, so a re-render reads back what
+  // it just wrote and answers the same.
+  const heldStepsRef = useRef<Map<string, number>>(new Map());
   const peersSig = useMemo(
-    () =>
-      peers
-        .map((p) => `${p.node_id}|${latencyPlacementStep(p.latency_ms)}|${p.direction}|${p.version ?? ''}`)
-        .join(';'),
+    () => {
+      const held = heldStepsRef.current;
+      const seen = new Set<string>();
+      const sig = peers
+        .map((p) => {
+          const step = heldLatencyPlacementStep(p.latency_ms, held.get(p.node_id));
+          held.set(p.node_id, step);
+          seen.add(p.node_id);
+          return `${p.node_id}|${step}|${p.direction}|${p.version ?? ''}`;
+        })
+        .join(';');
+      // A peer that left takes its ring with it: reconnecting is a new
+      // placement, not a resumed one.
+      for (const id of held.keys()) if (!seen.has(id)) held.delete(id);
+      return sig;
+    },
     [peers],
   );
   // The crawler's bounded roster stages the sighted tier. Its identity changes
   // only when a crawl round actually lands (the reducer replaces the record),
   // so keying on the reference rebuilds the colony per round, not per poll.
   const networkRoster = enrichmentConfig.enabled ? semanticsCache.networkRoster : null;
+  // …and the colony is keyed on what that record SAYS, not on the round it
+  // arrived in. The server republishes whenever `crawl_round` moves, without
+  // comparing content (L5-2), and the record's identity was the topology
+  // memo's key — so the whole colony (kNN scaffold, edge geometry, hit mesh,
+  // cohort plan, flood, courier schedule) rebuilt once a minute for a set that
+  // had not changed. Two fields decide the geometry and the mark: the node id
+  // it stages under, and the state that picks its stop (`stageSighted`,
+  // `sightedStop`). Everything else the crawler sends — freshness stamps,
+  // country, version — is read off `networkRoster` directly by the card that
+  // prints it, which still keys on the record.
+  const rosterSig = useMemo(
+    () => (networkRoster === null
+      ? ''
+      : networkRoster.entries.map((e) => `${e.node_id}|${e.state}`).join(';')),
+    [networkRoster],
+  );
   // The indexer's week on the same producers the chain's 240-block window
   // holds the last half hour of. Gated on the capability and not merely on the
   // slot, unlike the roster above, because this is the one record NOTHING in
@@ -1131,11 +1168,12 @@ export default function App({
         producerView?.staging,
       ),
     ),
-    // peers is read via the stable peersSig and the producer standings via
-    // producerKeysSig; keying on either directly would rebuild the geometry
-    // every poll / every block. localCkbPos is stably memoized (no churn).
+    // peers is read via the stable peersSig, the roster via rosterSig and the
+    // producer standings via producerKeysSig; keying on any of them directly
+    // would rebuild the geometry every poll / every crawl round / every block.
+    // localCkbPos is stably memoized (no churn).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peersSig, universeSeed, localNode?.id, localNode?.p2p_node_id, localCkbPos, networkRoster, producerKeysSig],
+    [peersSig, universeSeed, localNode?.id, localNode?.p2p_node_id, localCkbPos, rosterSig, producerKeysSig],
   );
   const cf = useMemo(
     // The producer of the block that FIRED THIS PULSE, carried by value on the

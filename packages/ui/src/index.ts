@@ -134,7 +134,7 @@ export * from './derives/networkFlood.derive';
 // Only the placement quantizer: a memo signature over the peer list has to
 // resolve a ping exactly as the annulus does, and this keeps the two on one
 // formula rather than copying the band constants out of the package.
-export { latencyPlacementStep } from './derives/peers.derive';
+export { heldLatencyPlacementStep, latencyPlacementStep } from './derives/peers.derive';
 export * from './derives/sceneView.derive';
 // The collapse and the node channel's own reading: the formatters beside them
 // are banner copy, and the callers outside this package ask two questions —

@@ -64,6 +64,32 @@ export function latencyPlacementStep(latencyMs: number | null | undefined): numb
   return Math.round(latencyToRadius01(latencyMs) * PEER_LATENCY_STEPS);
 }
 
+/** The same step, with the peer's LAST placed one held against jitter.
+ *
+ *  A step is 25 ms of the 0–`PEER_LATENCY_CAP_MS` range and the boundary sits
+ *  half a step from either centre, so a ping straddling one flips the step on
+ *  alternate telemetry refreshes — and the step is what the colony's memo key
+ *  is made of, so the whole colony (flood, edges, cohort plan, courier
+ *  schedule) was rebuilding every ~32 s for a mark that moves 1.4 world units
+ *  (L5-3). The placed step is therefore held until the reading is half a step
+ *  PAST the boundary — a full step from the centre it is standing on — which
+ *  is a deadband of ±25 ms about the held ring and no deadband at all for a
+ *  ping that really moved: past it the answer is the raw step, wherever the
+ *  reading landed.
+ *
+ *  Pure, and idempotent in `held`: re-holding what it just answered answers
+ *  the same, because a raw step is never more than half a step from its own
+ *  reading. That is what lets a render write the map it just read. */
+export function heldLatencyPlacementStep(
+  latencyMs: number | null | undefined,
+  held: number | undefined,
+): number {
+  const raw = latencyPlacementStep(latencyMs);
+  if (held === undefined || raw === held) return raw;
+  const exact = latencyToRadius01(latencyMs) * PEER_LATENCY_STEPS;
+  return Math.abs(exact - held) >= 1 ? raw : held;
+}
+
 /** Deterministic angle [0, 2π) from a node id — stable per peer. */
 export function peerAngle(nodeId: string): number {
   let h = 0;

@@ -685,6 +685,37 @@ export function sourceStatus(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+/** One crawl round. The server withholds a round it has already published, so
+ *  whatever reaches the reducer is news by contract — but "news" is a round
+ *  number, not a changed set, and the colony must tell those apart. */
+export function rosterReplace(
+  rows: readonly { node_id: string; state?: string }[],
+  crawlRound: number,
+): unknown {
+  return {
+    type: 'network_roster_replace',
+    network_roster: {
+      source: 'ckbadger',
+      as_of: { block: 100 + crawlRound, hash: `0x${(100 + crawlRound).toString(16)}` },
+      updated_at_ms: 1234567890000 + crawlRound * 60_000,
+      crawl_round: crawlRound,
+      truncated: false,
+      entries: rows.map((row) => ({
+        node_id: row.node_id,
+        addr: `/ip4/203.0.113.9/tcp/8115`,
+        state: row.state ?? 'reachable',
+        version: '0.209.0',
+        country: 'Unknown',
+        asn: 'Unknown',
+        last_reachable_ms: 1234567890000 + crawlRound * 60_000,
+        last_advertised_ms: 1234567890000 + crawlRound * 60_000,
+        last_observed_ms: 1234567890000 + crawlRound * 60_000,
+        latest_positive_observed_ms: 1234567890000 + crawlRound * 60_000,
+      })),
+    },
+  };
+}
+
 /** A record for one of the bootstrap snapshot's cells, anchored below the
  *  source's own anchor so the marker's visual state resolves. */
 export function cellSemantics(cellId: number): unknown {

@@ -61,6 +61,8 @@ import {
   propOf,
   pushSemantics,
   renderReasons,
+  rosterReplace,
+  peer,
   seedCaches,
   selectCell,
   sourceStatus,
@@ -94,6 +96,77 @@ afterEach(() => { cleanup(); resetHarness(); disableEnrichment(); });
 /** Every root a memo is supposed to hold. The dossier is only mounted with a
  *  card open, so it counts 0 either way when the contract holds. */
 const ROOTS = ['CellGalaxy', 'NetworkColony', 'CellInspectionOverlay'] as const;
+
+describe('the colony keys on what the roster says, not on the round it came in', () => {
+  const CRAWL = Array.from({ length: 24 }, (_, i) => ({
+    node_id: `QmCrawl${String(i).padStart(3, '0')}`,
+  }));
+
+  it('holds through a crawl round that names the same set', async () => {
+    enableEnrichment();
+    await mountApp();
+    await pushSemantics([sourceStatus()]);
+    await pushSemantics([rosterReplace(CRAWL, 1)]);
+    resetRenders();
+
+    for (let round = 2; round <= 4; round += 1) {
+      await pushSemantics([rosterReplace(CRAWL, round)]);
+    }
+
+    expect(renderReasons('NetworkColony').flat(), renderSummary())
+      .not.toContain('topology');
+    expect(renderCount('NetworkColony'), renderSummary()).toBe(0);
+  });
+
+  it('answers a round that changes what a node is', async () => {
+    enableEnrichment();
+    await mountApp();
+    await pushSemantics([sourceStatus()]);
+    await pushSemantics([rosterReplace(CRAWL, 1)]);
+    resetRenders();
+
+    // One row goes unreachable: a different tier, a different mark, and the
+    // scaffold's own cache key moves with it.
+    await pushSemantics([rosterReplace(
+      CRAWL.map((row, i) => (i === 3 ? { ...row, state: 'unreachable' } : row)),
+      2,
+    )]);
+    expect(renderReasons('NetworkColony').flat(), renderSummary())
+      .toContain('topology');
+
+    resetRenders();
+    // …and a row leaving the crawl entirely.
+    await pushSemantics([rosterReplace(CRAWL.slice(0, 20), 3)]);
+    expect(renderReasons('NetworkColony').flat(), renderSummary())
+      .toContain('topology');
+  });
+
+  it('holds through a ping jittering across a placement boundary', async () => {
+    // 12.5 ms is the boundary between the first two rings. The adapter admits
+    // a telemetry-only refresh about every 32 s, and this peer straddles it.
+    await mountApp();
+    await pushChain(peersPoll([peer(1, 11), peer(2, 90), peer(3, 140)]));
+    resetRenders();
+
+    for (const ms of [13, 11.5, 14, 10.5, 13.5, 12]) {
+      await pushChain(peersPoll([peer(1, ms), peer(2, 90), peer(3, 140)]));
+    }
+
+    expect(renderReasons('NetworkColony').flat(), renderSummary())
+      .not.toContain('topology');
+    expect(renderCount('NetworkColony'), renderSummary()).toBe(0);
+  });
+
+  it('answers a ping that really moved a ring', async () => {
+    await mountApp();
+    await pushChain(peersPoll([peer(1, 11), peer(2, 90), peer(3, 140)]));
+    resetRenders();
+
+    await pushChain(peersPoll([peer(1, 240), peer(2, 90), peer(3, 140)]));
+    expect(renderReasons('NetworkColony').flat(), renderSummary())
+      .toContain('topology');
+  });
+});
 
 describe.each([
   ['at rest', null],

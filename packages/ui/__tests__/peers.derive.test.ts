@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   latencyToRadius01,
+  heldLatencyPlacementStep,
   latencyPlacementStep,
   PEER_LATENCY_CAP_MS,
   PEER_INNER_RADIUS,
@@ -61,6 +62,40 @@ describe('peers.derive', () => {
     expect(latencyToRadius01(undefined)).toBe(0.5);
     expect(latencyToRadius01(0)).toBe(0);
     expect(latencyToRadius01(100000)).toBe(1);
+  });
+
+  it('a held step moves only once a ping is half a step past the boundary', () => {
+    // The boundary between step 0 and step 1 is 12.5 ms (one step is 25).
+    // A ping jittering around it used to re-key the whole colony every
+    // telemetry refresh for a move of 1.4 world units (L5-3).
+    expect(latencyPlacementStep(10.5)).toBe(0);
+    expect(latencyPlacementStep(14.5)).toBe(1);
+    for (const ms of [10.5, 11, 12.4, 12.6, 13, 14.5]) {
+      expect(heldLatencyPlacementStep(ms, 0), `${ms} ms held at 0`).toBe(0);
+      expect(heldLatencyPlacementStep(ms, 1), `${ms} ms held at 1`).toBe(1);
+    }
+    // Half a step past the boundary IS the move, in both directions: a full
+    // step from the ring the peer is standing on.
+    expect(heldLatencyPlacementStep(25, 0)).toBe(1);
+    expect(heldLatencyPlacementStep(24.9, 0)).toBe(0);
+    expect(heldLatencyPlacementStep(25, 2)).toBe(1);
+    expect(heldLatencyPlacementStep(26, 2)).toBe(2);
+    // The innermost ring is half a ring wide, because the reading is clamped
+    // at zero: a peer held on ring 1 comes in only at the floor itself.
+    expect(heldLatencyPlacementStep(0, 1)).toBe(0);
+    expect(heldLatencyPlacementStep(0.1, 1)).toBe(1);
+    // A real jump lands where the raw reading says, not one step along.
+    expect(heldLatencyPlacementStep(380, 1)).toBe(latencyPlacementStep(380));
+    expect(heldLatencyPlacementStep(380, 15)).toBe(latencyPlacementStep(380));
+    // No held reading yet, and an unknown ping, both read as the raw step.
+    expect(heldLatencyPlacementStep(140, undefined)).toBe(latencyPlacementStep(140));
+    expect(heldLatencyPlacementStep(null, undefined)).toBe(latencyPlacementStep(null));
+    // Idempotent: re-holding what it just answered answers the same, which is
+    // what lets a render write the map it just read.
+    for (const ms of [0, 7, 12.6, 140, 190, 401]) {
+      const once = heldLatencyPlacementStep(ms, undefined);
+      expect(heldLatencyPlacementStep(ms, once)).toBe(once);
+    }
   });
 
   it('latencyPlacementStep resolves a ping onto the annulus, no finer', () => {
