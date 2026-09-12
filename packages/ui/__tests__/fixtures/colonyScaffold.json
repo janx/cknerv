@@ -1,0 +1,1069 @@
+{
+ "cases": [
+  {
+   "case": "ghosts only",
+   "seeds": [
+    {
+     "seed": 2654435761,
+     "nodes": 226,
+     "edges": 621,
+     "nodeDigest": "f0645d09e1ecff73",
+     "edgeDigest": "b150d1b3687a8cc9"
+    },
+    {
+     "seed": 2671213380,
+     "nodes": 233,
+     "edges": 621,
+     "nodeDigest": "dd3e93112a78212b",
+     "edgeDigest": "fb1974f7ca05583d"
+    },
+    {
+     "seed": 2687990999,
+     "nodes": 260,
+     "edges": 704,
+     "nodeDigest": "9ec0abd03a0e3db2",
+     "edgeDigest": "65079d40852459ee"
+    },
+    {
+     "seed": 2704768618,
+     "nodes": 228,
+     "edges": 633,
+     "nodeDigest": "4a16634f81971ddd",
+     "edgeDigest": "3776f5704a8afcbe"
+    },
+    {
+     "seed": 2721546237,
+     "nodes": 215,
+     "edges": 589,
+     "nodeDigest": "d0dd17affa597b5d",
+     "edgeDigest": "864a9fcd5d68346f"
+    },
+    {
+     "seed": 2738323856,
+     "nodes": 239,
+     "edges": 632,
+     "nodeDigest": "a6f397fc016dfd5e",
+     "edgeDigest": "83ad8d59adfbabff"
+    },
+    {
+     "seed": 2755101475,
+     "nodes": 262,
+     "edges": 715,
+     "nodeDigest": "b34661e3b00272b9",
+     "edgeDigest": "7cd572db665aa715"
+    },
+    {
+     "seed": 2771879094,
+     "nodes": 262,
+     "edges": 698,
+     "nodeDigest": "97b22fc290675afc",
+     "edgeDigest": "bcf94294e4057aaa"
+    },
+    {
+     "seed": 2788656713,
+     "nodes": 266,
+     "edges": 708,
+     "nodeDigest": "738bb79d000c5247",
+     "edgeDigest": "4a1e06cb1541fcc1"
+    },
+    {
+     "seed": 2805434332,
+     "nodes": 230,
+     "edges": 627,
+     "nodeDigest": "2907c3f1d8fa0753",
+     "edgeDigest": "dc85e6bf4b0ce655"
+    },
+    {
+     "seed": 2822211951,
+     "nodes": 236,
+     "edges": 618,
+     "nodeDigest": "e21824ca2ba3a48c",
+     "edgeDigest": "5b5a2038886b2c9a"
+    },
+    {
+     "seed": 2838989570,
+     "nodes": 216,
+     "edges": 562,
+     "nodeDigest": "f6ab1868428c212e",
+     "edgeDigest": "81503e7c108b08e6"
+    },
+    {
+     "seed": 2855767189,
+     "nodes": 214,
+     "edges": 583,
+     "nodeDigest": "a8ce7c0695b2ebb4",
+     "edgeDigest": "623c3c758ff113f7"
+    },
+    {
+     "seed": 2872544808,
+     "nodes": 261,
+     "edges": 714,
+     "nodeDigest": "9c848fd7c52c8309",
+     "edgeDigest": "23ee376152aa3c37"
+    },
+    {
+     "seed": 2889322427,
+     "nodes": 259,
+     "edges": 699,
+     "nodeDigest": "872a482fedefb16d",
+     "edgeDigest": "72497e717fecd753"
+    },
+    {
+     "seed": 2906100046,
+     "nodes": 257,
+     "edges": 681,
+     "nodeDigest": "4e591dc00549096a",
+     "edgeDigest": "1ef80937fb61dbd9"
+    },
+    {
+     "seed": 2922877665,
+     "nodes": 262,
+     "edges": 696,
+     "nodeDigest": "bbae3661e24e5b27",
+     "edgeDigest": "ee9d250a229b9fe4"
+    },
+    {
+     "seed": 2939655284,
+     "nodes": 242,
+     "edges": 659,
+     "nodeDigest": "7593ee93c5e3cfcd",
+     "edgeDigest": "60491d9aeaede400"
+    },
+    {
+     "seed": 2956432903,
+     "nodes": 261,
+     "edges": 704,
+     "nodeDigest": "98b52f22878b98c0",
+     "edgeDigest": "6c01a1e5cf32378f"
+    },
+    {
+     "seed": 2973210522,
+     "nodes": 242,
+     "edges": 655,
+     "nodeDigest": "c236a24a9273b7e8",
+     "edgeDigest": "bf8881fbacf1813d"
+    },
+    {
+     "seed": 2989988141,
+     "nodes": 270,
+     "edges": 723,
+     "nodeDigest": "92d5250656168168",
+     "edgeDigest": "3fca88eade39fcf4"
+    },
+    {
+     "seed": 3006765760,
+     "nodes": 229,
+     "edges": 624,
+     "nodeDigest": "24f07bc0ec8c122a",
+     "edgeDigest": "fd49cee028386ef2"
+    },
+    {
+     "seed": 3023543379,
+     "nodes": 262,
+     "edges": 698,
+     "nodeDigest": "30eb8e1eb6e3301c",
+     "edgeDigest": "77edfe5c3ff264c6"
+    },
+    {
+     "seed": 3040320998,
+     "nodes": 225,
+     "edges": 599,
+     "nodeDigest": "4f9211f8d61166da",
+     "edgeDigest": "d08793f9234dba0f"
+    },
+    {
+     "seed": 3057098617,
+     "nodes": 257,
+     "edges": 670,
+     "nodeDigest": "134fc5b9cdaedbfb",
+     "edgeDigest": "1c4d0458e3a6794a"
+    },
+    {
+     "seed": 3073876236,
+     "nodes": 269,
+     "edges": 722,
+     "nodeDigest": "b233eb4e04104c80",
+     "edgeDigest": "5a18e9507bea67ba"
+    },
+    {
+     "seed": 3090653855,
+     "nodes": 246,
+     "edges": 650,
+     "nodeDigest": "ed7737a9892fafc3",
+     "edgeDigest": "241a2b45d2d250eb"
+    },
+    {
+     "seed": 3107431474,
+     "nodes": 265,
+     "edges": 710,
+     "nodeDigest": "69b1903b66769c99",
+     "edgeDigest": "9e483d98f25b7b46"
+    },
+    {
+     "seed": 3124209093,
+     "nodes": 267,
+     "edges": 696,
+     "nodeDigest": "76aa3cf94fb51ddf",
+     "edgeDigest": "b81c608297ae4ce8"
+    },
+    {
+     "seed": 3140986712,
+     "nodes": 260,
+     "edges": 698,
+     "nodeDigest": "304cd6463ea11b64",
+     "edgeDigest": "56501d7a68a2602c"
+    },
+    {
+     "seed": 3157764331,
+     "nodes": 239,
+     "edges": 643,
+     "nodeDigest": "ca7a6729b86cce7b",
+     "edgeDigest": "c0dbeb70f7e49416"
+    },
+    {
+     "seed": 3174541950,
+     "nodes": 258,
+     "edges": 687,
+     "nodeDigest": "2adca5fb454ca749",
+     "edgeDigest": "f523226e43f0b44c"
+    },
+    {
+     "seed": 3191319569,
+     "nodes": 260,
+     "edges": 701,
+     "nodeDigest": "fd2a5f68c792be12",
+     "edgeDigest": "0e0396ab7c0052cd"
+    },
+    {
+     "seed": 3208097188,
+     "nodes": 252,
+     "edges": 688,
+     "nodeDigest": "978690a17d0eb49f",
+     "edgeDigest": "50c0b6a4c6d2d042"
+    },
+    {
+     "seed": 3224874807,
+     "nodes": 226,
+     "edges": 597,
+     "nodeDigest": "631ee0302cdf1baa",
+     "edgeDigest": "9089bf1b88d60e11"
+    },
+    {
+     "seed": 3241652426,
+     "nodes": 228,
+     "edges": 595,
+     "nodeDigest": "f55938c0ac24aed2",
+     "edgeDigest": "0154cecaf2facc70"
+    },
+    {
+     "seed": 3258430045,
+     "nodes": 241,
+     "edges": 653,
+     "nodeDigest": "bf03ee31cac407a3",
+     "edgeDigest": "90fafc44a0bfdb2a"
+    },
+    {
+     "seed": 3275207664,
+     "nodes": 258,
+     "edges": 682,
+     "nodeDigest": "c30a1d2292dba844",
+     "edgeDigest": "4f942af428afd322"
+    },
+    {
+     "seed": 3291985283,
+     "nodes": 257,
+     "edges": 688,
+     "nodeDigest": "cc98d7675ae4c61d",
+     "edgeDigest": "5adec73b5cb4fac1"
+    },
+    {
+     "seed": 3308762902,
+     "nodes": 213,
+     "edges": 575,
+     "nodeDigest": "6f4683a6bf5bfde4",
+     "edgeDigest": "c3dfc43a50486e48"
+    },
+    {
+     "seed": 3325540521,
+     "nodes": 234,
+     "edges": 619,
+     "nodeDigest": "531d9e552272b107",
+     "edgeDigest": "071072e3ccf512f1"
+    },
+    {
+     "seed": 3342318140,
+     "nodes": 221,
+     "edges": 582,
+     "nodeDigest": "89f30113911ce1e1",
+     "edgeDigest": "ad826b8460e0a7a6"
+    },
+    {
+     "seed": 3359095759,
+     "nodes": 266,
+     "edges": 706,
+     "nodeDigest": "c798804dc9d766cb",
+     "edgeDigest": "b5abddb3b284f79d"
+    },
+    {
+     "seed": 3375873378,
+     "nodes": 270,
+     "edges": 711,
+     "nodeDigest": "f60b790b365113c9",
+     "edgeDigest": "3d670c6dc2190f03"
+    },
+    {
+     "seed": 3392650997,
+     "nodes": 211,
+     "edges": 586,
+     "nodeDigest": "6416f1c1c659834b",
+     "edgeDigest": "b52cc4454f89451f"
+    },
+    {
+     "seed": 3409428616,
+     "nodes": 217,
+     "edges": 582,
+     "nodeDigest": "3b4a34669b34cb5c",
+     "edgeDigest": "17c92788220789a6"
+    },
+    {
+     "seed": 3426206235,
+     "nodes": 234,
+     "edges": 627,
+     "nodeDigest": "152a162fb61a28bd",
+     "edgeDigest": "b882272c9d3fe2ae"
+    },
+    {
+     "seed": 3442983854,
+     "nodes": 232,
+     "edges": 630,
+     "nodeDigest": "f884283218ca8c90",
+     "edgeDigest": "15bf560988ce40eb"
+    },
+    {
+     "seed": 3459761473,
+     "nodes": 246,
+     "edges": 662,
+     "nodeDigest": "b760196d7de24e13",
+     "edgeDigest": "0651559c46c38bba"
+    },
+    {
+     "seed": 3476539092,
+     "nodes": 239,
+     "edges": 643,
+     "nodeDigest": "b555cdec568a841e",
+     "edgeDigest": "b217172dd2b3cc2b"
+    }
+   ]
+  },
+  {
+   "case": "a patchy crawl and a measured belt",
+   "seeds": [
+    {
+     "seed": 2654435761,
+     "nodes": 238,
+     "edges": 682,
+     "nodeDigest": "51f09bcf5b7b913d",
+     "edgeDigest": "195a8c94186d444a"
+    },
+    {
+     "seed": 2671213380,
+     "nodes": 245,
+     "edges": 704,
+     "nodeDigest": "d8e644adb448fe8b",
+     "edgeDigest": "bfbb9be6ab19f608"
+    },
+    {
+     "seed": 2687990999,
+     "nodes": 272,
+     "edges": 793,
+     "nodeDigest": "0972f4151cb78317",
+     "edgeDigest": "baaee84a7e279c0c"
+    },
+    {
+     "seed": 2704768618,
+     "nodes": 240,
+     "edges": 698,
+     "nodeDigest": "841e63a29f2759a4",
+     "edgeDigest": "f4f5a7d50855dbe3"
+    },
+    {
+     "seed": 2721546237,
+     "nodes": 232,
+     "edges": 659,
+     "nodeDigest": "74ef5f1e8ff42da0",
+     "edgeDigest": "b3b9233aad68c9dc"
+    },
+    {
+     "seed": 2738323856,
+     "nodes": 251,
+     "edges": 719,
+     "nodeDigest": "5699739ae55da054",
+     "edgeDigest": "7c309f8e257ed104"
+    },
+    {
+     "seed": 2755101475,
+     "nodes": 274,
+     "edges": 797,
+     "nodeDigest": "6099219022a3fad2",
+     "edgeDigest": "4515da609f550836"
+    },
+    {
+     "seed": 2771879094,
+     "nodes": 274,
+     "edges": 793,
+     "nodeDigest": "475895509743118e",
+     "edgeDigest": "70f13f37a5a72d35"
+    },
+    {
+     "seed": 2788656713,
+     "nodes": 278,
+     "edges": 805,
+     "nodeDigest": "5ee2bcd31813f275",
+     "edgeDigest": "18b27c817ee489d3"
+    },
+    {
+     "seed": 2805434332,
+     "nodes": 242,
+     "edges": 690,
+     "nodeDigest": "366104145a88ce42",
+     "edgeDigest": "ed256ca8d0c9d1de"
+    },
+    {
+     "seed": 2822211951,
+     "nodes": 248,
+     "edges": 700,
+     "nodeDigest": "1ca9302305c6c3c1",
+     "edgeDigest": "e5d731411f7d007b"
+    },
+    {
+     "seed": 2838989570,
+     "nodes": 232,
+     "edges": 652,
+     "nodeDigest": "bfab690266089a84",
+     "edgeDigest": "0f9a0d7253ae1800"
+    },
+    {
+     "seed": 2855767189,
+     "nodes": 232,
+     "edges": 660,
+     "nodeDigest": "84fe73bd11036663",
+     "edgeDigest": "a0b6c980f864ba3e"
+    },
+    {
+     "seed": 2872544808,
+     "nodes": 273,
+     "edges": 792,
+     "nodeDigest": "d284eb2e681af11c",
+     "edgeDigest": "652203d3c0d0075d"
+    },
+    {
+     "seed": 2889322427,
+     "nodes": 271,
+     "edges": 773,
+     "nodeDigest": "bd4eb70370338945",
+     "edgeDigest": "643fa283a3c26169"
+    },
+    {
+     "seed": 2906100046,
+     "nodes": 269,
+     "edges": 771,
+     "nodeDigest": "28fdd379fb2a67f7",
+     "edgeDigest": "00ec4a294e1bda53"
+    },
+    {
+     "seed": 2922877665,
+     "nodes": 274,
+     "edges": 774,
+     "nodeDigest": "da438fa98c1f0b67",
+     "edgeDigest": "88d6fee8ee2afdb6"
+    },
+    {
+     "seed": 2939655284,
+     "nodes": 254,
+     "edges": 733,
+     "nodeDigest": "5a3f13c82b214146",
+     "edgeDigest": "ab2c75e0cf3fb9a2"
+    },
+    {
+     "seed": 2956432903,
+     "nodes": 273,
+     "edges": 782,
+     "nodeDigest": "838c261d3a15d22f",
+     "edgeDigest": "44807c6ae47f0c74"
+    },
+    {
+     "seed": 2973210522,
+     "nodes": 254,
+     "edges": 729,
+     "nodeDigest": "1c4a454d1659757b",
+     "edgeDigest": "b7861f59aa6971bb"
+    },
+    {
+     "seed": 2989988141,
+     "nodes": 282,
+     "edges": 805,
+     "nodeDigest": "fba2e51510d12b57",
+     "edgeDigest": "c77ef6ca7f7e7b1c"
+    },
+    {
+     "seed": 3006765760,
+     "nodes": 241,
+     "edges": 691,
+     "nodeDigest": "479bc80bded25b05",
+     "edgeDigest": "60418c98c862e56a"
+    },
+    {
+     "seed": 3023543379,
+     "nodes": 274,
+     "edges": 785,
+     "nodeDigest": "51d2a361f1da25d7",
+     "edgeDigest": "ec5efd7b547b8725"
+    },
+    {
+     "seed": 3040320998,
+     "nodes": 237,
+     "edges": 664,
+     "nodeDigest": "2bdafb5cc858715e",
+     "edgeDigest": "1e1ea7ca4912d29c"
+    },
+    {
+     "seed": 3057098617,
+     "nodes": 269,
+     "edges": 762,
+     "nodeDigest": "ca90c60b80929f5d",
+     "edgeDigest": "bdea5bb662323e94"
+    },
+    {
+     "seed": 3073876236,
+     "nodes": 281,
+     "edges": 811,
+     "nodeDigest": "1619451c7048390e",
+     "edgeDigest": "414d634e05306ec8"
+    },
+    {
+     "seed": 3090653855,
+     "nodes": 258,
+     "edges": 740,
+     "nodeDigest": "7bb1aa36bbc8c62c",
+     "edgeDigest": "b8e76feb13b05d25"
+    },
+    {
+     "seed": 3107431474,
+     "nodes": 277,
+     "edges": 793,
+     "nodeDigest": "92a00e2e4f7e398c",
+     "edgeDigest": "faa003faaa8b5ee8"
+    },
+    {
+     "seed": 3124209093,
+     "nodes": 279,
+     "edges": 787,
+     "nodeDigest": "6026438d58033b2b",
+     "edgeDigest": "fbcf97b95616b76f"
+    },
+    {
+     "seed": 3140986712,
+     "nodes": 272,
+     "edges": 774,
+     "nodeDigest": "a1293f2b68e35695",
+     "edgeDigest": "998e8db79c319f35"
+    },
+    {
+     "seed": 3157764331,
+     "nodes": 251,
+     "edges": 728,
+     "nodeDigest": "161b45ae523a4368",
+     "edgeDigest": "e0bf419ade497858"
+    },
+    {
+     "seed": 3174541950,
+     "nodes": 270,
+     "edges": 773,
+     "nodeDigest": "7a94b15f3b760f25",
+     "edgeDigest": "a425a1d488925f66"
+    },
+    {
+     "seed": 3191319569,
+     "nodes": 272,
+     "edges": 771,
+     "nodeDigest": "a95eb929e5c6d34b",
+     "edgeDigest": "a520274a2867f7dc"
+    },
+    {
+     "seed": 3208097188,
+     "nodes": 264,
+     "edges": 763,
+     "nodeDigest": "b6eccf64957e8a62",
+     "edgeDigest": "05daf5abaac6b2a1"
+    },
+    {
+     "seed": 3224874807,
+     "nodes": 238,
+     "edges": 668,
+     "nodeDigest": "d0894f298d5ef1cb",
+     "edgeDigest": "34c2edc4f34f3716"
+    },
+    {
+     "seed": 3241652426,
+     "nodes": 240,
+     "edges": 681,
+     "nodeDigest": "6de8bdc1aec5423b",
+     "edgeDigest": "17cfedab684d2591"
+    },
+    {
+     "seed": 3258430045,
+     "nodes": 253,
+     "edges": 722,
+     "nodeDigest": "a5701d23fd88c86d",
+     "edgeDigest": "6e517e9d8289a4e7"
+    },
+    {
+     "seed": 3275207664,
+     "nodes": 270,
+     "edges": 763,
+     "nodeDigest": "1bd84fb512b1546f",
+     "edgeDigest": "cd399ac6d7e53af0"
+    },
+    {
+     "seed": 3291985283,
+     "nodes": 269,
+     "edges": 779,
+     "nodeDigest": "7c679c2902c2a4ff",
+     "edgeDigest": "6037742fab742b39"
+    },
+    {
+     "seed": 3308762902,
+     "nodes": 232,
+     "edges": 647,
+     "nodeDigest": "6d160dcc2da22fde",
+     "edgeDigest": "b696743a575f8e7c"
+    },
+    {
+     "seed": 3325540521,
+     "nodes": 246,
+     "edges": 695,
+     "nodeDigest": "a02b6ae30f89c8a1",
+     "edgeDigest": "27cdb3648fb8850a"
+    },
+    {
+     "seed": 3342318140,
+     "nodes": 233,
+     "edges": 644,
+     "nodeDigest": "0a317a083d8f17e2",
+     "edgeDigest": "93856abd4ac360f3"
+    },
+    {
+     "seed": 3359095759,
+     "nodes": 278,
+     "edges": 799,
+     "nodeDigest": "35c6a694cca378d2",
+     "edgeDigest": "c726d012a9e3f340"
+    },
+    {
+     "seed": 3375873378,
+     "nodes": 282,
+     "edges": 800,
+     "nodeDigest": "3ec0a7bbd4bdc5a1",
+     "edgeDigest": "04e9f38f2b851bdd"
+    },
+    {
+     "seed": 3392650997,
+     "nodes": 232,
+     "edges": 665,
+     "nodeDigest": "c0754d0032d40d9a",
+     "edgeDigest": "ca2c18bd24ef6303"
+    },
+    {
+     "seed": 3409428616,
+     "nodes": 232,
+     "edges": 659,
+     "nodeDigest": "594d0360c22f9e7e",
+     "edgeDigest": "63d39ea044896dbe"
+    },
+    {
+     "seed": 3426206235,
+     "nodes": 246,
+     "edges": 696,
+     "nodeDigest": "ea7fa1ab71981245",
+     "edgeDigest": "136750121284a978"
+    },
+    {
+     "seed": 3442983854,
+     "nodes": 244,
+     "edges": 708,
+     "nodeDigest": "1d1fcf2464607d0a",
+     "edgeDigest": "abaa70afe33dc299"
+    },
+    {
+     "seed": 3459761473,
+     "nodes": 258,
+     "edges": 731,
+     "nodeDigest": "daa981b4fb52f50e",
+     "edgeDigest": "88be618a2c0387e0"
+    },
+    {
+     "seed": 3476539092,
+     "nodes": 251,
+     "edges": 713,
+     "nodeDigest": "569ec305e95d25df",
+     "edgeDigest": "1187c3cd1c25d58b"
+    }
+   ]
+  },
+  {
+   "case": "a full crawl with seven cohorts beside it",
+   "seeds": [
+    {
+     "seed": 2654435761,
+     "nodes": 276,
+     "edges": 801,
+     "nodeDigest": "f40d3c8a037d92dc",
+     "edgeDigest": "c589a367d1669add"
+    },
+    {
+     "seed": 2671213380,
+     "nodes": 276,
+     "edges": 792,
+     "nodeDigest": "38207bd92b75e243",
+     "edgeDigest": "76f76f7df7d71b07"
+    },
+    {
+     "seed": 2687990999,
+     "nodes": 276,
+     "edges": 808,
+     "nodeDigest": "34667fba7bd07fc0",
+     "edgeDigest": "5d051c2f3a14cdbd"
+    },
+    {
+     "seed": 2704768618,
+     "nodes": 276,
+     "edges": 808,
+     "nodeDigest": "7b88e325561a316f",
+     "edgeDigest": "560bc75b628b86ad"
+    },
+    {
+     "seed": 2721546237,
+     "nodes": 276,
+     "edges": 803,
+     "nodeDigest": "a44f709ab13ee86c",
+     "edgeDigest": "73c177f322dbe4ad"
+    },
+    {
+     "seed": 2738323856,
+     "nodes": 276,
+     "edges": 794,
+     "nodeDigest": "17e648cab7d074a4",
+     "edgeDigest": "7ef7fc30f0b6ba9e"
+    },
+    {
+     "seed": 2755101475,
+     "nodes": 276,
+     "edges": 809,
+     "nodeDigest": "7e34da4685826ca0",
+     "edgeDigest": "db7131e21ac839c8"
+    },
+    {
+     "seed": 2771879094,
+     "nodes": 276,
+     "edges": 798,
+     "nodeDigest": "e5d5d90c4b2da41a",
+     "edgeDigest": "02f43e28cbe22e7e"
+    },
+    {
+     "seed": 2788656713,
+     "nodes": 278,
+     "edges": 802,
+     "nodeDigest": "d9e6b657f9f46e39",
+     "edgeDigest": "4a0e40302a28aa6e"
+    },
+    {
+     "seed": 2805434332,
+     "nodes": 276,
+     "edges": 798,
+     "nodeDigest": "cc8a064491cdd35a",
+     "edgeDigest": "d5088f534636fec9"
+    },
+    {
+     "seed": 2822211951,
+     "nodes": 276,
+     "edges": 786,
+     "nodeDigest": "e96a0a3fd87d8dc1",
+     "edgeDigest": "046a3303bb115b21"
+    },
+    {
+     "seed": 2838989570,
+     "nodes": 276,
+     "edges": 786,
+     "nodeDigest": "284994be5ee33350",
+     "edgeDigest": "f5b255cb73af0941"
+    },
+    {
+     "seed": 2855767189,
+     "nodes": 276,
+     "edges": 799,
+     "nodeDigest": "8dfe0d8914772eef",
+     "edgeDigest": "f72e5247451b9a59"
+    },
+    {
+     "seed": 2872544808,
+     "nodes": 276,
+     "edges": 803,
+     "nodeDigest": "2cf92ca42f5bc74a",
+     "edgeDigest": "90b5cfcc40a87dfa"
+    },
+    {
+     "seed": 2889322427,
+     "nodes": 276,
+     "edges": 798,
+     "nodeDigest": "08712b817b1dc26b",
+     "edgeDigest": "61e53653d2810de1"
+    },
+    {
+     "seed": 2906100046,
+     "nodes": 276,
+     "edges": 790,
+     "nodeDigest": "a8f2e5ba6adc1e30",
+     "edgeDigest": "1ceff080f7c2de6e"
+    },
+    {
+     "seed": 2922877665,
+     "nodes": 276,
+     "edges": 789,
+     "nodeDigest": "0e42650d4b3ae3f3",
+     "edgeDigest": "cdbeb3b8ecbcc62a"
+    },
+    {
+     "seed": 2939655284,
+     "nodes": 276,
+     "edges": 802,
+     "nodeDigest": "b8e32300d05068fa",
+     "edgeDigest": "f73b1910220736aa"
+    },
+    {
+     "seed": 2956432903,
+     "nodes": 276,
+     "edges": 790,
+     "nodeDigest": "efd023c67ac9aff8",
+     "edgeDigest": "a33a94aaedf7b834"
+    },
+    {
+     "seed": 2973210522,
+     "nodes": 276,
+     "edges": 796,
+     "nodeDigest": "af1372c403e05fe2",
+     "edgeDigest": "0a5dee308907017e"
+    },
+    {
+     "seed": 2989988141,
+     "nodes": 282,
+     "edges": 808,
+     "nodeDigest": "9cf8fbec193b558e",
+     "edgeDigest": "645617753e42a08b"
+    },
+    {
+     "seed": 3006765760,
+     "nodes": 276,
+     "edges": 794,
+     "nodeDigest": "695ebfee4bc48728",
+     "edgeDigest": "89fb3713e0ec9ed9"
+    },
+    {
+     "seed": 3023543379,
+     "nodes": 276,
+     "edges": 788,
+     "nodeDigest": "981d7502bf672220",
+     "edgeDigest": "ba577ba8122dc626"
+    },
+    {
+     "seed": 3040320998,
+     "nodes": 276,
+     "edges": 780,
+     "nodeDigest": "4e090d8766bc9619",
+     "edgeDigest": "3c77e72feb29e4a1"
+    },
+    {
+     "seed": 3057098617,
+     "nodes": 276,
+     "edges": 778,
+     "nodeDigest": "acf995c6c5545658",
+     "edgeDigest": "3cf255a1964f9e2b"
+    },
+    {
+     "seed": 3073876236,
+     "nodes": 281,
+     "edges": 814,
+     "nodeDigest": "113176337ab4a3c5",
+     "edgeDigest": "f3180be6436a7450"
+    },
+    {
+     "seed": 3090653855,
+     "nodes": 276,
+     "edges": 785,
+     "nodeDigest": "7d04c172af0b58d0",
+     "edgeDigest": "284c61ed48fa26fb"
+    },
+    {
+     "seed": 3107431474,
+     "nodes": 277,
+     "edges": 794,
+     "nodeDigest": "82e17da97bb890c3",
+     "edgeDigest": "083a03f9368cb97b"
+    },
+    {
+     "seed": 3124209093,
+     "nodes": 279,
+     "edges": 790,
+     "nodeDigest": "1fad2aba20c963f0",
+     "edgeDigest": "4fa2b8feb49f2510"
+    },
+    {
+     "seed": 3140986712,
+     "nodes": 276,
+     "edges": 791,
+     "nodeDigest": "f1c1c6c212053bdc",
+     "edgeDigest": "0cbbb08997057693"
+    },
+    {
+     "seed": 3157764331,
+     "nodes": 276,
+     "edges": 793,
+     "nodeDigest": "0b7529021e0c0510",
+     "edgeDigest": "62ea40877e6afe31"
+    },
+    {
+     "seed": 3174541950,
+     "nodes": 276,
+     "edges": 787,
+     "nodeDigest": "a628f0c4a66da132",
+     "edgeDigest": "453309571be02dcd"
+    },
+    {
+     "seed": 3191319569,
+     "nodes": 276,
+     "edges": 792,
+     "nodeDigest": "8f50259104674db7",
+     "edgeDigest": "c6ec62629b6ed7f8"
+    },
+    {
+     "seed": 3208097188,
+     "nodes": 276,
+     "edges": 799,
+     "nodeDigest": "74f5de7811d2de8e",
+     "edgeDigest": "08a5bc7ff9c830d9"
+    },
+    {
+     "seed": 3224874807,
+     "nodes": 276,
+     "edges": 780,
+     "nodeDigest": "421eadebe617dc75",
+     "edgeDigest": "b7364461cb4c70fb"
+    },
+    {
+     "seed": 3241652426,
+     "nodes": 276,
+     "edges": 786,
+     "nodeDigest": "59a776308a49c926",
+     "edgeDigest": "c5782f39f4e8c503"
+    },
+    {
+     "seed": 3258430045,
+     "nodes": 276,
+     "edges": 793,
+     "nodeDigest": "2839c3ca08bd4590",
+     "edgeDigest": "46c9cd456bfee7df"
+    },
+    {
+     "seed": 3275207664,
+     "nodes": 276,
+     "edges": 782,
+     "nodeDigest": "aac223c1e1e4cad3",
+     "edgeDigest": "d9b9721e8c864ca8"
+    },
+    {
+     "seed": 3291985283,
+     "nodes": 276,
+     "edges": 792,
+     "nodeDigest": "5822f49f615df651",
+     "edgeDigest": "3dac982a310d4de8"
+    },
+    {
+     "seed": 3308762902,
+     "nodes": 276,
+     "edges": 778,
+     "nodeDigest": "228f53e8ba570ffa",
+     "edgeDigest": "992c93d423698a1e"
+    },
+    {
+     "seed": 3325540521,
+     "nodes": 276,
+     "edges": 790,
+     "nodeDigest": "81e59f406ed89bca",
+     "edgeDigest": "9b9f9512af280500"
+    },
+    {
+     "seed": 3342318140,
+     "nodes": 276,
+     "edges": 780,
+     "nodeDigest": "3a4456d6e3ef0f9c",
+     "edgeDigest": "fd219106d6e72b44"
+    },
+    {
+     "seed": 3359095759,
+     "nodes": 278,
+     "edges": 801,
+     "nodeDigest": "db2cc5653df3ea23",
+     "edgeDigest": "f30f930a577c802c"
+    },
+    {
+     "seed": 3375873378,
+     "nodes": 282,
+     "edges": 798,
+     "nodeDigest": "f9bc24c23296f0c0",
+     "edgeDigest": "408549ebc64fe959"
+    },
+    {
+     "seed": 3392650997,
+     "nodes": 276,
+     "edges": 804,
+     "nodeDigest": "9f11930cb6517f46",
+     "edgeDigest": "fd26d3a2214bb154"
+    },
+    {
+     "seed": 3409428616,
+     "nodes": 276,
+     "edges": 795,
+     "nodeDigest": "c3677aac9612ddda",
+     "edgeDigest": "4a6a6fd490ccd3aa"
+    },
+    {
+     "seed": 3426206235,
+     "nodes": 276,
+     "edges": 786,
+     "nodeDigest": "ce5f024913814077",
+     "edgeDigest": "bcf3da3be3fb346d"
+    },
+    {
+     "seed": 3442983854,
+     "nodes": 276,
+     "edges": 806,
+     "nodeDigest": "f982d42c9c2fcf26",
+     "edgeDigest": "dabb70530f6801f5"
+    },
+    {
+     "seed": 3459761473,
+     "nodes": 276,
+     "edges": 789,
+     "nodeDigest": "c0091eab2ad5277d",
+     "edgeDigest": "e799deba1556de14"
+    },
+    {
+     "seed": 3476539092,
+     "nodes": 276,
+     "edges": 787,
+     "nodeDigest": "c9dfd92ac8c696e0",
+     "edgeDigest": "4bd2d57cea9120fe"
+    }
+   ]
+  }
+ ]
+}

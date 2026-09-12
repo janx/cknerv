@@ -756,14 +756,11 @@ function inferredScaffold(
 
   // kNN base degree over the scaffold.
   const rng = mulberry32((seed ^ 0x85ebca77) >>> 0);
-  const kNearestInf = (localI: number, k: number): number[] => {
-    const ds: { j: number; d: number }[] = [];
-    for (let j = 0; j < nodes.length; j++) if (j !== localI) ds.push({ j, d: dist2(nodes[localI].pos, nodes[j].pos) });
-    ds.sort((a, b) => a.d - b.d);
-    return ds.slice(0, k).map((o) => o.j);
-  };
+  const grid = buildColonyScaffoldGrid(nodes);
+  const nearest = new Int32Array(COLONY_KNN);
   for (let i = 0; i < nodes.length; i++) {
-    for (const j of kNearestInf(i, COLONY_KNN)) add(i, j, 'inferred');
+    const found = colonyNearest(grid, nodes, i, COLONY_KNN, nearest);
+    for (let n = 0; n < found; n++) add(i, nearest[n], 'inferred');
   }
   // Long-range small-world links.
   for (let i = 0; i < nodes.length; i++) {
@@ -779,6 +776,153 @@ function inferredScaffold(
   scaffoldCacheAttestedKey = attestedCacheKey;
   scaffoldCache = { nodes, edges, ghostCount };
   return scaffoldCache;
+}
+
+// ── the scaffold's nearest-neighbour pass ────────────────────────────
+//
+// Every node of the colony takes an edge to its `COLONY_KNN` nearest, and the
+// pass used to answer that by pushing V_s − 1 `{ j, d }` objects and running a
+// full comparator sort PER NODE — 68,906 objects and about 554,000 comparisons
+// at the live V_s = 263, inside the React render that re-keys the colony
+// (L5-1). The answer is the same, read off a uniform bucket grid instead.
+//
+// Two things make it the SAME answer and both are load-bearing:
+//
+//  1. the order. The sort was `(a, b) => a.d - b.d` and V8's sort is stable, so
+//     equal distances came back in ascending index order. The slots below admit
+//     a candidate on `d` ascending, then INDEX ascending, which is a total
+//     order over distinct indices — so the k smallest under it are one set in
+//     one order, whatever order the buckets are walked in.
+//  2. the reach. After every bucket within Chebyshev ring `r` of the query's
+//     own bucket has been read, an unread node differs from the query by at
+//     least `r × COLONY_SCAFFOLD_BUCKET` on x or z (the query stands somewhere
+//     inside its own bucket, so the searched span reaches at least that far
+//     past it on both sides). The bucketing is on XZ only and `dist2` is 3D,
+//     and a 3D distance is never smaller than its XZ part — so `r × bucket` is
+//     a true floor on what is still out there, and the walk widens until the
+//     k-th best is inside it (or until it has read the whole grid).
+
+/** Bucket edge. Twice the scatter's own minimum spacing, so a bucket holds a
+ *  handful of ghosts rather than one or hundreds. */
+export const COLONY_SCAFFOLD_BUCKET = 2 * COLONY_MIN_SPACING;
+
+/** Bucketed XZ index over a node list, in CSR form: `items` holds every node
+ *  index grouped by bucket, `start` says where each bucket's group begins.
+ *  Built once per scaffold build; the pass allocates nothing per node. */
+export interface ColonyScaffoldGrid {
+  readonly minX: number;
+  readonly minZ: number;
+  readonly cols: number;
+  readonly rows: number;
+  readonly start: Int32Array;
+  readonly items: Int32Array;
+  /** The pass's own distance slots, held here so a build of V_s nodes
+   *  allocates once rather than once per node. Grown if a caller wants a
+   *  larger k than the last did. */
+  best: Float64Array;
+}
+
+export function buildColonyScaffoldGrid(
+  nodes: readonly NetworkNode[],
+): ColonyScaffoldGrid {
+  const n = nodes.length;
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = nodes[i].pos;
+    if (p[0] < minX) minX = p[0];
+    if (p[0] > maxX) maxX = p[0];
+    if (p[2] < minZ) minZ = p[2];
+    if (p[2] > maxZ) maxZ = p[2];
+  }
+  if (n === 0) {
+    return {
+      minX: 0, minZ: 0, cols: 1, rows: 1,
+      start: new Int32Array(2), items: new Int32Array(0),
+      best: new Float64Array(COLONY_KNN),
+    };
+  }
+  const cols = Math.max(1, Math.floor((maxX - minX) / COLONY_SCAFFOLD_BUCKET) + 1);
+  const rows = Math.max(1, Math.floor((maxZ - minZ) / COLONY_SCAFFOLD_BUCKET) + 1);
+  const cellOf = (i: number): number => {
+    const p = nodes[i].pos;
+    const cx = Math.min(cols - 1, Math.floor((p[0] - minX) / COLONY_SCAFFOLD_BUCKET));
+    const cz = Math.min(rows - 1, Math.floor((p[2] - minZ) / COLONY_SCAFFOLD_BUCKET));
+    return cz * cols + cx;
+  };
+  const start = new Int32Array(cols * rows + 1);
+  for (let i = 0; i < n; i++) start[cellOf(i) + 1] += 1;
+  for (let c = 0; c < cols * rows; c++) start[c + 1] += start[c];
+  const cursor = start.slice(0, cols * rows);
+  const items = new Int32Array(n);
+  for (let i = 0; i < n; i++) items[cursor[cellOf(i)]++] = i;
+  return { minX, minZ, cols, rows, start, items, best: new Float64Array(COLONY_KNN) };
+}
+
+/**
+ * The `k` nodes nearest `nodes[i]`, written into `out` and ordered by distance
+ * ascending then index ascending — what a stable full sort of every other node
+ * returns. Gives back how many it wrote (fewer than `k` only when the list
+ * holds fewer than `k + 1` nodes).
+ */
+export function colonyNearest(
+  grid: ColonyScaffoldGrid,
+  nodes: readonly NetworkNode[],
+  i: number,
+  k: number,
+  out: Int32Array,
+): number {
+  if (grid.best.length < k) grid.best = new Float64Array(k);
+  const bestD = grid.best;
+  bestD.fill(Infinity, 0, k);
+  let count = 0;
+  const here = nodes[i].pos;
+  const cx = Math.min(grid.cols - 1, Math.max(0,
+    Math.floor((here[0] - grid.minX) / COLONY_SCAFFOLD_BUCKET)));
+  const cz = Math.min(grid.rows - 1, Math.max(0,
+    Math.floor((here[2] - grid.minZ) / COLONY_SCAFFOLD_BUCKET)));
+  const maxRing = Math.max(
+    Math.max(cx, grid.cols - 1 - cx),
+    Math.max(cz, grid.rows - 1 - cz),
+  );
+  for (let r = 0; ; r++) {
+    const x0 = Math.max(0, cx - r), x1 = Math.min(grid.cols - 1, cx + r);
+    const z0 = Math.max(0, cz - r), z1 = Math.min(grid.rows - 1, cz + r);
+    for (let z = z0; z <= z1; z++) {
+      // Only the ring itself: the inside was read on an earlier pass.
+      const onEdgeRow = r === 0 || z === cz - r || z === cz + r;
+      for (let x = x0; x <= x1; x++) {
+        if (!onEdgeRow && x !== cx - r && x !== cx + r) continue;
+        const cell = z * grid.cols + x;
+        for (let s = grid.start[cell]; s < grid.start[cell + 1]; s++) {
+          const j = grid.items[s];
+          if (j === i) continue;
+          const d = dist2(here, nodes[j].pos);
+          let slot = count < k ? count : k - 1;
+          if (
+            count === k
+            && (d > bestD[slot] || (d === bestD[slot] && j > out[slot]))
+          ) continue;
+          while (
+            slot > 0
+            && (d < bestD[slot - 1] || (d === bestD[slot - 1] && j < out[slot - 1]))
+          ) {
+            bestD[slot] = bestD[slot - 1];
+            out[slot] = out[slot - 1];
+            slot -= 1;
+          }
+          bestD[slot] = d;
+          out[slot] = j;
+          if (count < k) count += 1;
+        }
+      }
+    }
+    if (r >= maxRing) break;
+    // Everything unread is at least `r × bucket` away on x or z, and a 3D
+    // distance is never below its XZ part.
+    const covered = r * COLONY_SCAFFOLD_BUCKET;
+    if (count === k && bestD[k - 1] <= covered * covered) break;
+  }
+  return count;
 }
 
 /** `localP2pId` is the local node's base58 `p2p_node_id`, the name the crawler
