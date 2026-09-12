@@ -938,6 +938,8 @@ function cloneLock(lock: ConstellationLock): ConstellationLock {
     // The held route points are immutable once published; sharing the arrays
     // costs nothing and the clone is read, never written through.
     routes: { ...lock.routes },
+    routeAnchorX: lock.routeAnchorX,
+    routeAnchorY: lock.routeAnchorY,
     geometryKey: lock.geometryKey,
     shapeKey: lock.shapeKey,
     anchorX: lock.anchorX,
@@ -952,6 +954,8 @@ function publishLock(target: ConstellationLock, source: ConstellationLock): void
   target.shapeKey = source.shapeKey;
   target.anchorX = source.anchorX;
   target.anchorY = source.anchorY;
+  target.routeAnchorX = source.routeAnchorX;
+  target.routeAnchorY = source.routeAnchorY;
   Object.assign(target.quadrant, source.quadrant);
   Object.assign(target.routes, source.routes);
   for (const slot of Object.keys(source.placements)) {
@@ -969,6 +973,8 @@ function resetLockObject(lock: ConstellationLock): void {
   lock.shapeKey = '';
   lock.anchorX = 0;
   lock.anchorY = 0;
+  lock.routeAnchorX = 0;
+  lock.routeAnchorY = 0;
 }
 
 /**
@@ -1212,6 +1218,10 @@ function applyRefinedRoutes(
     if (route && !route.degraded) handles.lock.routes[placement.slot] = route.points;
     else delete handles.lock.routes[placement.slot];
   }
+  // These lines were carried to the anchor the frame is on, so that is the
+  // anchor the next frame carries them from.
+  handles.lock.routeAnchorX = latest.input.anchorX;
+  handles.lock.routeAnchorY = latest.input.anchorY;
   // `prepareRequest` hands back the SAME request object while nothing moves,
   // and that object carries a clone of the lock taken before this write. Refresh
   // it, or the next locked solve routes from the leaders this just replaced.
@@ -1333,9 +1343,40 @@ export function suspendConstellationFrame(
   return currentSpecimenPlacement(handles);
 }
 
+/**
+ * Did this landing take a solid leader away from a plate that had one?
+ *
+ * `refinedKey` says "this picture has already had its second look". A landing
+ * that put the same seats back keeps it — a drifting Cell lands one of those on
+ * every frame, and clearing it there would start the same refinement over
+ * forever — but the same seats with a leader that has gone dashed are a
+ * DIFFERENT picture, and the refinement is the only thing that can take that
+ * leader back. Measured 2026-09-12 without this: a rescued leader went dashed
+ * again and stayed dashed for 448 consecutive frames.
+ *
+ * The transition is what counts, not the state: a plate that was already
+ * dashed earns nothing, so one clean-to-dashed step clears the key once.
+ */
+function degradedASolidLeader(
+  previous: ConstellationLayout | null,
+  next: ConstellationLayout,
+): boolean {
+  if (!previous) return false;
+  for (const placement of next.placements) {
+    if (placement.route?.degraded !== true) continue;
+    for (const before of previous.placements) {
+      if (before.slot !== placement.slot) continue;
+      if (before.route && before.route.degraded !== true) return true;
+      break;
+    }
+  }
+  return false;
+}
+
 function applyLayout(handles: CellConstellationHandles,
   request: ConstellationFrameRequest, layout: ConstellationLayout): ConstellationPlacement | null {
   const previousLayoutKey = handles.layoutKey;
+  const previousLayout = handles.lastLayout;
   handles.frameKey = request.connectorKey;
   handles.connectorKey = request.connectorKey;
   handles.layoutKey = request.layoutKey;
@@ -1360,7 +1401,8 @@ function applyLayout(handles: CellConstellationHandles,
   // Cell lands one of those on every frame, and clearing the key there would
   // start the same refinement over again forever, each one cancelled by the
   // next before it could finish.
-  if (placementChanged || previousLayoutKey !== request.layoutKey) {
+  if (placementChanged || previousLayoutKey !== request.layoutKey
+    || degradedASolidLeader(previousLayout, layout)) {
     handles.refinedKey = '';
   }
   const nextMaskKey = rectKey(layout.masks);

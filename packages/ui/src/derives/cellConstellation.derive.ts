@@ -593,6 +593,19 @@ export interface ConstellationLock {
    * itself still, instead of finding a new path every half pixel. Points only:
    * the label is re-placed from the route that survives. */
   routes: { [slot: string]: readonly ConstellationPoint[] | undefined };
+  /** The anchor `routes` were last PROVEN at, which is not the anchor the
+   * seats were solved at.
+   *
+   * A composition is chosen once and then held for the whole reading — the
+   * reader is inside `CONSTELLATION_HOLD_RADIUS_PX` of it for 160 px of drift
+   * — while the leaders are re-proven on every locked landing. Carrying them
+   * from the composition's anchor asks the router to slide a line by the whole
+   * accumulated delta; carrying them from here asks it to slide by the half
+   * pixel the Cell actually moved. Measured 2026-09-12 beside the HUD rails at
+   * 0.6 px a frame: 53–79 % of plate-frames took the dashed fallback from the
+   * one question, 0 % from the other. */
+  routeAnchorX: number;
+  routeAnchorY: number;
   geometryKey: string;
   /** The same question WITHOUT the panel heights: the stage, the safe top, the
    * edge, each instrument's slot and width, the rails and the chip's measure.
@@ -606,6 +619,7 @@ export interface ConstellationLock {
 export function createConstellationLock(): ConstellationLock {
   return {
     quadrant: {}, template: null, placements: {}, routes: {},
+    routeAnchorX: 0, routeAnchorY: 0,
     geometryKey: '', shapeKey: '', anchorX: 0, anchorY: 0,
   };
 }
@@ -618,6 +632,8 @@ export function resetConstellationLock(lock: ConstellationLock): void {
   lock.shapeKey = '';
   lock.anchorX = 0;
   lock.anchorY = 0;
+  lock.routeAnchorX = 0;
+  lock.routeAnchorY = 0;
 }
 
 export interface ConstellationInput {
@@ -2694,17 +2710,40 @@ function* lockedLayoutSteps(
         const routed = withRoutes
           ? yield* addRoutesSteps(held.input, placements, {
             fastOnly: true,
-            held: { routes: lock.routes, anchorX: lock.anchorX, anchorY: lock.anchorY },
+            held: {
+              routes: lock.routes,
+              anchorX: lock.routeAnchorX,
+              anchorY: lock.routeAnchorY,
+            },
           })
           : null;
         constellationWorkStats.lockedReuses += 1;
         constellationWorkStats.degradedRoutes += routed?.degraded ?? 0;
+        if (routed) {
+          // What this landing proved is what the next frame carries. The seats
+          // keep the anchor their composition was chosen at — that is what the
+          // 160 px hold radius and the continuity reference are measured from —
+          // and the lines keep this one, so a frame's carry is the half pixel
+          // the Cell moved rather than everything it has moved since.
+          //
+          // A plate that took the fallback holds nothing: a degraded leader is
+          // a pure function of the anchor and the plate, rebuilt and never
+          // reused, and leaving a stale line in the lock would ask the next
+          // frame to carry a line the reader is not being shown.
+          lock.routeAnchorX = input.anchorX;
+          lock.routeAnchorY = input.anchorY;
+          for (const panel of placements) {
+            if (panel.route && !panel.route.degraded) {
+              lock.routes[panel.slot] = panel.route.points;
+            } else delete lock.routes[panel.slot];
+          }
+        }
         if (grewOnly) {
           // The lock now holds the grown seats at the SAME anchor: the plates
-          // answer a new question and the Cell has not moved. Routes are left
-          // as they are — each is re-anchored against the new boxes on every
-          // frame, and one that no longer reaches its plate degrades for that
-          // frame and is taken back by the refinement behind it.
+          // answer a new question and the Cell has not moved. The lines were
+          // re-proven against the grown boxes just above, and one that no
+          // longer reaches its plate degraded for this frame and is taken back
+          // by the refinement behind it.
           lock.geometryKey = key;
           for (const panel of placements) {
             lock.placements[panel.slot] = { ...panel, route: undefined };
@@ -2846,6 +2885,7 @@ function* solveLayoutSteps(
     input.lock.template = best.template; input.lock.geometryKey = key;
     input.lock.shapeKey = geometryShapeKey(input, panels);
     input.lock.anchorX = input.anchorX; input.lock.anchorY = input.anchorY;
+    input.lock.routeAnchorX = input.anchorX; input.lock.routeAnchorY = input.anchorY;
     for (const slot of Object.keys(input.lock.placements)) delete input.lock.placements[slot];
     for (const slot of Object.keys(input.lock.routes)) delete input.lock.routes[slot];
     for (const panel of best.placements) {
