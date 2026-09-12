@@ -53,6 +53,13 @@ export interface NeighborGraphBuilderStatsSnapshot {
   recoveryMaxStepMs: number;
   recoveryCompleted: number;
   recoveryCancelled: number;
+  /** Recovered selections merged in place into the one the caller held — a
+   * recovery that CHAINED, so the fabric lands a delta instead of a whole
+   * reconcile. */
+  recoveryPatchedApplies: number;
+  /** Recovered selections handed over whole: the first one of a session, or
+   * a caller with nothing the fabric has drawn to patch. */
+  recoveryFullApplies: number;
   /** Currently scheduled recovery callbacks; zero after cancel/dispose. */
   recoveryPendingTasks: number;
   recoveryMaxPendingTasks: number;
@@ -75,6 +82,8 @@ export const neighborGraphBuilderStats: NeighborGraphBuilderStatsSnapshot = {
   recoveryMaxStepMs: 0,
   recoveryCompleted: 0,
   recoveryCancelled: 0,
+  recoveryPatchedApplies: 0,
+  recoveryFullApplies: 0,
   recoveryPendingTasks: 0,
   recoveryMaxPendingTasks: 0,
 };
@@ -100,6 +109,8 @@ export function resetNeighborGraphBuilderStats(): void {
   neighborGraphBuilderStats.recoveryMaxStepMs = 0;
   neighborGraphBuilderStats.recoveryCompleted = 0;
   neighborGraphBuilderStats.recoveryCancelled = 0;
+  neighborGraphBuilderStats.recoveryPatchedApplies = 0;
+  neighborGraphBuilderStats.recoveryFullApplies = 0;
   neighborGraphBuilderStats.recoveryPendingTasks = 0;
   neighborGraphBuilderStats.recoveryMaxPendingTasks = 0;
 }

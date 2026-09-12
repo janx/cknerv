@@ -1,4 +1,5 @@
 import { cleanup, render } from '@testing-library/react';
+import { PerformanceObserver } from 'node:perf_hooks';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useFrameMock = vi.fn();
@@ -634,13 +635,13 @@ describe('AdaptiveQualityController main-thread busy', () => {
     expect(windows).toBeLessThanOrEqual(18);
   });
 
-  it('measures a frame with one clock read and no allocation of its own', () => {
+  it('measures a frame with one clock read and no allocation of its own', async () => {
     render(<AdaptiveQualityController />);
     const before = loopEffect(addEffectMock);
     const after = loopEffect(addAfterEffectMock);
-    const ticks = 400_000;
+    const ticks = 1_000_000;
     // ⚠️ The suite's clock is a SPY, and a spy records every call it takes —
-    // 400,000 argument arrays would be the only thing this test measured. A
+    // a million argument arrays would be the only thing this test measured. A
     // plain counter stands in for the length of the loop.
     const spiedClock = performance.now;
     const clock = { reads: 0, ms: 0 };
@@ -649,37 +650,49 @@ describe('AdaptiveQualityController main-thread busy', () => {
       clock.ms += 1;
       return clock.ms;
     };
+    // ⚠️⚠️ YOUNG-GENERATION COLLECTIONS, NOT `heapUsed`. A heap DELTA around a
+    // loop measures what the garbage collector did as much as what the loop
+    // did: the first version of this case read its allocating control as
+    // 1.7 MB SMALLER than where it started, and then passed alone and failed
+    // inside the full suite, where four thousand other tests leave enough
+    // garbage that one collection swamps the signal. A scavenge is caused by
+    // allocation and by nothing else, so counting them is the reading. (Same
+    // instrument A6 landed on in T18.)
+    let collections = 0;
+    const observer = new PerformanceObserver((list) => {
+      collections += list.getEntries().length;
+    });
+    observer.observe({ entryTypes: ['gc'] });
+    const settle = () => new Promise((resolve) => { setTimeout(resolve, 0); });
     try {
-      // A control that allocates one small object per frame, so the
-      // instrument is calibrated against something it must be able to tell
-      // apart. Every object is RETAINED: a young-generation collection in the
-      // middle of the loop would otherwise hide the allocation completely,
-      // and it did — the first version of this case measured the control as
-      // 1.7 MB SMALLER than where it started.
+      await settle();
+      // The control: one small object per frame, the shape the bracket would
+      // have allocated if it held its span in a record instead of a ref.
+      collections = 0;
       const kept: unknown[] = [];
-      const controlBase = process.memoryUsage().heapUsed;
       for (let index = 0; index < ticks; index += 1) {
-        kept.push({ startedAt: index, busyMs: index });
+        kept.push({ startedAt: index, busyMs: index, frame: index, at: index });
+        if (kept.length > 64) kept.length = 0;
       }
-      const controlGrowth = process.memoryUsage().heapUsed - controlBase;
-      expect(kept.length).toBe(ticks);
-      expect(controlGrowth).toBeGreaterThan(8 * 1024 * 1024);
+      await settle();
+      const allocating = collections;
 
-      const base = process.memoryUsage().heapUsed;
+      collections = 0;
       for (let index = 0; index < ticks; index += 1) {
         before(index);
         after(index);
       }
-      const growth = process.memoryUsage().heapUsed - base;
+      await settle();
+      const bracketed = collections;
+
       // One read, in the after-effect: the frame's begin comes from the rAF
       // timestamp the loop already had.
       expect(clock.reads).toBe(ticks);
-      // One clock read and three numeric writes a frame: at 400,000 frames
-      // ANY per-frame object would be ten megabytes (V8's smallest is 24 B),
-      // which is the whole distance between these two numbers.
-      expect(growth).toBeLessThan(1024 * 1024);
-      expect(growth).toBeLessThan(controlGrowth / 8);
+      expect(allocating).toBeGreaterThanOrEqual(2);
+      expect(bracketed).toBeLessThanOrEqual(1);
+      expect(bracketed).toBeLessThan(allocating);
     } finally {
+      observer.disconnect();
       (performance as unknown as { now: () => number }).now = spiedClock;
     }
   });

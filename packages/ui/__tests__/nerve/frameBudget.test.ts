@@ -21,6 +21,7 @@ import {
   resetFrameBudgetStats,
   snapshotFrameBudget,
   spendFrameBudget,
+  onFrameBudgetOpened,
 } from '../../src/nerve/frameBudget';
 
 describe('the frame budget', () => {
@@ -305,5 +306,53 @@ describe('the frame budget, over a window of frames', () => {
     // The ledger the frame is being kept on is untouched by a probe's reset.
     expect(after.spentMs[FRAME_BUDGET_FABRIC_DRAIN]).toBe(7);
     expect(after.serial).toBe(2);
+  });
+});
+
+describe('the frame a ledger opens on', () => {
+  beforeEach(() => {
+    resetFrameBudget();
+  });
+
+  it('tells a consumer that had no room that it may have some now', () => {
+    let woken = 0;
+    const stop = onFrameBudgetOpened(() => { woken += 1; });
+    expect(woken).toBe(0);
+    beginFrameBudget();
+    expect(woken).toBe(1);
+    beginFrameBudget();
+    expect(woken).toBe(2);
+    // …and the same frame, asked twice by token, is one frame.
+    beginFrameBudget(7);
+    beginFrameBudget(7);
+    expect(woken).toBe(3);
+    stop();
+    beginFrameBudget();
+    expect(woken).toBe(3);
+  });
+
+  it('wakes a listener that re-arms itself exactly once a frame', () => {
+    // ⚠️⚠️ The whole reason the walk copies the listeners out first. The one
+    // consumer this signal exists for — main-thread topology recovery —
+    // re-subscribes the instant it is woken if the ledger is still closed,
+    // and a Set's iterator VISITS entries added during the walk: iterating it
+    // directly woke the listener, saw its new registration, woke it again,
+    // for ever, inside one call. The counter below bails at fifty so a
+    // regression fails fast instead of hanging the suite.
+    let woken = 0;
+    const armed: { stop: (() => void) | null } = { stop: null };
+    const arm = () => {
+      armed.stop = onFrameBudgetOpened(() => {
+        woken += 1;
+        armed.stop?.();
+        if (woken < 50) arm();
+      });
+    };
+    arm();
+    beginFrameBudget();
+    expect(woken).toBe(1);
+    beginFrameBudget();
+    expect(woken).toBe(2);
+    armed.stop?.();
   });
 });

@@ -16,6 +16,7 @@ import {
   PACKED_TOPOLOGY_CELL_STRIDE,
   applyNeighborAdjacencyPatch,
   applyPassiveSelectionPatch,
+  collectPassiveSelectionPatch,
   deserializeLivingNeighborGraphInto,
   deserializePassiveSelection,
   packPreferredEdges,
@@ -25,6 +26,7 @@ import {
 } from './neighborGraphWorkerProtocol';
 import { neighborGraphBuilderStats } from './neighborGraphBuilderStats';
 import { blockFrameStats } from '../nerve/blockFrameStats';
+import { onFrameBudgetOpened } from '../nerve/frameBudget';
 import {
   PERFORMANCE_PROBE_LABELS,
   beginCpuProbe,
@@ -185,6 +187,51 @@ function buildSynchronously(
 
 const RECOVERY_SLICE_MS = 2;
 
+/**
+ * Wait for the next moment this recovery could have room, and run then.
+ *
+ * ⭐ NOT A TIMER. A recovery with no budget used to re-ask every 16 ms, which
+ * is 60 wakeups a second while the frame ledger is full and — measured by
+ * lane L2's probe — 22 of them through 400 ms of a hidden page, where there
+ * are no frames, the budget hook answers zero by rule, and nothing can have
+ * changed. Two signals can change the answer and they are the two subscribed
+ * to here: a frame opening the ledger (`beginFrameBudget`) and the page
+ * becoming visible again. A hidden page therefore costs nothing at all and
+ * resumes on its own first frame.
+ *
+ * Returns the cancel. Both the wake and the cancel are one-shot, so a
+ * recovery cancelled while it waited leaves no listener behind.
+ */
+function waitForRecoveryWindow(run: () => void): () => void {
+  let closed = false;
+  let stopFrame: (() => void) | null = null;
+  let stopVisibility: (() => void) | null = null;
+  const close = () => {
+    if (closed) return false;
+    closed = true;
+    stopFrame?.();
+    stopVisibility?.();
+    stopFrame = null;
+    stopVisibility = null;
+    return true;
+  };
+  const wake = () => {
+    if (close()) run();
+  };
+  stopFrame = onFrameBudgetOpened(wake);
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    // The frame signal covers a page whose loop is running; this one covers
+    // the page that comes BACK, whose owner reports no budget while hidden
+    // and whose first frame may be a moment away.
+    const listener = () => {
+      if (document.visibilityState !== 'hidden') wake();
+    };
+    document.addEventListener('visibilitychange', listener);
+    stopVisibility = () => document.removeEventListener('visibilitychange', listener);
+  }
+  return () => { close(); };
+}
+
 /** A real task boundary: MessageChannel is unaffected by Promise microtask
  * draining and lets input/paint tasks run between recovery slices. */
 function scheduleRecoveryTask(run: () => void, yieldToTimers = false): () => void {
@@ -209,6 +256,68 @@ function scheduleRecoveryTask(run: () => void, yieldToTimers = false): () => voi
 interface RecoveryRun {
   promise: Promise<NeighborGraphBuildResult | null>;
   cancel(): void;
+}
+
+/**
+ * What a completed recovery hands back — chained onto the selection the
+ * caller holds whenever it can be.
+ *
+ * A recovery used to return whole forms always, and a whole passive selection
+ * costs the CONSUMER a full `setFabric` reconcile per generation (the fabric
+ * queue takes a delta or it takes the whole list — `NeuralNetwork`'s
+ * `delta: wasBootstrapped && epochClean ? delta : null`). While a worker
+ * stays down that is one whole reconcile per topology generation, on the main
+ * thread, for churn of forty edges. So the recovery does what the worker
+ * session does: it diffs its own build against the list the caller is holding
+ * and merges the patch into it in place, which makes the landing O(churn).
+ *
+ * ⚠️ The DISPLAY graph is still handed over whole, and deliberately. The
+ * adjacency patch exists to cross a thread boundary — it packs nodes into
+ * transferable typed arrays — and here both graphs are in one heap, so
+ * packing 12,000 nodes to unpack them again would buy the consumer nothing:
+ * it swaps one reference either way. The two halves are coupled on the WORKER
+ * path because one generation decides for both; on this path the passive
+ * delta's base is the caller's own list, which is exactly what the fabric
+ * last drew.
+ *
+ * The patch is computed against `held.edges` rather than against a remembered
+ * selection of our own, so it chains off a worker landing as happily as off
+ * another recovery — the only condition is the one `reuseFrom` already
+ * promises: that list is what the caller published last.
+ */
+function recoveredResult(
+  adjacency: LivingNeighborGraph['adjacency'],
+  passiveGraph: PassiveSelection | null,
+  options: NeighborGraphBuildOptions,
+): NeighborGraphBuildResult {
+  const whole: NeighborGraphBuildResult = {
+    graph: { adjacency, eagerBase: new Map() },
+    passiveGraph,
+    passiveDelta: null,
+  };
+  if (passiveGraph === null) return whole;
+  const held = options.reuseFrom?.().passiveGraph ?? null;
+  // An empty held selection is not a base: the fabric has drawn nothing, so
+  // every edge would arrive as an addition and the consumer discards the
+  // delta anyway (`wasBootstrapped`).
+  if (held === null || held.edges.length === 0) {
+    neighborGraphBuilderStats.recoveryFullApplies += 1;
+    return whole;
+  }
+  try {
+    const delta = applyPassiveSelectionPatch(
+      held,
+      collectPassiveSelectionPatch(held.edges, passiveGraph.edges),
+    );
+    neighborGraphBuilderStats.recoveryPatchedApplies += 1;
+    return { graph: whole.graph, passiveGraph: held, passiveDelta: delta };
+  } catch {
+    // The merge validates before it mutates, so the held list is untouched
+    // and the whole form — always correct — is what lands. Counted as a full
+    // apply because that is what the consumer pays for.
+    neighborGraphBuilderStats.recoveryFullApplies += 1;
+    return whole;
+  }
 }
 
 function buildRecoverably(
@@ -264,14 +373,14 @@ function buildRecoverably(
           neighborGraphBuilderStats.recoveryMaxPendingTasks,
           neighborGraphBuilderStats.recoveryPendingTasks,
         );
-        const timer = setTimeout(() => {
+        const cancelWait = waitForRecoveryWindow(() => {
           neighborGraphBuilderStats.recoveryPendingTasks -= 1;
           cancelScheduled = null;
           advance();
-        }, 16);
+        });
         cancelScheduled = () => {
           neighborGraphBuilderStats.recoveryPendingTasks -= 1;
-          clearTimeout(timer);
+          cancelWait();
         };
         return;
       }
@@ -316,20 +425,12 @@ function buildRecoverably(
             if (!step.done) continue;
             neighborGraphBuilderStats.recoveryCompleted += 1;
             recordSlice();
-            finish({
-              graph: { adjacency: graph!.adjacency, eagerBase: new Map() },
-              passiveGraph: step.value,
-              passiveDelta: null,
-            });
+            finish(recoveredResult(graph!.adjacency, step.value, options));
             return;
           }
           neighborGraphBuilderStats.recoveryCompleted += 1;
           recordSlice();
-          finish({
-            graph: { adjacency: graph!.adjacency, eagerBase: new Map() },
-            passiveGraph: null,
-            passiveDelta: null,
-          });
+          finish(recoveredResult(graph!.adjacency, null, options));
           return;
         }
         recordSlice();

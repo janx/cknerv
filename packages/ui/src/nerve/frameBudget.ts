@@ -103,6 +103,20 @@ const lastAskSerial = [-1, -1, -1, -1];
 /** Bumped by the owner's raw priority −1 frame, beside T1's `markFrame()`. */
 let frameSerial = 0;
 let frameToken: number | null = null;
+/** Woken when a frame opens the ledger — see {@link onFrameBudgetOpened}. */
+const frameOpenedListeners = new Set<() => void>();
+/**
+ * The listeners are walked out of THIS, not out of the Set.
+ *
+ * ⚠️⚠️ A Set's iterator visits entries added DURING the walk, and the one
+ * listener this exists for re-subscribes the moment it is woken: a recovery
+ * that finds the ledger still closed asks to be woken again. Iterating the
+ * Set directly therefore woke it, saw its new registration, woke it again —
+ * for ever, inside one `beginFrameBudget`. (Found the way it deserves to be:
+ * a test process at 1 % CPU for nine minutes.) The array is kept across
+ * frames so the copy allocates nothing.
+ */
+const frameOpenedScratch: Array<(() => void) | null> = [];
 
 /**
  * A new frame: the ledger is empty again.
@@ -114,6 +128,29 @@ let frameToken: number | null = null;
  * The deferral streaks deliberately survive: they are what stops a consumer
  * from being held forever, and a frame boundary is not a reason to forget one.
  */
+/**
+ * Called when a new frame opens the ledger — the one moment a consumer that
+ * was refused for having no room could have room again.
+ *
+ * It exists because the alternative is a POLL. Main-thread topology recovery
+ * used to wait out a closed ledger on a 16 ms timer, which wakes 60 times a
+ * second while the ledger is full and 25 times through 400 ms of a hidden tab
+ * where there are no frames at all and nothing can have changed. A frame
+ * boundary is the event, so the frame boundary is what carries it.
+ *
+ * Returns the unsubscribe. Listeners are called in registration order inside
+ * `beginFrameBudget`, BEFORE any consumer of this frame has asked — so a
+ * listener that starts work immediately is spending the frame it was woken
+ * for. A listener must not throw; one that does would take the frame's ledger
+ * reset with it.
+ */
+export function onFrameBudgetOpened(listener: () => void): () => void {
+  frameOpenedListeners.add(listener);
+  return () => {
+    frameOpenedListeners.delete(listener);
+  };
+}
+
 export function beginFrameBudget(token?: number): void {
   if (token !== undefined && token === frameToken) return;
   // The frame that just ended is only complete now, so this is where it joins
@@ -136,6 +173,20 @@ export function beginFrameBudget(token?: number): void {
   forcedByReservation = 0;
   forcedByStarvation = 0;
   estimateOvershootMs = 0;
+  // After the reset, so a listener that asks for room this frame reads the
+  // frame it was woken for and not the one that just ended.
+  if (frameOpenedListeners.size > 0) {
+    let count = 0;
+    for (const listener of frameOpenedListeners) {
+      frameOpenedScratch[count] = listener;
+      count += 1;
+    }
+    for (let index = 0; index < count; index += 1) {
+      const listener = frameOpenedScratch[index];
+      frameOpenedScratch[index] = null;
+      listener?.();
+    }
+  }
 }
 
 /** The most a promise about a LATER frame may take out of this one.
