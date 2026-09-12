@@ -1187,6 +1187,15 @@ export default function App({
   const populationActive = cellPopulation.gain > 0;
   const localReceiveDelaySRef = useRef(cf.localReceiveDelayS);
   localReceiveDelaySRef.current = cf.localReceiveDelayS;
+  // The third one, for the same reason one layer down: the nerve's departure
+  // delay is a continuous function of WHICH PEER produced the block, so as a
+  // prop it replaced the galaxy overlay element — and re-rendered every fibre
+  // under it — on about four blocks in five (report L6-2). NeuralNetwork reads
+  // this when a link batch opens, which is the same instant the prop was read
+  // before: this write happens during the render that carries the block, and
+  // effects run after it.
+  const livePulseDelaySRef = useRef(livePulseDelayS);
+  livePulseDelaySRef.current = livePulseDelayS;
 
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
@@ -1287,6 +1296,31 @@ export default function App({
     : cachedSelectedCellSemantics
       ? 'ready'
       : 'waiting';
+  // WHAT THE SEMANTIC MARKER ACTUALLY READS OFF THE SOURCE — its name, its
+  // state and the anchor it has validated to. The source RECORD is replaced on
+  // every probe round (the adapter restamps `last_success_at_ms`, which is
+  // content, so the reducer's deep-equal cannot drop it), and keying the galaxy
+  // overlay on the record turned the whole canopy over once a minute for a
+  // marker whose answer had not moved (report L6-2). The anchor is unpacked
+  // into its two scalars here because it is an object inside that replaced
+  // record, and would carry the churn across on its own.
+  const semanticAnchor = semanticsCache.source.validated_anchor;
+  const semanticOrbitSource = useMemo(
+    () => ({
+      source: semanticsCache.source.source,
+      status: semanticsCache.source.status,
+      validated_anchor: semanticAnchor,
+    }),
+    // Rebuilt only when one of the four scalars moves; the anchor OBJECT it
+    // then carries is whatever the current record holds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      semanticsCache.source.source,
+      semanticsCache.source.status,
+      semanticAnchor?.block,
+      semanticAnchor?.hash,
+    ],
+  );
   const selectedTransactionHash = selectedCell?.out_point.tx_hash ?? null;
   const transactionSemanticsEnabled = enrichmentConfig.enabled
     && semanticsCache.source.capabilities.includes('transaction_detail');
@@ -2080,7 +2114,7 @@ export default function App({
         <CellSemanticOrbit
           cell={selectedCell}
           record={selectedCellSemantics}
-          source={semanticsCache.source}
+          source={semanticOrbitSource}
         />
       ) : null}
       {selectedCausalLens ? (
@@ -2102,7 +2136,7 @@ export default function App({
         burstArrivalRef={burstArrivalRef}
         topology={galaxyConfig.topology}
         pulses={galaxyConfig.pulses}
-        livePulseDelayS={livePulseDelayS}
+        livePulseDelaySRef={livePulseDelaySRef}
         cellDetailViewFocusRef={cellDetailViewFocusRef}
         traceRequest={memoryTraceRequest}
         traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
@@ -2129,7 +2163,7 @@ export default function App({
     galaxyConfig.cellCap,
     galaxyConfig.pulses,
     galaxyConfig.topology,
-    livePulseDelayS,
+    livePulseDelaySRef,
     lockMemoryTraceRouteHop,
     memoryEvidenceFocusSourceId,
     memoryRecordSwitchPending,
@@ -2142,7 +2176,7 @@ export default function App({
     selectedCausalLens,
     selectedCell,
     selectedCellSemantics,
-    semanticsCache.source,
+    semanticOrbitSource,
     setMemoryTraceReadout,
   ]);
   // Both probes tether from colony space, and the colony's one selection means

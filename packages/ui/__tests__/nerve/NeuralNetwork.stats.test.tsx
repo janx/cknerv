@@ -149,6 +149,37 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toContain('[traceFocusRef.current, departingFocus]');
   });
 
+  // The departure delay is a continuous function of which peer produced the
+  // block. As a PROP it was also a dependency of this effect and of the
+  // dashboard's whole galaxy overlay, so four blocks in five replaced the
+  // overlay element and re-rendered every fibre under it (report L6-2).
+  it('takes the live departure delay by ref, read when the batch opens', () => {
+    expect(NETWORK_SOURCE).toContain('livePulseDelaySRef?: { readonly current: number }');
+    expect(NETWORK_SOURCE).toContain(
+      'const startSec = scheduleLivePulseStartSec(\n'
+      + '      simClock.elapsedSec,\n'
+      + '      resolveLivePulseDelayS(livePulseDelaySRef, livePulseDelayS),\n'
+      + '    );',
+    );
+    // The dep list carries the REF (stable) and not the scalar. The effect
+    // runs on the link queue, which moves on the same render the delay does,
+    // so the value read is still the block's own.
+    const effectStart = NETWORK_SOURCE.indexOf('const { toFire, nextSeq } = openLinkBatch(');
+    const depsStart = NETWORK_SOURCE.indexOf('  }, [', effectStart);
+    const deps = NETWORK_SOURCE.slice(depsStart, NETWORK_SOURCE.indexOf('\n  ]);', depsStart));
+    expect(deps).toContain('livePulseDelaySRef,');
+    expect(deps).not.toContain('livePulseDelayS,');
+  });
+
+  // The prop is not dead: a consumer with a CONSTANT delay and no per-block
+  // value to mirror has nothing to put in a ref, and the protocol-event Lab
+  // is one. It stays as the fallback, and the resolution order is pinned in
+  // __tests__/nerve/pulseBatch.test.ts.
+  it('keeps the scalar prop for consumers that hold a constant delay', () => {
+    expect(NETWORK_SOURCE).toContain('livePulseDelayS = 0,');
+    expect(NETWORK_SOURCE).toContain('livePulseDelayS?: number;');
+  });
+
   it('journals exact Cell ids for sparse flash-buffer uploads', () => {
     expect(NETWORK_SOURCE).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
     expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);

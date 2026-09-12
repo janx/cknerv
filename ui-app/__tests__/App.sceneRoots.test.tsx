@@ -183,6 +183,52 @@ describe('scene-root memo inputs', () => {
   });
 });
 
+describe('per-block scalars', () => {
+  it('hands the nerve its departure delay by ref, never as a prop', () => {
+    // The third scalar to make this trip, for the same reason as the first
+    // two: `livePulseDepartureDelayS(cf.localReceiveDelayS)` is a continuous
+    // function of WHICH PEER produced the block, so as a prop it was a dep of
+    // `galaxyOverlay` and replaced the overlay element — and re-rendered every
+    // fibre under it — on about four blocks in five (report L6-2). The ref is
+    // written during render, so the plan effect that opens the block's link
+    // batch still reads the block's own value.
+    expect(APP_SOURCE).toContain('const livePulseDelaySRef = useRef(livePulseDelayS);');
+    expect(APP_SOURCE).toContain('livePulseDelaySRef.current = livePulseDelayS;');
+    expect(APP_SOURCE).toContain('livePulseDelaySRef={livePulseDelaySRef}');
+    expect(APP_SOURCE).not.toContain('livePulseDelayS={livePulseDelayS}');
+    const { deps } = hoistedOverlay('galaxyOverlay');
+    expect(deps).toContain('livePulseDelaySRef');
+    expect(deps).not.toContain('livePulseDelayS');
+  });
+
+  it('leaves the scalar prop standing for the Lab that holds a constant delay', () => {
+    // A consumer with no per-block value has nothing to mirror into a ref.
+    // The prop is the fallback, not a leftover — and this is the consumer
+    // that proves it, so a future sweep for "unused prop" finds the answer
+    // here rather than deleting it.
+    const lab = readFileSync(resolve(process.cwd(), 'src/ProtocolEventLab.tsx'), 'utf8');
+    expect(lab).toContain('livePulseDelayS={livePulseDelayS}');
+    expect(lab).not.toContain('livePulseDelaySRef');
+  });
+
+  it('hands the semantic marker the three fields it reads off the source', () => {
+    // The source RECORD is replaced on every probe round, so keying the
+    // overlay on it turned the canopy over once a minute for a marker whose
+    // answer had not moved. The anchor is unpacked into its two scalars
+    // because it is an object inside that replaced record.
+    expect(APP_SOURCE).toContain('const semanticOrbitSource = useMemo(');
+    expect(memoDeps('semanticOrbitSource')).toEqual([
+      'semanticsCache.source.source',
+      'semanticsCache.source.status',
+      'semanticAnchor?.block',
+      'semanticAnchor?.hash',
+    ]);
+    const { deps } = hoistedOverlay('galaxyOverlay');
+    expect(deps).toContain('semanticOrbitSource');
+    expect(deps).not.toContain('semanticsCache.source');
+  });
+});
+
 describe('canvas ground', () => {
   it('paints its own ground rather than showing one through', () => {
     // ⚠️ The `alpha: false` flag does not reach the compositor: three hardcodes

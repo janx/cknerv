@@ -1,16 +1,13 @@
 import { useMemo } from 'react';
 import { Billboard } from '@react-three/drei';
 import * as THREE from 'three';
-import type {
-  Cell,
-  CellSemanticRecord,
-  EnrichmentSourceStatus,
-} from '@cknerv/types';
+import type { Cell, CellSemanticRecord } from '@cknerv/types';
 import {
   CELL_SEMANTIC_TAU,
   cellSemanticAssetAccent,
   cellSemanticVisualState,
   deriveCellSemanticComposition,
+  type CellSemanticSourceView,
 } from '../derives/cellSemantics.derive';
 import { cellSemanticRecordMorphologyMismatch } from '../derives/cellSemanticMorphology.derive';
 
@@ -27,7 +24,10 @@ const ASSET_OUTER_RADIUS = 2.53;
 export default function CellSemanticOrbit({ cell, record, source }: {
   cell: Cell;
   record: CellSemanticRecord;
-  source: EnrichmentSourceStatus;
+  /** The three fields the marker reads, never the whole source record: that
+   *  record is replaced on every probe round, and a marker keyed on it re-key
+   *  the galaxy overlay for liveness it does not draw. */
+  source: CellSemanticSourceView;
 }) {
   const composition = useMemo(
     () => deriveCellSemanticComposition(record),

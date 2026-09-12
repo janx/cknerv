@@ -178,6 +178,7 @@ export {
   cellIdentityProofBindingComplete,
 } from './derives/cellIdentityProof.derive';
 export { default as CellSemanticOrbit } from './components/CellSemanticOrbit';
+export type { CellSemanticSourceView } from './derives/cellSemantics.derive';
 export {
   default as CellInspectionOverlay,
   CellInspectionAnchor,

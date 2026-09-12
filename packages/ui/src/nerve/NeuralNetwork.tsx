@@ -100,6 +100,7 @@ import {
   evictPulseOverflow,
   openLinkBatch,
   prunePulsesFromBlock,
+  resolveLivePulseDelayS,
   scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from './pulseBatch';
@@ -284,8 +285,17 @@ interface NeuralNetworkProps {
    * Scene-time delay applied only to newly observed live links. The dashboard
    * aligns this with the local carrier's Cell-field contact; standalone
    * consumers default to immediate live traffic.
+   *
+   * ⚠️ The dashboard no longer passes this: its delay moves with the block's
+   * producer, and as a prop it turned the galaxy overlay over on most blocks
+   * (L6-2). It hands `livePulseDelaySRef` instead. The prop remains for
+   * consumers holding a CONSTANT delay with no ref to give — the
+   * protocol-event Lab — and is read only when no ref is present.
    */
   livePulseDelayS?: number;
+  /** The same delay, live, for a consumer whose value changes per block. Read
+   *  when a link batch opens; never a render input. */
+  livePulseDelaySRef?: { readonly current: number };
   /** Shared camera-distance focus; affects only the passive fabric layer. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Explicit user-requested replay of one retained historical link. */
@@ -384,6 +394,7 @@ function NeuralNetwork({
   topology,
   pulses,
   livePulseDelayS = 0,
+  livePulseDelaySRef,
   cellDetailViewFocusRef,
   traceRequest = null,
   traceMaxPulses,
@@ -959,7 +970,7 @@ function NeuralNetwork({
     // planning takes, every packet keeps the departure it always had.
     const startSec = scheduleLivePulseStartSec(
       simClock.elapsedSec,
-      livePulseDelayS,
+      resolveLivePulseDelayS(livePulseDelaySRef, livePulseDelayS),
     );
     // Sources and routes come from the DISPLAY pair — the staged map and the
     // graph built from it. A pulse only reads as consensus flow if the viewer
@@ -996,7 +1007,14 @@ function NeuralNetwork({
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
     pulses?.maxOriginsPerLink,
-    livePulseDelayS,
+    // The departure delay is read from the ref above at plan time, so it is
+    // deliberately absent here: listing it would re-run this effect (and, for
+    // the dashboard, re-create the whole overlay) on a scalar that moves with
+    // every block's producer. A consumer passing only the prop still gets the
+    // latest value — the closure that runs is the one from the render where
+    // the link queue moved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    livePulseDelaySRef,
     invalidate,
     displayGraphVersion,
   ]);

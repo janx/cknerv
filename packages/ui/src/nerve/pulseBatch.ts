@@ -552,6 +552,28 @@ export function livePulseDepartureDelayS(localReceiveDelayS: number): number {
 }
 
 /**
+ * The departure delay a live batch is stamped with, resolved AT PLAN TIME.
+ *
+ * The dashboard's delay is a continuous function of which peer produced the
+ * block, so as a prop it turned the canopy's whole overlay element over on
+ * about four blocks in five and re-rendered every fibre under it (report
+ * L6-2). It therefore arrives by ref — the `cellDetailViewFocusRef` /
+ * `localReceiveDelaySRef` precedent — and the ref is read HERE, when the
+ * batch opens, which is the same instant the prop was read before: App writes
+ * the ref during the render that carries the block, and effects run after it.
+ *
+ * The prop stays for consumers that hold a constant delay and have no ref to
+ * hand (the protocol-event Lab), and a consumer that passes neither keeps the
+ * generic immediate departure.
+ */
+export function resolveLivePulseDelayS(
+  ref: { readonly current: number } | undefined,
+  prop: number,
+): number {
+  return ref === undefined ? prop : ref.current;
+}
+
+/**
  * Place a live nerve batch on the shared protocol-event clock. Generic
  * consumers keep the default zero delay; the dashboard supplies its
  * peer-network-to-Cell-field handoff delay.

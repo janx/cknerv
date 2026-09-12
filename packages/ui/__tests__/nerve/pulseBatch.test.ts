@@ -17,6 +17,7 @@ import {
   livePulseDepartureDelayS,
   planLinkBatch,
   prunePulsesFromBlock,
+  resolveLivePulseDelayS,
   scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from '../../src/nerve/pulseBatch';
@@ -610,6 +611,31 @@ describe('livePulseDepartureDelayS', () => {
     expect(livePulseDepartureDelayS(0)).toBeCloseTo(bare, 9);
     expect(livePulseDepartureDelayS(-1)).toBeCloseTo(bare, 9);
     expect(livePulseDepartureDelayS(Number.NaN)).toBeCloseTo(bare, 9);
+  });
+});
+
+describe('resolveLivePulseDelayS', () => {
+  it('reads the ref at the call, not at the render that closed over it', () => {
+    // The whole point of the ref: the dashboard writes this during the render
+    // that carries the block and the batch opens in the effect after it, so
+    // what must be read is `.current` NOW. A closure capture would depart with
+    // the previous block's delay.
+    const ref = { current: 1.5 };
+    expect(resolveLivePulseDelayS(ref, 0)).toBe(1.5);
+    ref.current = 2.25;
+    expect(resolveLivePulseDelayS(ref, 0)).toBe(2.25);
+  });
+
+  it('keeps the prop for a consumer holding a constant delay', () => {
+    // The protocol-event Lab has no per-block value and no ref to hand.
+    expect(resolveLivePulseDelayS(undefined, 1.6)).toBe(1.6);
+  });
+
+  it('lets a ref that says zero mean zero', () => {
+    // `??` on `.current` would have read a legitimate 0 as "no delay given"
+    // and fallen through to the prop — a lab default of 1.6 s departing a
+    // dashboard block that was supposed to leave immediately.
+    expect(resolveLivePulseDelayS({ current: 0 }, 1.6)).toBe(0);
   });
 });
 

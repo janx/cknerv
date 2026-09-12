@@ -51,9 +51,19 @@ export interface RenderRecord {
 const records: RenderRecord[] = [];
 const lastProps = new Map<string, Record<string, unknown>>();
 
-/** A memoized counter standing in for one child. Renders null; records the
- *  prop keys whose identity moved, which is why the render happened. */
-export function countingComponent(name: string): ComponentType<never> {
+/**
+ * A memoized counter standing in for one child. Records the prop keys whose
+ * identity moved, which is why the render happened.
+ *
+ * `slot` names a prop carrying an ELEMENT the real child mounts inside itself
+ * — the two scene roots both take one. It has to be rendered here or the
+ * overlay's own children never mount, and the memo that holds them across a
+ * block is exactly what several of these tests are reading.
+ */
+export function countingComponent(
+  name: string,
+  slot?: string,
+): ComponentType<never> {
   function Counter(props: Record<string, unknown>) {
     const previous = lastProps.get(name);
     const changed: string[] = [];
@@ -67,7 +77,7 @@ export function countingComponent(name: string): ComponentType<never> {
     }
     lastProps.set(name, { ...props });
     records.push({ name, changed: changed.sort() });
-    return null;
+    return slot === undefined ? null : <>{props[slot] as ReactNode}</>;
   }
   Counter.displayName = name;
   return memo(Counter) as unknown as ComponentType<never>;
@@ -291,8 +301,8 @@ const INERT_UI_EXPORTS = [
 export function uiMock(actual: Record<string, unknown>): Record<string, unknown> {
   const mocked: Record<string, unknown> = { ...actual };
   for (const name of INERT_UI_EXPORTS) mocked[name] = () => null;
-  mocked.CellGalaxy = countingComponent('CellGalaxy');
-  mocked.NetworkColony = countingComponent('NetworkColony');
+  mocked.CellGalaxy = countingComponent('CellGalaxy', 'overlay');
+  mocked.NetworkColony = countingComponent('NetworkColony', 'overlay');
   mocked.CellInspectionOverlay = countingComponent('CellInspectionOverlay');
   mocked.NeuralNetwork = countingComponent('NeuralNetwork');
   mocked.CellSemanticOrbit = countingComponent('CellSemanticOrbit');
@@ -408,10 +418,12 @@ const nextRevision = () => (revision += 1);
 /** The chain cache as App last saw it, advanced by the real entity reducer. */
 let chainCache: unknown = null;
 let cellsCache: unknown = null;
+let semanticsCache: unknown = null;
 
 export function seedCaches(): void {
   chainCache = null;
   cellsCache = null;
+  semanticsCache = null;
   revision = 1_000;
 }
 
@@ -582,4 +594,74 @@ export async function pushHealth(tipAgeMs: number, degraded = false): Promise<vo
     reason: degraded ? 'closed' : null,
     fault: degraded ? { kind: 'unreachable' } : null,
   }));
+}
+
+// ——— the enrichment channel ———
+//
+// Off by default, like a page with no enrichment configured. A test that needs
+// the semantic marker turns it on BEFORE mounting: App resolves the config
+// during render and opens the semantics socket in its mount effect.
+
+export function enableEnrichment(source = 'ckbadger'): void {
+  window.__CKNERV_RUNTIME_CONFIG__ = { enrichment: { enabled: true, source } };
+}
+
+export function disableEnrichment(): void {
+  delete window.__CKNERV_RUNTIME_CONFIG__;
+}
+
+async function semanticsNow(): Promise<Record<string, unknown>> {
+  if (semanticsCache === null) {
+    const cache = await import('@cknerv/cache');
+    semanticsCache = cache.emptySemanticsCache();
+  }
+  return semanticsCache as Record<string, unknown>;
+}
+
+export async function pushSemantics(
+  deltas: readonly unknown[],
+): Promise<void> {
+  const cache = await import('@cknerv/cache');
+  const prev = await semanticsNow();
+  const next = cache.applyRevisionedSemanticsDeltas(
+    prev as never,
+    deltas.map((delta) => ({ revision: nextRevision(), delta })) as never,
+  );
+  semanticsCache = next;
+  await publish(() => streams.semantics?.(next));
+}
+
+/** A source the marker will accept: ready, named, anchored at the tip. */
+export function sourceStatus(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    type: 'source_status',
+    source: {
+      source: 'ckbadger',
+      status: 'ready',
+      capabilities: [],
+      indexed_tip: 100,
+      lag_blocks: 0,
+      validated_anchor: { block: 100, hash: '0x100' },
+      last_success_at_ms: 1234567890000,
+      ...overrides,
+    },
+  };
+}
+
+/** A record for one of the bootstrap snapshot's cells, anchored below the
+ *  source's own anchor so the marker's visual state resolves. */
+export function cellSemantics(cellId: number): unknown {
+  const cell = CELLS_SNAPSHOT.cells.find((c) => c.id === cellId);
+  if (!cell) throw new Error(`no fixture cell ${cellId}`);
+  return {
+    type: 'cell_upsert',
+    cell: {
+      out_point: cell.out_point,
+      source: 'ckbadger',
+      as_of: { block: 99, hash: '0x99' },
+      observed_at_block: 99,
+      updated_at_ms: 1234567880000,
+      facets: [],
+    },
+  };
 }

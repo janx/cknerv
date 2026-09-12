@@ -38,9 +38,13 @@ vi.mock('../src/Jukebox', async () => (
   await import('./helpers/appHarness')
 ).jukeboxMock());
 
+import { livePulseDepartureDelayS } from '@cknerv/ui';
 import App from '../src/App';
 import {
   appProps,
+  cellSemantics,
+  disableEnrichment,
+  enableEnrichment,
   mempoolTick,
   peersPoll,
   pushBlock,
@@ -50,8 +54,12 @@ import {
   renderSummary,
   resetHarness,
   resetRenders,
+  propOf,
+  pushSemantics,
+  renderReasons,
   seedCaches,
   selectCell,
+  sourceStatus,
   KNOWN_PRODUCERS,
 } from './helpers/appHarness';
 
@@ -66,8 +74,8 @@ async function mountApp(openCardOn: number | null = null) {
   resetRenders();
 }
 
-beforeEach(() => { resetHarness(); });
-afterEach(() => { cleanup(); resetHarness(); });
+beforeEach(() => { resetHarness(); disableEnrichment(); });
+afterEach(() => { cleanup(); resetHarness(); disableEnrichment(); });
 
 /** Every root a memo is supposed to hold. The dossier is only mounted with a
  *  card open, so it counts 0 either way when the contract holds. */
@@ -120,5 +128,73 @@ describe('a block reaches each root at most once', () => {
     for (const root of ROOTS) {
       expect(renderCount(root), renderSummary()).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+
+describe('the galaxy overlay holds through a block', () => {
+  // L6-2: `livePulseDelayS` is a continuous function of which peer produced
+  // the block, so the overlay element — and with it the whole canopy — turned
+  // over on 78 % of real blocks and on 100 % of alternating ones.
+  it('keeps one overlay identity across 59 alternating producers', async () => {
+    await mountApp();
+
+    for (let i = 0; i < 59; i += 1) {
+      await pushBlock(200 + i, KNOWN_PRODUCERS[i % 2]);
+    }
+
+    expect(
+      renderReasons('CellGalaxy').filter((keys) => keys.includes('overlay')),
+      renderSummary(),
+    ).toEqual([]);
+    expect(renderCount('CellGalaxy'), renderSummary()).toBe(0);
+  });
+
+  it('still departs with the delay the colony measured for this block', async () => {
+    // The scalar left the props; it must not have left the picture. The
+    // nerve's ref and the colony's own flood are two readings of one fact —
+    // when the local node receives this block — so they have to agree on
+    // every block, including the ones where the producer changed.
+    await mountApp();
+
+    for (let i = 0; i < 6; i += 1) {
+      await pushBlock(300 + i, KNOWN_PRODUCERS[i % 2]);
+      const delayRef = propOf('NeuralNetwork', 'livePulseDelaySRef') as
+        { readonly current: number } | undefined;
+      const flood = propOf('NetworkColony', 'cf') as
+        { localReceiveDelayS: number };
+      expect(delayRef?.current).toBe(
+        livePulseDepartureDelayS(flood.localReceiveDelayS),
+      );
+    }
+  });
+});
+
+describe('the semantic marker keys on what it reads', () => {
+  async function mountWithMarker() {
+    enableEnrichment();
+    await mountApp();
+    await pushSemantics([sourceStatus()]);
+    await pushSemantics([cellSemantics(1)]);
+    await selectCell(1);
+    resetRenders();
+  }
+
+  it('answers a source status change', async () => {
+    await mountWithMarker();
+
+    await pushSemantics([sourceStatus({ status: 'stale' })]);
+
+    expect(renderCount('CellSemanticOrbit'), renderSummary())
+      .toBeGreaterThanOrEqual(1);
+  });
+
+  it('holds through a probe round that only restamps the source', async () => {
+    await mountWithMarker();
+
+    await pushSemantics([sourceStatus({ last_success_at_ms: 1234567899000 })]);
+
+    expect(renderCount('CellSemanticOrbit'), renderSummary()).toBe(0);
+    expect(renderCount('CellGalaxy'), renderSummary()).toBe(0);
   });
 });

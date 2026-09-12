@@ -1,6 +1,7 @@
 import type {
   CellSemanticRecord,
-  EnrichmentSourceStatus,
+  ChainAnchor,
+  EnrichmentSourceState,
   SemanticAsset,
 } from '@cknerv/types';
 import { ASSET_STANDARD_ACCENTS, SEGMENT_COLORS } from '../components/hud/cellFormat';
@@ -80,9 +81,27 @@ export function deriveCellSemanticComposition(
   return { totalBytes: knowledge.total_bytes, segments };
 }
 
+/**
+ * THE WHOLE OF WHAT THE MARKER READS OFF THE ENRICHMENT SOURCE — three
+ * fields, and the type is the discipline that keeps it three.
+ *
+ * `EnrichmentSourceStatus` is structurally one of these, so every existing
+ * caller still passes the record. What it buys is the App: the source record
+ * is replaced on EVERY probe round (`last_success_at_ms` is content, and the
+ * reducer's deep-equal drops only a literal re-broadcast), so keying the
+ * galaxy overlay on the record turned the canopy over once a minute for a
+ * marker that could not have looked different. Keyed on this projection, it
+ * turns over when the source's answer does.
+ */
+export interface CellSemanticSourceView {
+  source: string;
+  status: EnrichmentSourceState;
+  validated_anchor?: ChainAnchor;
+}
+
 /** Only render records that still sit at or behind the source's validated tip. */
 export function cellSemanticVisualState(
-  source: EnrichmentSourceStatus,
+  source: CellSemanticSourceView,
   record: CellSemanticRecord,
 ): CellSemanticVisualState | null {
   if (source.status !== 'ready' && source.status !== 'stale') return null;

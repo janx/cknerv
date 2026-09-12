@@ -182,7 +182,12 @@ describe('HudOverlay wiring', () => {
   it('adds validated optional semantics as one selected-Cell scene orbit', () => {
     expect(APP_SOURCE).toContain('<CellSemanticOrbit');
     expect(APP_SOURCE).toContain('record={selectedCellSemantics}');
-    expect(APP_SOURCE).toContain('source={semanticsCache.source}');
+    // The marker is handed the three fields its validation reads, not the
+    // source RECORD: that record is replaced on every probe round, and this
+    // element sits inside `galaxyOverlay`, so keying it on the record turned
+    // the whole canopy over once a minute (report L6-2). The projection and
+    // its dep list are pinned in App.sceneRoots.test.tsx.
+    expect(APP_SOURCE).toContain('source={semanticOrbitSource}');
     expect(APP_SOURCE).toContain('selectedCell && selectedCellSemantics');
   });
 
