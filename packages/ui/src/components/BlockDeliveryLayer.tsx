@@ -7,7 +7,7 @@ import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { colonyFrame } from '../tweaks/colonyFrame';
 import { stampTissueFlush } from '../tweaks/tissueFlush';
 import { LIVE } from '../tweaks/liveTweaks';
-import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
+import { useCellGalaxyRefOptional } from '../hooks/cellGalaxyContext';
 import type { Vec3 } from '../types';
 import { CELLS_Y } from '../layout';
 import {
@@ -241,6 +241,13 @@ function commitInstanceBatch(batch: THREE.InstancedMesh, count: number): void {
   }
 }
 
+/** The galaxy-less scene's cells: one empty Map, so a layer mounted without a
+ *  provider allocates none per landing. */
+const EMPTY_CELLS: ReadonlyMap<
+  number,
+  { id: number; pos_seed: readonly [number, number, number] }
+> = new Map();
+
 export default function BlockDeliveryLayer({
   posById,
   arrivals,
@@ -250,7 +257,13 @@ export default function BlockDeliveryLayer({
   landingFlashRef,
 }: BlockDeliveryLayerProps) {
   const simClock = useSimClock();
-  const cellsCache = useCellGalaxyOptional();
+  // ⭐ THE REF LANE, not the value lane. This layer reads the cells for one
+  // thing — the nearest-Cell index a landing schedules its flashes off — and
+  // it reads it inside the frame callback, at ingest. Subscribing to the value
+  // re-rendered the whole delivery layer on every cells batch, two or three
+  // times a block, for a cache it looks at once per landing (the same hole
+  // 629aab1d closed for `NetworkColony`).
+  const cellsCacheRef = useCellGalaxyRefOptional();
   const deliveries = useMemo(
     () => {
       // Counted where it is paid: a topology rebuild or a flood re-plans
@@ -294,19 +307,19 @@ export default function BlockDeliveryLayer({
   // The pulse's landing budget (`landingMax`), spent front by front as each
   // schedules — reset with the flush keys when the pulse changes.
   const landingBudgetRef = useRef(0);
-  const cellsToken = cellsCache?.cellsToken ?? null;
-  const nearestCellIndex = useMemo(
-    () => sharedCellNearestIndex(
-      cellsToken,
-      cellsCache?.cells ?? new Map(),
-      cellsCache?.cellChanges,
-    ),
-    // The cache publishes a fresh token exactly when Cell membership/position
-    // changes, so every front of a pulse (hero and peers alike) schedules its
-    // landing flashes off one index without rebuilding per delivery.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cellsToken],
-  );
+  // The cache publishes a fresh token exactly when Cell membership/position
+  // changes, and `sharedCellNearestIndex` is itself memoized on that token, so
+  // every front of a pulse (hero and peers alike) schedules its landing
+  // flashes off one index without rebuilding per delivery — whether it is
+  // asked for here or once per landing in the loop below.
+  const readNearestCellIndex = () => {
+    const cache = cellsCacheRef?.current ?? null;
+    return sharedCellNearestIndex(
+      cache?.cellsToken ?? null,
+      cache?.cells ?? EMPTY_CELLS,
+      cache?.cellChanges,
+    );
+  };
 
   // Shared hop resources: the courier layer's own textures, one material and
   // one geometry per batch for every delivery.
@@ -575,7 +588,7 @@ export default function BlockDeliveryLayer({
               reach,
               budget,
               FRONT_LIVE,
-              nearestCellIndex,
+              readNearestCellIndex(),
             );
             const queue = landingFlashRef.current;
             for (const landing of landings) {

@@ -89,10 +89,25 @@ export function useCellGalaxyRef(): CellGalaxyCacheRef {
 
 /**
  * Non-throwing variant: returns the cache, or `null` when no provider is
- * mounted. For layers whose galaxy interaction is an *enhancement* (e.g.
- * `BlockDeliveryLayer` igniting the cells it lands on) and which must still
- * mount standalone (tests, galaxy-less scenes).
+ * mounted. For layers whose galaxy interaction is an *enhancement* (e.g. a
+ * scene marker keyed on a Cell) and which must still mount standalone (tests,
+ * galaxy-less scenes).
+ *
+ * ⚠️ It SUBSCRIBES. A consumer that only reads the cache inside a frame
+ * callback wants `useCellGalaxyRefOptional` below — this one re-renders it on
+ * every cells batch, which is two or three times a block.
  */
 export function useCellGalaxyOptional(): CellGalaxyCache | null {
   return useContext(CellGalaxyContext);
+}
+
+/**
+ * The non-subscribing, non-throwing pair: the stable handle, or `null` when no
+ * provider is mounted. Same bargain as `useCellGalaxyRef` — the identity holds
+ * for the provider's life, `current` advances at commit — for a layer that
+ * reads the cache at INGEST TIME in its frame loop and must still mount in a
+ * galaxy-less scene.
+ */
+export function useCellGalaxyRefOptional(): CellGalaxyCacheRef | null {
+  return useContext(CellGalaxyRefContext);
 }

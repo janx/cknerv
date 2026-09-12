@@ -423,6 +423,38 @@ function indexRosterVersions(
   };
 }
 
+/**
+ * The same index, built ONCE PER ROSTER RECORD.
+ *
+ * The walk above groups, de-duplicates and sorts every entry the crawler
+ * returned — hundreds of nodes on mainnet — and it was re-run on every call.
+ * The caller re-keys on `chain.producers`, which an attributed block replaces
+ * once every ten seconds or so, while the roster lands on the crawl's own
+ * cadence of minutes. The record is immutable and replaced wholesale by its
+ * reducer arm, so its identity is the whole key; a `WeakMap` means a retired
+ * record takes its index with it. Same bargain as `stageScriptCensus`.
+ *
+ * ⚠️ The index it hands back is SHARED. Nothing may mutate it — the readers
+ * below only look things up, and the sorted arrays inside it are read in
+ * order.
+ */
+const rosterIndexCache = new WeakMap<NetworkRosterRecord, RosterVersionIndex>();
+let emptyRosterIndex: RosterVersionIndex | null = null;
+
+export function rosterVersionIndex(
+  roster: NetworkRosterRecord | null | undefined,
+): RosterVersionIndex {
+  if (roster === null || roster === undefined) {
+    emptyRosterIndex ??= indexRosterVersions(null);
+    return emptyRosterIndex;
+  }
+  const cached = rosterIndexCache.get(roster);
+  if (cached !== undefined) return cached;
+  const built = indexRosterVersions(roster);
+  rosterIndexCache.set(roster, built);
+  return built;
+}
+
 /** The longest indexed version contained in `message`, or `null`.
  *
  *  ⭐ LONGEST WINS, and it is doing more than breaking the tie between a
@@ -464,7 +496,7 @@ export function producerCandidates(
   producers: readonly BlockProducer[],
   roster: NetworkRosterRecord | null | undefined,
 ): Map<string, RosterNode[]> {
-  const index = indexRosterVersions(roster);
+  const index = rosterVersionIndex(roster);
   const out = new Map<string, RosterNode[]>();
   for (const producer of producers) {
     if (producer.key.length === 0) continue;
@@ -679,7 +711,7 @@ export function deriveBlockProducers(
   ledger?: ProducerLedger | null,
 ): BlockProducerView | null {
   if (!producerWindowIsCoherent(chain)) return null;
-  const index = indexRosterVersions(roster);
+  const index = rosterVersionIndex(roster);
   const windowBlocks = chain.producer_window_blocks;
   // Absent, missing and self-contradicting collapse onto one value on purpose:
   // downstream there is exactly one question ("is there a week?") and exactly

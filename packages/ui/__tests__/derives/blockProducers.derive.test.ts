@@ -9,6 +9,7 @@ import {
   producerCandidates,
   producerKeysSignature,
   producerLedgerIsCoherent,
+  rosterVersionIndex,
   PRODUCER_FAN_MAX_CANDIDATES,
   PRODUCER_FAN_MAX_SHARE_OF_VERSIONED,
   PRODUCER_FAN_MIN_CANDIDATES,
@@ -988,5 +989,47 @@ describe('producerKeysSignature', () => {
     expect(producerKeysSignature(null)).toBe('');
     expect(producerKeysSignature(undefined)).toBe('');
     expect(producerKeysSignature(view(chainWith([])))).toBe('');
+  });
+});
+
+describe('rosterVersionIndex', () => {
+  it('builds one index per roster record, however often the chain moves', () => {
+    // The walk groups, de-duplicates and sorts every entry the crawler
+    // returned — hundreds of nodes on mainnet — and the caller re-keys on
+    // `chain.producers`, which an attributed block replaces about once every
+    // ten seconds. The roster lands on the crawl's own cadence of minutes.
+    const first = splitRoster(3, 40);
+    const second = splitRoster(3, 40);
+
+    const index = rosterVersionIndex(first);
+
+    expect(rosterVersionIndex(first)).toBe(index);
+    expect(rosterVersionIndex(first)).toBe(index);
+    // A different RECORD is a different crawl, even with identical content:
+    // the reducer replaces the record wholesale when it replaces it at all.
+    expect(rosterVersionIndex(second)).not.toBe(index);
+    expect(rosterVersionIndex(second).versionedRosterSize)
+      .toBe(index.versionedRosterSize);
+  });
+
+  it('answers an absent roster with one shared empty index', () => {
+    expect(rosterVersionIndex(null)).toBe(rosterVersionIndex(undefined));
+    expect(rosterVersionIndex(null).rosterHasEntries).toBe(false);
+    expect(rosterVersionIndex(null).versionedRosterSize).toBe(0);
+  });
+
+  it('is the same index the view is derived from, cached or not', () => {
+    // The memo may not change an answer. Two views over one roster and two
+    // different chains agree on every fan the index decides.
+    const r = splitRoster(3, 40);
+    const chain = chainWith([producer({ key: '0xa' }), producer({ key: '0xb', message: STOCK_BUILD })]);
+    const before = view(chain, r);
+    const after = view(chainWith([
+      producer({ key: '0xa', blocks: 2 }),
+      producer({ key: '0xb', message: STOCK_BUILD }),
+    ]), r);
+
+    expect(after.staging.map((p) => p.fan)).toEqual(before.staging.map((p) => p.fan));
+    expect(after.versionedRosterSize).toBe(before.versionedRosterSize);
   });
 });

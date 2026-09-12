@@ -226,8 +226,11 @@ describe('A protocol event relay', () => {
     // instant the flush is stamped with, within this front's budget and what
     // is left of the pulse's; each flash carries the crest's own strength
     // there, times the front's punch.
+    // The index is READ HERE, at ingest, off the cells context's ref lane —
+    // this layer looks at the stage once per landing and subscribing to the
+    // value re-rendered the whole delivery layer on every cells batch.
     expect(delivery).toMatch(
-      /landingFlashSchedule\(\s*landingLocal,\s*contactSceneS,\s*reach,\s*budget,\s*FRONT_LIVE,\s*nearestCellIndex,\s*\)/,
+      /landingFlashSchedule\(\s*landingLocal,\s*contactSceneS,\s*reach,\s*budget,\s*FRONT_LIVE,\s*readNearestCellIndex\(\),\s*\)/,
     );
     expect(delivery).toContain('delivery.hero ? LIVE.delivery.landingHero : LIVE.delivery.landingPeer');
     expect(delivery).toContain('landingBudgetRef.current = LIVE.delivery.landingMax;');
