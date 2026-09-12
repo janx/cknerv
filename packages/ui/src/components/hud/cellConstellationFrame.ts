@@ -122,6 +122,65 @@ interface ConstellationSeatTween {
   startedMs: number;
 }
 
+/** Anything with an inline style — the writer owns both HTML plates and SVG
+ *  strokes, and gates them the same way. */
+type StyledElement = HTMLElement | SVGElement;
+
+/**
+ * A write the element does not already agree with, and nothing else.
+ *
+ * ⚠️ THE GATE READS THE ELEMENT, NOT A VALUE REMEMBERED ON THE HANDLE. Every
+ * node here is a React ref and can be replaced between two frames; a memo on
+ * the handle is then a claim about a node that is no longer in the tree, and
+ * the first frame after a remount would write nothing to a blank element. An
+ * attribute read is a hash lookup and an inline-style read is a CSSOM property
+ * read; what the gate saves is the style invalidation, the mutation record and
+ * the paint that follow a write.
+ *
+ * Measured 2026-09-12 over a 300-frame drift: 111 writes a frame, 92 of them
+ * setting the value that was already there, and 15 a frame at rest of which
+ * every single one was same-value.
+ */
+function setAttributeOnChange(element: Element | null, name: string, value: string): void {
+  if (!element || element.getAttribute(name) === value) return;
+  element.setAttribute(name, value);
+}
+function setStyleOnChange(
+  element: StyledElement | null,
+  property: 'visibility' | 'display' | 'opacity',
+  value: string,
+): void {
+  if (!element || element.style[property] === value) return;
+  element.style[property] = value;
+}
+function setDataOnChange(element: StyledElement | null, key: string, value: string): void {
+  if (!element || element.dataset[key] === value) return;
+  element.dataset[key] = value;
+}
+function deleteDataIfPresent(element: StyledElement | null, key: string): void {
+  if (!element || element.dataset[key] === undefined) return;
+  delete element.dataset[key];
+}
+
+/** Where a transform was last written, and to which node.
+ *
+ * ⚠️ Transforms are gated on the NUMBERS, not on the string read back: a
+ * browser is entitled to reserialise `translate3d(1px, 2px, 0)` and a gate
+ * that compared the serialisation would simply never hit. The node is part of
+ * the memo for the same reason the gates above read the element. */
+interface TransformSeat {
+  node: StyledElement | null;
+  x: number;
+  y: number;
+}
+function seatedAt(seat: TransformSeat, node: StyledElement, x: number, y: number): boolean {
+  if (seat.node === node && seat.x === x && seat.y === y) return true;
+  seat.node = node;
+  seat.x = x;
+  seat.y = y;
+  return false;
+}
+
 interface ConstellationFrameRequest {
   connectorKey: string;
   layoutKey: string;
@@ -173,6 +232,7 @@ export interface ConstellationPanelHandle {
    * rather than flown in from the seat of the node it replaced. */
   seatX: number;
   seatY: number;
+  seatWidth: number;
   seatHeight: number;
   seatHost: HTMLDivElement | null;
   /** The seat this plate is HEADING for, which is the seat it stands on
@@ -189,6 +249,8 @@ export interface ConstellationPanelHandle {
   tween: ConstellationSeatTween | null;
 }
 export interface ConstellationLeaderHandle {
+  /** Where this leader's tag was last transformed to. */
+  labelSeat: TransformSeat;
   /** The <g> the two strokes, the endpoint and the mask live in. The writer
    * marks it `data-cell-leader-degraded` so the injected sheet can dash a
    * fallback leader without anything re-rendering. */
@@ -213,6 +275,10 @@ export interface CellConstellationHandles {
    * only so a relocation can be counted once per move instead of once per
    * frame; nothing reads it to decide anything. */
   chipPosition: ConstellationChipPosition | '';
+  /** Where the two marks were last transformed to. They are written on every
+   *  frame the writer owns, including the ones it decides nothing on. */
+  reticleSeat: TransformSeat;
+  chipSeat: TransformSeat;
   lock: ConstellationLock;
   visible: boolean;
   leaving: boolean;
@@ -307,18 +373,23 @@ export function createCellConstellationHandles(
       host: null, positionedHost: null, fallbackLabel: null,
       width: CONSTELLATION_WIDTH[slot] ?? 408,
       height: 0, present: false,
-      seatX: Number.NaN, seatY: Number.NaN, seatHeight: Number.NaN, seatHost: null,
+      seatX: Number.NaN, seatY: Number.NaN,
+      seatWidth: Number.NaN, seatHeight: Number.NaN, seatHost: null,
       targetX: Number.NaN, targetY: Number.NaN, targetHeight: Number.NaN,
       tween: null,
     };
     leaders[slot] = {
       group: null, under: null, over: null, dot: null, label: null,
       labelWidth: slot === 'specimen' ? 78 : 62, labelHeight: 20,
+      labelSeat: { node: null, x: Number.NaN, y: Number.NaN },
     };
   }
   return {
     root: null, panels, leaders, maskGroup: null, reticle: null, chip: null,
-    chipWidth: 0, chipHeight: 0, chipPosition: '', lock: createConstellationLock(),
+    chipWidth: 0, chipHeight: 0, chipPosition: '',
+    reticleSeat: { node: null, x: Number.NaN, y: Number.NaN },
+    chipSeat: { node: null, x: Number.NaN, y: Number.NaN },
+    lock: createConstellationLock(),
     visible: false, leaving: false, frameKey: '', layoutKey: '', connectorKey: '',
     placementKey: '', maskKey: '',
     lastLayout: null, lastSpecimen: null, quadrant: {}, quadrantListeners: new Set(),
@@ -433,9 +504,45 @@ function placementSignature(placements: readonly ConstellationPlacement[]): stri
 function notifyQuadrants(handles: CellConstellationHandles): void {
   handles.quadrantListeners.forEach((listener) => listener());
 }
+/**
+ * The cuts the leaders are drawn around.
+ *
+ * While a composition stands, the only cut that moves is the name chip's — it
+ * tracks the Cell — and the mask key is bucketed at half a pixel, so this runs
+ * on 14–38 % of drifting frames for two coordinates. Rebuilding ten rectangles
+ * and replacing the group's children for them cost the raster thread the whole
+ * mask; updating them in place costs two attributes. The set is rebuilt only
+ * when it is a different set, which is a seat arriving or leaving.
+ */
+/** What the root says about the picture: three words the injected sheet and
+ *  the review labs read, written by every presentation path. */
+function writeRootLayoutWords(
+  handles: CellConstellationHandles,
+  layout: ConstellationLayout,
+): void {
+  const root = handles.root;
+  if (!root) return;
+  setDataOnChange(root, 'cellConstellationStatus', layout.status);
+  setDataOnChange(root, 'cellConstellationLeaders', layout.leaders);
+  if (layout.template) setDataOnChange(root, 'cellConstellationTemplate', layout.template);
+  else deleteDataIfPresent(root, 'cellConstellationTemplate');
+}
+
 function writeMasks(handles: CellConstellationHandles, masks: readonly HudOcclusionRect[]): void {
   const group = handles.maskGroup;
   if (!group) return;
+  const cuts = group.children;
+  if (cuts.length === masks.length) {
+    for (let index = 0; index < masks.length; index += 1) {
+      const cut = cuts[index];
+      const mask = masks[index];
+      setAttributeOnChange(cut, 'x', `${mask.left}`);
+      setAttributeOnChange(cut, 'y', `${mask.top}`);
+      setAttributeOnChange(cut, 'width', `${Math.max(0, mask.right - mask.left)}`);
+      setAttributeOnChange(cut, 'height', `${Math.max(0, mask.bottom - mask.top)}`);
+    }
+    return;
+  }
   const nodes: SVGRectElement[] = [];
   for (const mask of masks) {
     const node = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -452,7 +559,7 @@ function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<str
   for (const slot of CONSTELLATION_SLOTS) {
     if (present.has(slot)) continue;
     const panel = handles.panels[slot];
-    if (panel.host) panel.host.style.visibility = 'hidden';
+    setStyleOnChange(panel.host, 'visibility', 'hidden');
     panel.positionedHost = null;
     // An instrument that is not in this picture has no seat to travel from;
     // the next one it appears in places it outright.
@@ -461,11 +568,11 @@ function clearAbsent(handles: CellConstellationHandles, present: ReadonlySet<str
     panel.targetX = Number.NaN;
     panel.targetY = Number.NaN;
     const leader = handles.leaders[slot];
-    leader.under?.setAttribute('d', '');
-    leader.over?.setAttribute('d', '');
-    if (leader.group) leader.group.dataset.cellLeaderDegraded = 'false';
-    if (leader.dot) leader.dot.style.display = 'none';
-    if (leader.label) leader.label.style.display = 'none';
+    setAttributeOnChange(leader.under, 'd', '');
+    setAttributeOnChange(leader.over, 'd', '');
+    setDataOnChange(leader.group, 'cellLeaderDegraded', 'false');
+    setStyleOnChange(leader.dot, 'display', 'none');
+    setStyleOnChange(leader.label, 'display', 'none');
     writeFallback(handles.panels[slot].fallbackLabel, false);
   }
 }
@@ -485,7 +592,9 @@ function writePanelPosition(
   x: number,
   y: number,
 ): void {
-  host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  if (panel.seatHost !== host || panel.seatX !== x || panel.seatY !== y) {
+    host.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  }
   panel.seatX = x;
   panel.seatY = y;
   panel.seatHost = host;
@@ -502,9 +611,10 @@ function writePanelSize(
   height: number,
   capped: boolean,
 ): void {
-  host.style.width = `${width}px`;
-  host.style.height = `${height}px`;
-  host.dataset.cellPanelCapped = capped ? 'true' : 'false';
+  if (panel.seatWidth !== width || panel.seatHost !== host) host.style.width = `${width}px`;
+  if (panel.seatHeight !== height || panel.seatHost !== host) host.style.height = `${height}px`;
+  setDataOnChange(host, 'cellPanelCapped', capped ? 'true' : 'false');
+  panel.seatWidth = width;
   panel.seatHeight = height;
 }
 
@@ -563,13 +673,16 @@ function writePanelPlacement(
     };
     // The width and the cut are the answer's, from this frame. Only the three
     // quantities that carry the plate across the stage are travelled.
-    host.style.width = `${placement.width}px`;
-    host.dataset.cellPanelCapped = placement.capped ? 'true' : 'false';
-    host.dataset.cellPanelQuadrant = placement.quadrant;
+    if (panel.seatWidth !== placement.width || panel.seatHost !== host) {
+      host.style.width = `${placement.width}px`;
+      panel.seatWidth = placement.width;
+    }
+    setDataOnChange(host, 'cellPanelCapped', placement.capped ? 'true' : 'false');
+    setDataOnChange(host, 'cellPanelQuadrant', placement.quadrant);
     writeSeatTweenAt(panel, panel.tween, 0);
   } else if (placementChanged || panel.positionedHost !== host) {
     writePanelSize(panel, host, placement.width, placement.height, placement.capped);
-    host.dataset.cellPanelQuadrant = placement.quadrant;
+    setDataOnChange(host, 'cellPanelQuadrant', placement.quadrant);
     if (panel.tween) {
       // A journey is in flight and this is not a new one: the clamped
       // presentation writing measured rows into a plate on its way somewhere,
@@ -590,7 +703,7 @@ function writePanelPlacement(
     panel.targetHeight = placement.height;
   }
   panel.positionedHost = host;
-  host.style.visibility = 'visible';
+  setStyleOnChange(host, 'visibility', 'visible');
   return travel;
 }
 
@@ -620,7 +733,7 @@ function writeSeatTweenAt(
   const y = tween.fromY + (tween.toY - tween.fromY) * eased;
   const height = tween.fromHeight + (tween.toHeight - tween.fromHeight) * eased;
   writePanelPosition(panel, host, x, y);
-  host.style.height = `${height}px`;
+  if (panel.seatHeight !== height) host.style.height = `${height}px`;
   panel.seatHeight = height;
 }
 
@@ -709,6 +822,7 @@ export function resetConstellationSeats(handles: CellConstellationHandles): void
     panel.seatHost = null;
     panel.seatX = Number.NaN;
     panel.seatY = Number.NaN;
+    panel.seatWidth = Number.NaN;
     panel.seatHeight = Number.NaN;
     panel.targetX = Number.NaN;
     panel.targetY = Number.NaN;
@@ -725,20 +839,19 @@ function writeLeader(handles: CellConstellationHandles,
   const route = placement.route;
   if (!route || !leader) return;
   const d = pathData(route.points);
-  leader.under?.setAttribute('d', d);
-  leader.over?.setAttribute('d', d);
-  if (leader.group) {
-    leader.group.dataset.cellLeaderDegraded = route.degraded ? 'true' : 'false';
-  }
+  setAttributeOnChange(leader.under, 'd', d);
+  setAttributeOnChange(leader.over, 'd', d);
+  setDataOnChange(leader.group, 'cellLeaderDegraded', route.degraded ? 'true' : 'false');
   const end = route.points[route.points.length - 1];
   if (leader.dot) {
-    leader.dot.style.display = '';
-    leader.dot.setAttribute('cx', `${end.x}`);
-    leader.dot.setAttribute('cy', `${end.y}`);
+    setStyleOnChange(leader.dot, 'display', '');
+    setAttributeOnChange(leader.dot, 'cx', `${end.x}`);
+    setAttributeOnChange(leader.dot, 'cy', `${end.y}`);
   }
   if (leader.label) {
-    leader.label.style.display = route.label.inPanel ? 'none' : '';
-    if (!route.label.inPanel) {
+    setStyleOnChange(leader.label, 'display', route.label.inPanel ? 'none' : '');
+    if (!route.label.inPanel
+      && !seatedAt(leader.labelSeat, leader.label, route.label.x, route.label.y)) {
       leader.label.style.transform =
         `translate3d(${route.label.x}px, ${route.label.y}px, 0) translate(-50%, -50%)`;
     }
@@ -825,7 +938,7 @@ function holdStaleSeats(
       || placement.x + placement.width > stageWidth - edge + 0.5
       || placement.y + placement.height > stageHeight - edge + 0.5;
     if (standingOnTheCell || offStage) {
-      panel.host.style.visibility = 'hidden';
+      setStyleOnChange(panel.host, 'visibility', 'hidden');
       panel.positionedHost = null;
       continue;
     }
@@ -906,10 +1019,10 @@ function applyLeaderVisibility(handles: CellConstellationHandles): void {
   const visibility = visible ? '' : 'hidden';
   for (const slot of CONSTELLATION_SLOTS) {
     const leader = handles.leaders[slot];
-    if (leader.under) leader.under.style.visibility = visibility;
-    if (leader.over) leader.over.style.visibility = visibility;
-    if (leader.dot) leader.dot.style.visibility = visibility;
-    if (leader.label) leader.label.style.visibility = visibility;
+    setStyleOnChange(leader.under, 'visibility', visibility);
+    setStyleOnChange(leader.over, 'visibility', visibility);
+    setStyleOnChange(leader.dot, 'visibility', visibility);
+    setStyleOnChange(leader.label, 'visibility', visibility);
     // The in-panel fallback is not a leader: it is the instrument's own name,
     // set in its head, and it travels WITH the plate. A journey takes the line
     // down and gives it back; it does not un-write what the route asked for.
@@ -917,7 +1030,8 @@ function applyLeaderVisibility(handles: CellConstellationHandles): void {
   }
 }
 function writeFallback(label: HTMLElement | null, visible: boolean): void {
-  if (!label) return;
+  // The five go in together or not at all, so one of them answers for all five.
+  if (!label || label.style.visibility === (visible ? 'visible' : 'hidden')) return;
   label.style.visibility = visible ? 'visible' : 'hidden';
   label.style.position = visible ? 'static' : 'absolute';
   label.style.maxWidth = visible ? '90px' : '0';
@@ -1102,16 +1216,20 @@ function writeMovingMarks(
   anchorY: number,
   chip: ConstellationChipPlacement,
 ): void {
-  if (handles.reticle) {
+  const reticle = handles.reticle;
+  if (reticle) {
     const half = CONSTELLATION_RETICLE_PX / 2;
-    handles.reticle.style.transform =
-      `translate3d(${anchorX - half}px, ${anchorY - half}px, 0)`;
+    const x = anchorX - half;
+    const y = anchorY - half;
+    if (!seatedAt(handles.reticleSeat, reticle, x, y)) {
+      reticle.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
   }
   if (chip.position !== handles.chipPosition) {
     if (!chip.preferred) observeConstellationChipRelocation();
     handles.chipPosition = chip.position;
   }
-  if (handles.chip) {
+  if (handles.chip && !seatedAt(handles.chipSeat, handles.chip, chip.x, chip.y)) {
     handles.chip.style.transform =
       `translate3d(${chip.x}px, ${chip.y}px, 0) translateX(-50%)`;
   }
@@ -1206,7 +1324,7 @@ function applyRefinedRoutes(
     handles.maskKey = nextMaskKey;
     writeMasks(handles, applied.masks);
   }
-  if (handles.root) handles.root.dataset.cellConstellationLeaders = applied.leaders;
+  setDataOnChange(handles.root, 'cellConstellationLeaders', applied.leaders);
   for (const placement of applied.placements) {
     writeLeader(handles, placement);
     if (placement.slot === 'specimen') handles.lastSpecimen = placement;
@@ -1334,12 +1452,14 @@ export function suspendConstellationFrame(
   setLeadersVisible(handles, false);
   for (const slot of CONSTELLATION_SLOTS) {
     const panel = handles.panels[slot];
-    if (panel.host && !panelHostIsPositioned(panel)) panel.host.style.visibility = 'hidden';
+    if (panel.host && !panelHostIsPositioned(panel)) {
+      setStyleOnChange(panel.host, 'visibility', 'hidden');
+    }
   }
   // The reticle and identity chip remain useful even when a first selection or
   // a newly opened slot has no legal panel seat yet.
   setConstellationVisible(handles, true);
-  if (handles.root) handles.root.dataset.cellConstellationMotion = 'moving';
+  setDataOnChange(handles.root, 'cellConstellationMotion', 'moving');
   return currentSpecimenPlacement(handles);
 }
 
@@ -1408,12 +1528,7 @@ function applyLayout(handles: CellConstellationHandles,
   const nextMaskKey = rectKey(layout.masks);
   const maskChanged = nextMaskKey !== handles.maskKey;
   handles.maskKey = nextMaskKey;
-  if (handles.root) {
-    handles.root.dataset.cellConstellationStatus = layout.status;
-    handles.root.dataset.cellConstellationLeaders = layout.leaders;
-    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
-    else delete handles.root.dataset.cellConstellationTemplate;
-  }
+  writeRootLayoutWords(handles, layout);
   const present = new Set(layout.placements.map((panel) => panel.slot));
   clearAbsent(handles, present);
   let specimen: ConstellationPlacement | null = null;
@@ -1453,12 +1568,7 @@ function applyProvisionalRoutes(
     handles.maskKey = nextMaskKey;
     writeMasks(handles, layout.masks);
   }
-  if (handles.root) {
-    handles.root.dataset.cellConstellationStatus = layout.status;
-    handles.root.dataset.cellConstellationLeaders = layout.leaders;
-    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
-    else delete handles.root.dataset.cellConstellationTemplate;
-  }
+  writeRootLayoutWords(handles, layout);
   let specimen: ConstellationPlacement | null = null;
   let quadrantsMoved = false;
   let travelling = false;
@@ -1496,12 +1606,7 @@ function applyPanelPresentation(
   const nextPlacementKey = placementSignature(layout.placements);
   const placementChanged = nextPlacementKey !== handles.placementKey;
   handles.placementKey = nextPlacementKey;
-  if (handles.root) {
-    handles.root.dataset.cellConstellationStatus = layout.status;
-    handles.root.dataset.cellConstellationLeaders = layout.leaders;
-    if (layout.template) handles.root.dataset.cellConstellationTemplate = layout.template;
-    else delete handles.root.dataset.cellConstellationTemplate;
-  }
+  writeRootLayoutWords(handles, layout);
   const present = new Set(layout.placements.map((panel) => panel.slot));
   clearAbsent(handles, present);
   let specimen: ConstellationPlacement | null = null;
@@ -1609,7 +1714,7 @@ export function advanceConstellationFrame(
   now: () => number = () => performance.now(),
 ): ConstellationPlacement | null {
   handles.motionSuspended = false;
-  if (handles.root) delete handles.root.dataset.cellConstellationMotion;
+  deleteDataIfPresent(handles.root, 'cellConstellationMotion');
   beginFrameBudget(frameToken);
   // Before anything else the frame might decide, and on every frame including
   // the ones it decides nothing on: a travel is 240 real milliseconds and most
@@ -1668,29 +1773,6 @@ export function advanceConstellationFrame(
   if (desired.layoutKey !== handles.layoutKey) cancelRefineJob(handles);
 
   const geometryPending = desired.layoutKey !== handles.layoutKey;
-  const provisionalGeometryValid = handles.provisionalBaseLayout !== null
-    && desired.panelKey === handles.provisionalBasePanelKey
-    && constellationLayoutHardValid(desired.input, handles.provisionalBaseLayout);
-  let provisional = showValidatedProvisional(handles, desired);
-  let panelPresentation: ConstellationPlacement | null | undefined;
-  let heldSeats: ConstellationPlacement | null | undefined;
-  if (provisional === undefined) {
-    if (provisionalGeometryValid) {
-      panelPresentation = applyPanelPresentation(
-        handles, handles.provisionalBaseLayout as ConstellationLayout,
-      );
-    } else {
-      // The held seats no longer answer the current request, but they are
-      // still where the reader's eyes are. Keep them at the height their
-      // content now asks for, withdraw only a plate the Cell has walked into,
-      // and show the leaders that can still be carried. The root's opacity
-      // belongs to the off-screen test and to the exit, both in the overlay.
-      handles.provisionalVisible = false;
-      handles.presentationDirty = true;
-      setConstellationVisible(handles, true);
-      heldSeats = holdStaleSeats(handles, desired);
-    }
-  }
 
   let job = handles.layoutJob;
   if (job && job.request.layoutKey !== desired.layoutKey) {
@@ -1713,7 +1795,51 @@ export function advanceConstellationFrame(
   if (!job.lockedOnly) cancelRefineJob(handles);
   announceFrameBudgetWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
   handles.layoutPendingFrames += 1;
-  if (!mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET)) {
+  const admitted = mayStartFrameWork(FRAME_BUDGET_PANEL_SOLVE, PANEL_SLICE_BUDGET);
+
+  let provisional: ConstellationPlacement | null | undefined;
+  let panelPresentation: ConstellationPlacement | null | undefined;
+  let heldSeats: ConstellationPlacement | null | undefined;
+  let presented = false;
+  /**
+   * The cheap answer: the last picture carried one half-pixel bucket, or the
+   * held seats without their leaders, or the seats the reader can still see.
+   *
+   * ⚠️ IT IS ONLY WORTH WRITING WHEN THE REAL ONE IS NOT COMING THIS FRAME.
+   * The locked cursor lands on 94 % of drifting frames and its landing writes
+   * every leader again, so asking this question first cost a `revalidate` (40 %
+   * of the frame's solver time) and a whole presentation that the landing
+   * overwrote inside the same slice. So the admission is decided first and an
+   * anchor-only frame whose locked cursor is admitted runs it and shows this
+   * only if it did not land.
+   */
+  const presentTheSeed = (): void => {
+    if (presented) return;
+    presented = true;
+    provisional = showValidatedProvisional(handles, desired);
+    if (provisional !== undefined) return;
+    if (handles.provisionalBaseLayout !== null
+      && desired.panelKey === handles.provisionalBasePanelKey
+      && constellationLayoutHardValid(desired.input, handles.provisionalBaseLayout)) {
+      panelPresentation = applyPanelPresentation(handles, handles.provisionalBaseLayout);
+      return;
+    }
+    // The held seats no longer answer the current request, but they are
+    // still where the reader's eyes are. Keep them at the height their
+    // content now asks for, withdraw only a plate the Cell has walked into,
+    // and show the leaders that can still be carried. The root's opacity
+    // belongs to the off-screen test and to the exit, both in the overlay.
+    handles.provisionalVisible = false;
+    handles.presentationDirty = true;
+    setConstellationVisible(handles, true);
+    heldSeats = holdStaleSeats(handles, desired);
+  };
+  // A composition that is still being solved may take many frames, and the
+  // reader may not wait in front of nothing for them: that frame shows the
+  // seed first and always. Only the anchor-only frame, whose answer arrives
+  // inside this one, can afford to wait for it.
+  if (!(admitted && !geometryPending && job.lockedOnly)) presentTheSeed();
+  if (!admitted) {
     if (handles.provisionalVisible) observeConstellationProvisionalFrame();
     return provisional ?? panelPresentation ?? heldSeats ?? null;
   }
@@ -1762,7 +1888,10 @@ export function advanceConstellationFrame(
       break;
     }
 
-    provisional = showValidatedProvisional(handles, latest);
+    // The solve that just finished answered an older half-pixel bucket. The
+    // seed is NOT shown here: the locked job starting below may well land
+    // inside this same slice, and then this frame would have presented the
+    // picture twice. If it does not land, the seed goes up after the loop.
     latest.input.lock = cloneLock(handles.lock);
     job = startLayoutJob(latest, true);
     handles.layoutJob = job;
@@ -1773,6 +1902,9 @@ export function advanceConstellationFrame(
   spendFrameBudget(FRAME_BUDGET_PANEL_SOLVE, elapsed);
   observeConstellationCursorSlice(elapsed, false);
   endCpuProbe(sliceProbe);
+  // The answer did not arrive after all — the cursor is mid-flight, or it gave
+  // up and handed the frame to a full solve. The seed is what the reader gets.
+  if (landed === undefined) presentTheSeed();
   if (landed !== undefined) observeConstellationCursorLanding();
   else if (handles.provisionalVisible) observeConstellationProvisionalFrame();
   // The locked cursor may have given up inside the loop and handed the frame to
@@ -1796,7 +1928,7 @@ export function advanceConstellationFrame(
 export function setConstellationVisible(handles: CellConstellationHandles, visible: boolean): void {
   if (visible === handles.visible) return;
   handles.visible = visible;
-  if (handles.root) handles.root.style.opacity = visible ? '1' : '0';
+  setStyleOnChange(handles.root, 'opacity', visible ? '1' : '0');
 }
 export function invalidateConstellationFrame(handles: CellConstellationHandles): void {
   cancelLayoutJob(handles);
@@ -1825,7 +1957,5 @@ export function invalidateConstellationFrame(handles: CellConstellationHandles):
   handles.presentationDirty = false;
   handles.lastRequest = null;
   handles.lastRequestObstacleVersion = -1;
-  if (!handles.motionSuspended && handles.root) {
-    delete handles.root.dataset.cellConstellationMotion;
-  }
+  if (!handles.motionSuspended) deleteDataIfPresent(handles.root, 'cellConstellationMotion');
 }
