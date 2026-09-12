@@ -25,7 +25,9 @@ the benchmark cannot run at all. `empty` is the right loader rather than
 `dataurl` or `file`: the URLs are only interpolated into an `@font-face` string
 this benchmark never evaluates, and embedding a quarter-megabyte of font in a
 CPU harness would measure the bundler. Any new module the benchmark's import
-graph reaches that brings a non-code asset with it needs its own loader here. It uses deterministic synthetic Cells only to isolate CPU
+graph reaches that brings a non-code asset with it needs its own loader here.
+
+The harness uses deterministic synthetic Cells only to isolate CPU
 algorithms; it does not create a DOM, WebGL context, or second Canvas. Topology
 preparation and warm-up are reported separately from timed samples. Run CPU
 benchmarks serially with other heavy work stopped.

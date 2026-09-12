@@ -89,6 +89,54 @@ the representative geometry, encoded evidence, event frame, label placement,
 color, and typography tokens under ordinary `pnpm test`. Update it only with an
 intentional visual-language change and a matching browser review.
 
+## Quality-neutral Optimization Pairs
+
+A task that claims a change is INVISIBLE owes a pair of captures of the same
+pose, one per side of the change, and has to say which poses a pixel diff can
+answer for and which only an eye can. Two pairs from the 2026-09-12 render-perf
+pass, with the recipe each was taken with:
+
+**Two-sided materials drawn in one pass** (`forceSinglePass` at every
+`DoubleSide` declaration; the renderer otherwise draws back faces and front
+faces as two passes). Three of the four affected poses are transparent
+two-sided geometry whose ordering a reader could in principle see:
+
+| Pose | Capture | Diff answers? |
+|---|---|---|
+| Portrait ribbon | `/?cell-relic-lab=1&cell=<id>` — the controlled matrix, reduced motion, one pinned source Cell | Yes, byte-identical across independent loads |
+| Selection glyph | `/?cell-proof-lab=1&stage=key&quality=high&cell=<id>` | Yes, byte-identical across independent loads |
+| Cohort lens at a close dolly | production, seven wheel notches in from the fitted pose | No — two captures of the SAME build differ by 47 % |
+| Contact wave on a landing | production, four shots 220 ms apart off `__blockFrameStats().count` | No — same-build floor 22 % |
+
+Pin a Cell that is still STAGED: the oldest staged native (the Lab's own
+fallback) rotates off the stage within minutes, while a median-birth native
+holds for a whole session. Both Labs report the resolved id, so record it
+(`data-review-cell`, and the relic Lab's header line) with the capture. Take
+two loads per side, two shots three seconds apart in each, and hash all four:
+the first load after a source edit carries vite's re-transform timing and can
+differ in a readout band that is not the material.
+
+**The tier a busy machine keeps, and the frame a leader comes back on** (§13's
+busy-aware down-gate and §11.3's drift-settled motion window). Neither has a
+pose of its own — what changes is WHICH tier the page is in and WHEN hidden
+leaders return — so both are read as a tier plus a frame count, with a capture
+of the tier the eye is being asked about:
+
+- Idle for 90 s with a load competitor beside the page and nothing else
+  touched, at `/?render-stats=1` with no explicit `quality=`: record
+  `data-quality-effective` and `__qualityStats()` every 5 s. AUTO must hold the
+  tier it warmed at; a walk down to Low is the fault this gate refuses. Capture
+  the scene at the start and the end — the same density, the same DPR, the same
+  ambient counts.
+- Release an orbit of about a tenth of a radian on a page with a Cell selected
+  and record, per frame, `poseDriftPx`, whether any `[data-cell-leader]` is
+  visible, and whether a hover answers. The leaders and picking must come back
+  within about 40 frames of the release, not 120; nothing about the leader
+  geometry may differ from the pose's at-rest capture.
+
+Read both of these on a real GPU. A software rasterizer renders this scene at
+about a frame a second, which is neither a frame budget nor a damping tail.
+
 ## Production Cell Inspection Layout
 
 Review this behavior on the production dashboard route with a real snapshot;

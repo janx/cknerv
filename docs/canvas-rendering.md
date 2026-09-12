@@ -841,22 +841,48 @@ The pipeline is latest-only:
   list, against the selection the request named. The values ride whole
   because they are not stable while the keys are — an arbor weight is
   `sqrt(subtreeSize / maxSubtreeSize)` over the forest, so one birth or death
-  in the largest tree rescales every weight, and the trunk tier reads every
-  edge's weight on every build. The main thread merges the patch into the
+  in the largest of the fourteen trees rescales every weight in the drawn
+  selection. The main thread merges the patch into the
   list it holds, in place and in order (O(edges + churn), no Map or Set
-  built), replacing only the records whose values moved (records are values:
-  the fabric's deferred cohorts hold them across builds); the same merge
+  built); the same merge
   yields the selection delta the fabric grows and kills from, `removed` being
-  the very records the list dropped. Any generation gap sends the whole list;
+  the very records the list dropped. The exact weights land BESIDE the list
+  rather than inside it: `PassiveSelection.weights` is a growth-only
+  `Float64Array` the landing overwrites at every index on every build, and the
+  two readers that need a weight exactly read it there — the width tier, which
+  sorts the whole selection's weights, and the fabric at the instant it ADMITS
+  an edge, where brightness and trunkness are frozen into a state nothing
+  re-derives. A RECORD is then replaced, never edited, and only when a reader
+  could see the difference: its distance moved, its weight crossed a class
+  (`passiveWeightClass` — carrying an arbor at all, and carrying one that can
+  reach the wide pass), or its weight moved by more than
+  `PASSIVE_WEIGHT_GRAIN`. Records stay values, because the fabric's deferred
+  cohorts hold them across builds; what the grain removes is the rescale, which
+  had been replacing 4,400–6,000 of 8,000 records a block (measured 5,070 mean
+  → 3,777 on the 12,000-Cell bench stage, and 5,874 → 4,350 a patched block
+  live) with the tier, its threshold and every admitted edge's brightness
+  byte-identical either way. Any generation gap sends the whole list;
   and
 - worker creation, execution, message or watchdog failure enters cooperative
   main-thread recovery over the same canonical generators. Cell collection,
   k-nearest buckets, lifelines, component stitching, arbor construction,
   passive ranking and graph packing yield between bounded groups under the
-  shared frame ledger. Recovery reads the immutable render-set publication
-  captured for its generation, publishes only the complete graph, and is
-  cancelled immediately on supersession or disposal, including its pending
-  timer or MessageChannel task. Worker reconstruction backs off from 1 to 30
+  shared frame ledger. A slice the ledger refuses does not re-ask on a timer:
+  it WAITS for one of the two signals that can change the answer — the ledger
+  opening on a frame (`onFrameBudgetOpened`) and the page becoming visible
+  again — where re-asking every 16 ms spent 60 wakeups a second against a full
+  ledger, 22 of them through 400 ms of a hidden page where nothing can change.
+  Both the wake and the cancel are one-shot, so a recovery cancelled while it
+  waited leaves no listener behind. Recovery reads the immutable render-set
+  publication captured for its generation, publishes only a COMPLETE build, and
+  is cancelled immediately on supersession or disposal, including its pending
+  timer or MessageChannel task. While the worker stays down its passive
+  selection reaches the caller the way the worker session's does — its own
+  build diffed against the list the caller holds, landed as a patch, because a
+  whole list costs the fabric a whole reconcile per generation for the forty
+  edges of churn a block brings. The display graph still goes over whole: both
+  graphs share one heap, so packing 12,000 nodes to unpack them again would buy
+  nothing. Worker reconstruction backs off from 1 to 30
   seconds. Diagnostics record fallback reason, slices, maximum slice/step,
   completions, cancellations and pending tasks in addition to patched, whole,
   unchained and stale applies.
@@ -948,6 +974,23 @@ for decay. GPU lifecycle uniforms advance growth, death, warmth, masks, and
 recall without rewriting every position each frame. Normal topology churn uses
 slot-level dirty uploads; full walks are reserved for global or structural
 changes.
+
+A WHOLE reconcile — the landing that carries no delta: a supersession, a worker
+fallback, a fabric remount, the boot — is a cursor with the same three phases
+every other bounded job here has. `beginSetFabric` opens the scratch and
+settles the facts about the whole selection (the width tier, the flush of a
+previous oversized diff's staggered remainder); `stepSetFabric` classifies
+`FABRIC_RECONCILE_SCAN_CHUNK` (512) edges at a time, and the drain reads its
+budget between slices; `commitSetFabric` marks the deaths and admits the births
+in one uninterruptible pass, because half a compaction is not a smaller
+compaction, it is a wrong fabric. The scan writes only scratch beyond the two
+repairs this path has always made in place (a revival, a slot recovered after a
+capacity clip), which the reconcile replacing it would make again — so the
+queue holds the scratch across frames and DROPS it, never repairs it, when a
+remount supersedes the landing under it. Measured on the 12,000-Cell stage the
+classifying walk is 16 steps of 0.13–0.96 ms where it was one 4.3–7.7 ms walk,
+and the states and slots it leaves are the one-shot's, cold build and five
+chained landings, against a golden.
 
 Slot order is spatially random (id-sorted boot order over hashed positions,
 LIFO hole reuse), so a clustered dirty set is uniformly scattered in slot space
@@ -1270,7 +1313,16 @@ separate from the Cell topology even when both respond to the same block.
 The topology contains:
 
 - one local CKB node, aligned with the shared chain-node anchor;
-- measured peers positioned deterministically by peer ID and reported latency;
+- measured peers positioned deterministically by peer ID and reported latency.
+  The radius is a STEP of that latency (`PEER_LATENCY_STEPS` over
+  0–`PEER_LATENCY_CAP_MS`), and the step a peer stands on is HELD against
+  jitter: a boundary sits half a step from either centre, so a ping straddling
+  one flipped the mark 1.4 world units back and forth on alternate telemetry
+  refreshes — and the step is part of the colony's memo key (§15.1), so each
+  flip rebuilt the whole colony. `heldLatencyPlacementStep` releases the held
+  step only once the reading is a full step from the ring the peer is standing
+  on, which is a deadband of ±25 ms about that ring and no deadband at all for
+  a ping that really moved;
 - sighted peers — roster identities the crawler names but the local node has no
   link to — on placements we invented, so a real identity is never drawn as if
   it were an observed connection;
@@ -2213,7 +2265,15 @@ current staged structure.
      cannot revive a dying edge, grows in `FABRIC_LANDING_GROW_CHUNK` 256-edge
      chunks. The edge-key translation runs at DRAIN time, not at landing time,
      so a stroke's `bornAt` is the clock of the frame it enters on rather than a
-     clock already in the past. The queue publishes `fabricLandedVersionRef`
+     clock already in the past. A whole reconcile is sliced on the same terms
+     (§8.4): its classifying walk is a 512-edge cursor the drain can put down,
+     its commit is atomic, and while one is at the HEAD the drain asks the
+     ledger `max(last drain, FRAME_HEAVY_BUDGET_MS)` rather than what the last
+     grow chunk cost, because the last grow chunk predicts nothing about a pass
+     that walks every state the fabric holds — the one-step shape put a 12.3 ms
+     frame on the ledger and recorded 9.3 ms of overshoot, where the sliced one
+     lands in 1–2 drains of 4.2–9.0 ms. The queue publishes
+     `fabricLandedVersionRef`
      only when an item COMPLETES, and a remount drops what is queued, because
      every queued delta patches a base the rehydrate has replaced;
   3. **the bridge frame** (`nerve/bridgeSchedule.ts`) — the React commit arms a
@@ -2229,7 +2289,8 @@ current staged structure.
      Worker landing cannot change a sync waiting for the fabric drain.
 - **The bridge body is three resumable jobs** — host sync, selection and stroke
   reconcile. Each frame advances small operation quanta until a 2 ms wall
-  slice is spent; sync swaps its private next-host map only when complete,
+  slice is spent; sync is a cursor over the registry's PERSISTENT records and
+  allocates nothing per Cell (below),
   selection bounds anchor-bucket scans and retains only the globally best 32
   anchors in a max-heap before sorting that bounded prefix, and reconcile commits
   its O(churn) actions atomically. Cells and passive edges are immutable copies
@@ -2241,6 +2302,36 @@ current staged structure.
   revival on the live stroke map in case animation reaped it between slices. A
   restart carries the spend, so the build that finishes owns what the class paid
   getting there.
+- **The host sync is a cursor over the records the registry keeps.** It runs on
+  every build and on a composed stage its whole answer is "no", so it may not
+  cost a collection: the stage walk stamps `seen` on every living record and
+  re-opens its count, the drawn edges count onto the records stamped by THIS
+  generation, and the third walk judges each record against the degree it
+  published — three cursors over one persistent Map, the display list and the
+  drawn selection being the immutable ARRAYS their owner publishes, so both are
+  walked by index and the one iterator result per host is the whole allocation
+  of a build (44,044 operations and 6,537 KB of garbage at 12,000 Cells → 32,084
+  and 60 KB). What a reader may not see half-applied is `degree` and membership:
+  those are collected during the third walk and written in ONE uninterruptible
+  commit, so a job a newer arm abandons leaves a registry that still describes
+  the build that last landed — which is what the job replacing it compares
+  against. Each job stamps the generation it was CREATED with, so a stamp an
+  abandoned job left can never read as "this Cell was seen", and a record
+  inserted mid-walk sits at the excluded rung (`UNCOUNTED` is `+Infinity`) until
+  the commit says otherwise, so a half-synced newcomer takes no stroke.
+- **A newer arm inherits the selection its predecessor was making** when its own
+  sync reports that nothing the selection reads has moved (`bridgeStepAfterSync`,
+  four lines). The restart at `sync` stays — hosts of two builds may not be mixed
+  inside one selection, and only the sync knows whether they differ — but a
+  burst lands builds closer together than the pipeline, so throwing the answer
+  away left the layer showing the hosts of a build several landings old until the
+  burst ended. `moved === false` is exact about the SET of `(id, degree)` over
+  living Cells with every degree past the host ceiling collapsed onto one rung,
+  so a scan suspended across such a sync finds every host it can choose still
+  there, at the degree it was at; the chosen bridges, the part-run selector and
+  the reconcile that was landing them carry over and the sequence goes on from
+  the step it was at. A build whose selection the layer already holds still does
+  nothing at all.
 - **Inspection layout is a canonical resumable job.** Stage/panel/HUD geometry
   and the moving anchor have separate signatures. A geometry change cancels
   the old cursor; anchor drift coalesces onto its latest request, while the
@@ -2279,6 +2370,18 @@ current staged structure.
   measured slice before lower-priority work asks. A pending inspection cursor
   announces its bounded slice across frames so the next frame reserves it
   before block consumers run; both release unused reservation when finished.
+  A CROSS-FRAME announce may not own more than half the budget
+  (`MAX_PENDING_RESERVATION_MS` = `FRAME_HEAVY_BUDGET_MS / 2`), applied where
+  the announce is recorded: it is held on every frame until the work finishes,
+  so an announce of 8 of the 12 ms left nothing a lower-ranked consumer could
+  satisfy and each of them reached its frame through the starvation escape
+  instead — on the ledger, with an 8 ms announce standing, a block landing's
+  drain lands on frame 17 instead of frame 5. Half is the line because it is the
+  line that keeps the other half spendable, and it costs the announcing consumer
+  nothing: `frameBudgetRemainingMs` never counted a consumer's own reservation
+  against it. `reserveFrameBudget` is deliberately NOT capped — it is a promise
+  about THIS frame, made by the owner on behalf of a deadline consumer that has
+  not asked yet, and released the moment that consumer spends.
   The reserved consumer may still start when an
   earlier job underestimated its actual cost; the ledger records that forced
   start, estimate overshoot and total budget overspend separately. A consumer
@@ -2327,7 +2430,15 @@ current staged structure.
   of re-querying the index and re-running the full scale for every candidate
   every frame. The split shares one arithmetic definition with the monolithic
   scale, so its values are unchanged.
-- Peer topology excludes rapidly changing height from its memo signature.
+- The colony's topology memo keys on what the crawl SAYS, not on which round
+  said it: a roster CONTENT signature (node id and state — what stages a node
+  and picks its stop, the two fields the geometry and the mark read) rather than
+  the record's identity, which the server replaces whenever `crawl_round` moves
+  whether the set changed or not. Peer topology also excludes rapidly changing
+  height, and holds a measured peer's placement step against jitter (§10.1), so
+  the scaffold, the edge geometry and its disposal, the hit mesh, the cohort
+  plan, the flood, the courier schedule and the edge surge in flight all survive
+  a minute-cadence republication that names the same peers.
 - Picking rebuilds only when an input it bakes changes — field version, draw
   count, pick-size epoch, detail epoch, viewport, projection — allocates
   nothing when it does, budgets camera drift against its own envelope, and
@@ -2722,6 +2833,34 @@ router's own cache-cliff count, which the pulse reset deliberately leaves alone)
 `__producerOriginStats()` and `__qualityStats()` as before. Under a
 development StrictMode mount the colony's memo-driven counters read double;
 production is exact.
+
+Four of those readings are new with the 2026-09-12 pass, each on the surface
+its neighbours already ride:
+
+- `__frameBudgetStats()` — the shared heavy-work ledger (§15.1), with
+  `__frameBudgetStatsReset()`. Its per-frame `forcedByReservation`,
+  `forcedByStarvation`, `estimateOvershootMs` and `overspendMs` are wiped by
+  every `beginFrameBudget`, so the only way to catch one used to be to stop the
+  world inside the frame that set it; `window` folds the finished frame forward
+  instead and sums those four, plus `frames`, since the reset. The reset
+  deliberately leaves the deferral streaks and the running frame's spend alone,
+  because both are state a consumer is mid-way through.
+- `__cellSlotStats()` — which walk a Cell slot sync took (`canonical`,
+  `incremental`, `publishedCopies`), with `__cellSlotStatsReset()`. The journal
+  walk touches the ids the cursor named and the canonical one reads every drawn
+  slot; they publish the same sync, dirty the same slots and upload the same
+  bytes, and a release build mangles both names, so nothing outside could tell
+  them apart. It is the reading the combined slot hint (§7.2) was decided and
+  then verified against: 2.67 whole-list walks a block → 0.00.
+- `__fabricStats().topology.rewritten` / `rewrittenLast` — the arbor rescale,
+  the records a landing replaced (§8.2). `applyPassiveSelectionPatch` already
+  returned the count and dropped it, and it is the largest piece of a chained
+  landing.
+- `__uploadStats().lanes.cohort` — the colony's own writes, the one lane that
+  reached the GPU without passing a counter. It is fed from
+  `markCohortAttributeRange`, which every cohort writer ends at and which is the
+  only place that knows what the range MERGE left flagged, so a re-flag of bytes
+  already pending is the same `bufferSubData` and adds nothing to the lane.
 
 `__constellationWorkStats()` is the Cell inspection layout's own ledger, with
 `__constellationWorkStatsReset()` beside it. Alongside the solve scalars
