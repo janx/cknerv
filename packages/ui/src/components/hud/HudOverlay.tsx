@@ -268,8 +268,13 @@ export {
 
 /** The stream banner with its own clock: its `LAST FRAME` age is the one
  *  reading in the top slot that changes every second, so the summary is
- *  derived here, in a leaf, and the overlay renders nothing for the tick. The
- *  banner itself renders nothing while every channel is live. */
+ *  derived here, in a leaf, and the overlay renders nothing for the tick.
+ *
+ *  It is mounted only while a channel is INTERRUPTED, which is the phase the
+ *  root has already read without a clock. The banner prints nothing on `live`
+ *  — it returned null there — so mounting it anyway bought a session-long
+ *  subscription to the second: a leaf render, a whole summary derived and a
+ *  banner rendered every tick, for a page that is well. */
 function LiveStreamHealthBanner({ channels, reducedMotion, top }: {
   channels: StreamHealthChannels;
   reducedMotion: boolean;
@@ -1024,7 +1029,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
           top={topBarHeight}
         />
       ) : null}
-      {streamHealth && !topBandVisible ? (
+      {streamHealth && streamInterrupted && !topBandVisible ? (
         <LiveStreamHealthBanner
           channels={streamHealth}
           reducedMotion={reduced}

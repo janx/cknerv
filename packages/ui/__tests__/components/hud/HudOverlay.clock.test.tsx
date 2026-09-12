@@ -128,8 +128,15 @@ vi.mock('../../../src/derives/streamHealth.derive', async (importOriginal) => {
       bump('HudOverlay');
       return original.deriveStreamHealthPhase(channels);
     },
+    deriveStreamHealthSummary: (
+      ...args: Parameters<typeof original.deriveStreamHealthSummary>
+    ) => {
+      bump('deriveStreamHealthSummary');
+      return original.deriveStreamHealthSummary(...args);
+    },
   };
 });
+vi.mock('../../../src/components/hud/StreamHealthBanner', counted('StreamHealthBanner'));
 
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 
@@ -272,13 +279,15 @@ interface HudInputs {
   chain: ChainEntry;
   cellsStats: CellsStats;
   cellCount?: number;
+  streamHealth?: StreamHealthChannels;
 }
 
 function mountSettled(initial: Partial<HudInputs> = {}) {
   const mountedAt = Date.now();
   const daoState = daoStateAt(mountedAt);
-  const streamHealth = streamsAt(mountedAt);
-  let inputs: HudInputs = { chain, cellsStats, ...initial };
+  let inputs: HudInputs = {
+    chain, cellsStats, streamHealth: streamsAt(mountedAt), ...initial,
+  };
   const element = () => (
     <HudOverlay
       chain={inputs.chain}
@@ -292,7 +301,7 @@ function mountSettled(initial: Partial<HudInputs> = {}) {
       assetEcosystem={assetEcosystem}
       scriptFamilyCensus={scriptFamilyCensus}
       daoState={daoState}
-      streamHealth={streamHealth}
+      streamHealth={inputs.streamHealth}
     />
   );
   const view = render(element());
@@ -355,6 +364,47 @@ describe('HudOverlay and the shared clock', () => {
   });
 });
 
+
+describe('the stream banner and the clock', () => {
+  /** Every channel live: the phase the root already reads is `live`, and the
+   *  banner prints nothing on it. */
+  const allLive = (nowMs: number): StreamHealthChannels => ({
+    chain: { phase: 'live', attempt: 0, lastMessageAtMs: nowMs - 1_000, reason: null },
+    cells: { phase: 'live', attempt: 0, lastMessageAtMs: nowMs - 900, reason: null },
+  });
+  const count = (name: string) => renders.get(name) ?? 0;
+
+  it('spends no tick on a banner with nothing to say', () => {
+    const { container } = mountSettled({ streamHealth: allLive(Date.now()) });
+    const before = { summary: count('deriveStreamHealthSummary'), banner: count('StreamHealthBanner') };
+    expect(container.querySelector('[data-stream-health-banner]')).toBeNull();
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+
+    expect(count('deriveStreamHealthSummary'), 'the summary was derived for a live page')
+      .toBe(before.summary);
+    expect(count('StreamHealthBanner'), 'the banner rendered for a live page')
+      .toBe(before.banner);
+    expect(container.querySelector('[data-stream-health-banner]')).toBeNull();
+  });
+
+  it('still counts the silence out loud while a channel is interrupted', () => {
+    const { container } = mountSettled();
+    const before = count('deriveStreamHealthSummary');
+    expect(container.textContent ?? '').toContain('LAST FRAME 18S');
+
+    // One act a tick: five inside one act is one React render, which would
+    // count the clock's cadence as the banner's.
+    for (let tick = 0; tick < 5; tick += 1) {
+      act(() => { vi.advanceTimersByTime(1_000); });
+    }
+
+    expect(count('deriveStreamHealthSummary')).toBe(before + 5);
+    expect(container.textContent ?? '').toContain('LAST FRAME 23S');
+  });
+});
 
 describe('what each panel is keyed on', () => {
   it('spends a cells batch on neither strip while the cap control is away', () => {

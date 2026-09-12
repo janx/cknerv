@@ -2193,8 +2193,10 @@ describe('the edge-bound stack', () => {
     // allowed to be one shape: the health band waits for an empty slot, and
     // the composing chapter waits for the boot chapter to finish speaking.
     // (The band derives its own summary inside a clock leaf; the slot is
-    // still arbitrated on the record's presence, here, before it mounts.)
-    expect(text).toContain('streamHealth && !topBandVisible');
+    // still arbitrated here, before it mounts — on the record's presence AND
+    // on the phase, because a leaf that would print nothing must not be
+    // mounted to find that out once a second.)
+    expect(text).toContain('streamHealth && streamInterrupted && !topBandVisible');
     expect(text).toContain('const stageComposingVisible = stageCompose.visible');
     expect(text).toContain('&& !bootReadoutVisible');
   });
