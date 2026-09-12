@@ -347,6 +347,21 @@ function hostDegreeRung(degree: number, maxHostDegree: number): number {
 }
 
 /**
+ * A record's degree before any build has counted it.
+ *
+ * ⭐ Not `-1`, and the reason is the resumable cursor. A record is inserted
+ * the moment the stage walk reaches its Cell, so a job that is cancelled
+ * part-way leaves uncounted records in the PUBLISHED registry, and whatever
+ * reads them next has to see a Cell that takes no stroke rather than the most
+ * attractive host on the stage. Above the ceiling it is exactly that, and the
+ * arithmetic is unchanged: `hostDegreeRung(∞)` is the excluded rung, so
+ * "first count of a new host" and "a host whose rung moved" are one sentence
+ * — and a newcomer a cancelled job inserted, whose Cell then left, is judged
+ * a non-candidate, which is the truth: no selection ever saw it.
+ */
+const UNCOUNTED = Number.POSITIVE_INFINITY;
+
+/**
  * Bring the registry up to date with one completed topology build, and report
  * whether anything {@link selectBridgeEdges} reads has moved since the last.
  *
@@ -365,11 +380,6 @@ function hostDegreeRung(degree: number, maxHostDegree: number): number {
  *
  * `edges` is the DRAWN passive selection: a Cell whose neighbours exist but
  * were never selected has to look exactly as bare as one with none.
- *
- * The resumable cursor first captures living sources and degrees into private
- * scratch maps, then builds the next host map. It swaps that map into the
- * registry only after all passes finish, so cancellation cannot publish a
- * mixed generation.
  */
 export function syncBridgeHosts(
   registry: BridgeHostRegistry,
@@ -384,20 +394,53 @@ export function syncBridgeHosts(
   return job.moved;
 }
 
-export type BridgeHostSyncPhase = 'cells' | 'edges' | 'hosts' | 'departures' | 'done';
+export type BridgeHostSyncPhase = 'cells' | 'edges' | 'hosts' | 'commit' | 'done';
 
+/** One drawn passive edge, as the sync reads it. */
+interface BridgeHostSyncEdge {
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * The sync as a cursor over the PERSISTENT records — three walks and a
+ * commit, no scratch map anywhere.
+ *
+ * ⚠️ Why the commit is a phase of its own. The registry the cursor writes is
+ * the same one a reader holds, so the only state that may not be half-applied
+ * is the state a reader looks at: `degree`, and membership. Both are
+ * collected during `hosts` and written in one uninterruptible pass at the
+ * end, so a job a newer arm abandons mid-walk leaves a registry that still
+ * describes the last COMPLETED build — which is what the fresh job it is
+ * abandoned for compares against. Everything else the walks touch (`seen`,
+ * `next`, an inserted record at the uncounted rung) is scratch that lives on
+ * the record, and the fresh job's stage walk rewrites all of it: it stamps
+ * its OWN generation, taken when the job was created, so a stamp a cancelled
+ * job left can never be read as "this Cell was seen".
+ *
+ * The walks take the publication as it comes. The owner publishes the display
+ * list and the drawn selection as immutable arrays, which are walked by index
+ * — no iterator result per Cell, per edge, which at 12,000 Cells is the
+ * difference the whole job was rewritten for. A Map (the labs, the bench)
+ * still answers through its iterator.
+ */
 export interface BridgeHostSyncJob {
   phase: BridgeHostSyncPhase;
   readonly registry: BridgeHostRegistry;
-  readonly oldHosts: Map<number, BridgeHostRecord>;
-  readonly cells: Iterator<BridgeHostSourceCell>;
-  readonly edges: Iterator<{ readonly from: number; readonly to: number }>;
-  readonly sources: Map<number, BridgeHostSourceCell>;
-  readonly degrees: Map<number, number>;
-  readonly nextHosts: Map<number, BridgeHostRecord>;
+  /** The build this job stamps, taken when it was created. */
+  readonly generation: number;
   readonly maxHostDegree: number;
-  hostIterator: Iterator<[number, BridgeHostSourceCell]> | null;
-  departureIterator: Iterator<[number, BridgeHostRecord]> | null;
+  readonly cellList: readonly BridgeHostSourceCell[] | null;
+  readonly cellIterator: Iterator<BridgeHostSourceCell> | null;
+  cellIndex: number;
+  readonly edgeList: readonly BridgeHostSyncEdge[] | null;
+  readonly edgeIterator: Iterator<BridgeHostSyncEdge> | null;
+  edgeIndex: number;
+  hostIterator: Iterator<BridgeHostRecord> | null;
+  /** Hosts whose counted degree differs from the published one, and hosts
+   *  this build did not see — the whole of what the commit applies. */
+  readonly counted: BridgeHostRecord[];
+  readonly departed: BridgeHostRecord[];
   moved: boolean;
   operations: number;
 }
@@ -408,12 +451,30 @@ export function createBridgeHostSyncJob(
   edges: Iterable<{ readonly from: number; readonly to: number }>,
   maxHostDegree = BRIDGE_MAX_HOST_DEGREE,
 ): BridgeHostSyncJob {
+  const cellList = Array.isArray(cells)
+    ? cells as readonly BridgeHostSourceCell[] : null;
+  const edgeList = Array.isArray(edges)
+    ? edges as readonly BridgeHostSyncEdge[] : null;
+  // Taken here, not at the end: two jobs over one registry must never stamp
+  // the same generation, or the second would read the first's abandoned
+  // stamps as Cells it had seen itself.
+  registry.generation += 1;
   return {
-    phase: 'cells', registry, oldHosts: registry.hosts,
-    cells: cells.values(), edges: edges[Symbol.iterator](),
-    sources: new Map(), degrees: new Map(), nextHosts: new Map(),
-    maxHostDegree, hostIterator: null, departureIterator: null,
-    moved: false, operations: 0,
+    phase: 'cells',
+    registry,
+    generation: registry.generation,
+    maxHostDegree,
+    cellList,
+    cellIterator: cellList === null ? cells.values() : null,
+    cellIndex: 0,
+    edgeList,
+    edgeIterator: edgeList === null ? edges[Symbol.iterator]() : null,
+    edgeIndex: 0,
+    hostIterator: null,
+    counted: [],
+    departed: [],
+    moved: false,
+    operations: 0,
   };
 }
 
@@ -423,56 +484,91 @@ export function stepBridgeHostSyncJob(
 ): { done: boolean; phase: BridgeHostSyncPhase; operations: number } {
   let left = Math.max(1, Math.floor(operationBudget));
   const started = left;
+  const hosts = job.registry.hosts;
+  const generation = job.generation;
+  const maxHostDegree = job.maxHostDegree;
   while (left > 0 && job.phase !== 'done') {
     if (job.phase === 'cells') {
-      const next = job.cells.next(); left -= 1;
-      if (next.done) { job.phase = 'edges'; continue; }
-      if (next.value.death_at_ms == null) job.sources.set(next.value.id, next.value);
+      left -= 1;
+      const cell = job.cellList === null
+        ? job.cellIterator!.next().value as BridgeHostSourceCell | undefined
+        : job.cellList[job.cellIndex];
+      job.cellIndex += 1;
+      if (cell === undefined) {
+        job.phase = 'edges';
+        continue;
+      }
+      // A dead-but-not-yet-collected Cell contributes no fabric edge, and it
+      // must contribute no bridge either — a retracting fibre that a rebuild
+      // resurrects is the exact bug `buildNeighborGraph` guards against.
+      if (cell.death_at_ms != null) continue;
+      const host = hosts.get(cell.id);
+      if (host === undefined) {
+        hosts.set(cell.id, {
+          id: cell.id,
+          x: cell.pos_seed[0],
+          y: cell.pos_seed[1],
+          z: cell.pos_seed[2],
+          degree: UNCOUNTED,
+          next: 0,
+          seen: generation,
+        });
+      } else {
+        host.seen = generation;
+        // Whatever a cancelled job counted onto this record was for a build
+        // that never landed. This walk opens the count for THIS one.
+        host.next = 0;
+      }
       continue;
     }
     if (job.phase === 'edges') {
-      const next = job.edges.next(); left -= 1;
-      if (next.done) {
-        job.hostIterator = job.sources.entries();
+      left -= 1;
+      const edge = job.edgeList === null
+        ? job.edgeIterator!.next().value as BridgeHostSyncEdge | undefined
+        : job.edgeList[job.edgeIndex];
+      job.edgeIndex += 1;
+      if (edge === undefined) {
+        // Values, not entries: the record carries its own id, and one
+        // iterator result per host is the walk's whole allocation.
+        job.hostIterator = hosts.values();
         job.phase = 'hosts';
         continue;
       }
-      if (job.sources.has(next.value.from)) {
-        job.degrees.set(next.value.from, (job.degrees.get(next.value.from) ?? 0) + 1);
-      }
-      if (job.sources.has(next.value.to)) {
-        job.degrees.set(next.value.to, (job.degrees.get(next.value.to) ?? 0) + 1);
-      }
+      const from = hosts.get(edge.from);
+      if (from !== undefined && from.seen === generation) from.next += 1;
+      const to = hosts.get(edge.to);
+      if (to !== undefined && to.seen === generation) to.next += 1;
       continue;
     }
     if (job.phase === 'hosts') {
-      const next = job.hostIterator!.next(); left -= 1;
-      if (next.done) {
-        job.departureIterator = job.oldHosts.entries();
-        job.phase = 'departures';
+      left -= 1;
+      const next = job.hostIterator!.next();
+      if (next.done === true) {
+        job.phase = 'commit';
         continue;
       }
-      const [id, cell] = next.value;
-      const degree = job.degrees.get(id) ?? 0;
-      const old = job.oldHosts.get(id);
-      if (old === undefined) {
-        if (degree <= job.maxHostDegree) job.moved = true;
-      } else if (hostDegreeRung(old.degree, job.maxHostDegree)
-        !== hostDegreeRung(degree, job.maxHostDegree)) job.moved = true;
-      job.nextHosts.set(id, {
-        id, x: cell.pos_seed[0], y: cell.pos_seed[1], z: cell.pos_seed[2],
-        degree, next: 0, seen: job.registry.generation + 1,
-      });
+      const host = next.value;
+      if (host.seen !== generation) {
+        // Left the stage, or died on it. Judged at the degree the last
+        // selection saw: a Cell that was never a candidate takes no stroke.
+        if (host.degree <= maxHostDegree) job.moved = true;
+        job.departed.push(host);
+        continue;
+      }
+      const counted = host.next;
+      if (host.degree === counted) continue;
+      if (hostDegreeRung(host.degree, maxHostDegree)
+        !== hostDegreeRung(counted, maxHostDegree)) job.moved = true;
+      job.counted.push(host);
       continue;
     }
-    const next = job.departureIterator!.next(); left -= 1;
-    if (!next.done) {
-      const [id, old] = next.value;
-      if (!job.sources.has(id) && old.degree <= job.maxHostDegree) job.moved = true;
-      continue;
+    // The commit, whole or not at all — it never asks `left` again.
+    for (let i = 0; i < job.counted.length; i += 1) {
+      const host = job.counted[i];
+      host.degree = host.next;
     }
-    job.registry.hosts = job.nextHosts;
-    job.registry.generation += 1;
+    for (let i = 0; i < job.departed.length; i += 1) hosts.delete(job.departed[i].id);
+    left -= 1;
     job.phase = 'done';
   }
   const operations = started - left;

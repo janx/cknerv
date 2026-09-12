@@ -1,0 +1,277 @@
+{
+  "source": "git show 1901530d~1:packages/ui/src/geometry/bridgeEdges.ts (syncBridgeHosts)",
+  "stage": {
+    "cells": 12000,
+    "k": 5,
+    "maxEdgeLength": 42,
+    "passiveEdgeBudget": 8000,
+    "blocks": 16,
+    "churnPerBlock": 40
+  },
+  "blocks": [
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3679,
+        3815,
+        2391,
+        1319,
+        579,
+        178,
+        34,
+        4,
+        1
+      ],
+      "digest": "e412e40cb24a7b66"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3658,
+        3833,
+        2410,
+        1310,
+        571,
+        181,
+        32,
+        4,
+        1
+      ],
+      "digest": "b67920ae8a75c3bc"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3645,
+        3838,
+        2431,
+        1303,
+        567,
+        179,
+        32,
+        4,
+        1
+      ],
+      "digest": "b02d8d18005b53ae"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3643,
+        3814,
+        2472,
+        1290,
+        575,
+        169,
+        33,
+        3,
+        1
+      ],
+      "digest": "fb1a7a343467e3e6"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3639,
+        3806,
+        2478,
+        1309,
+        569,
+        163,
+        33,
+        2,
+        1
+      ],
+      "digest": "06d359f07c7aa8c2"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3622,
+        3828,
+        2480,
+        1299,
+        577,
+        161,
+        29,
+        4
+      ],
+      "digest": "c465b458c40c44a2"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3602,
+        3850,
+        2492,
+        1288,
+        573,
+        163,
+        29,
+        3
+      ],
+      "digest": "7500e5863ba2f870"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3582,
+        3877,
+        2483,
+        1298,
+        567,
+        166,
+        24,
+        3
+      ],
+      "digest": "7853d47eac3c3e50"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3574,
+        3880,
+        2488,
+        1307,
+        561,
+        164,
+        23,
+        3
+      ],
+      "digest": "60bc0ab84e9d073e"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3550,
+        3901,
+        2504,
+        1304,
+        558,
+        154,
+        26,
+        3
+      ],
+      "digest": "cc27386ef40dd76c"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3525,
+        3919,
+        2514,
+        1322,
+        542,
+        152,
+        23,
+        3
+      ],
+      "digest": "1ce1100cf7a0cc26"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3522,
+        3907,
+        2544,
+        1306,
+        547,
+        148,
+        23,
+        3
+      ],
+      "digest": "1d802138370f3502"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3526,
+        3900,
+        2538,
+        1323,
+        539,
+        148,
+        23,
+        3
+      ],
+      "digest": "20f93856caaf1874"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3515,
+        3918,
+        2525,
+        1338,
+        529,
+        151,
+        22,
+        1,
+        1
+      ],
+      "digest": "6bf2d0d46c526e3e"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3506,
+        3930,
+        2521,
+        1345,
+        525,
+        148,
+        23,
+        1,
+        1
+      ],
+      "digest": "2764cf60f2de7f72"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3490,
+        3947,
+        2530,
+        1339,
+        522,
+        147,
+        23,
+        1,
+        1
+      ],
+      "digest": "f277c188665d0cce"
+    },
+    {
+      "moved": true,
+      "hosts": 12000,
+      "degrees": [
+        3473,
+        3951,
+        2558,
+        1336,
+        513,
+        144,
+        23,
+        1,
+        1
+      ],
+      "digest": "38da18f2d70444a4"
+    }
+  ]
+}

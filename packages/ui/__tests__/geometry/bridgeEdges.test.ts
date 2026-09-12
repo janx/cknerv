@@ -486,14 +486,19 @@ describe('resumable bridge host sync', () => {
     nextMap.set(id, { id, death_at_ms: null, pos_seed: [x, y, z] as const });
     const job = createBridgeHostSyncJob(registry, nextMap, []);
     expect(stepBridgeHostSyncJob(job, 5).done).toBe(false);
+    // ⚠️ The registry is one Map for the life of the layer now — the records
+    // persist, which is the whole of what the cursor costs nothing for. What
+    // "unchanged" means is therefore what a READER sees: the departure has
+    // not been applied, and no host answers at a degree this build counted.
     expect(registry.hosts).toBe(published);
     expect(registry.hosts.has(1)).toBe(true);
+    expect(registry.hosts.get(1)!.degree).toBe(0);
     // A superseding cursor can discard this partial job without rollback.
     const replacement = createBridgeHostSyncJob(registry, nextMap, []);
     while (!stepBridgeHostSyncJob(replacement, 7).done) {}
-    expect(registry.hosts).not.toBe(published);
     expect(registry.hosts.has(1)).toBe(false);
     expect(registry.hosts.has(id)).toBe(true);
+    expect(registry.hosts.get(id)!.degree).toBe(0);
   });
 
   it('reads one immutable stage publication across all sync slices', () => {
