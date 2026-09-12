@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   createCellSlotState,
   syncCellSlots,
   type CellSlotState,
 } from '../../src/geometry/cellSlotAssignment';
+import {
+  resetCellSlotStats,
+  snapshotCellSlotStats,
+} from '../../src/geometry/cellSlotStats';
 
 function cell(id: number, tag: string | null = null): Cell {
   return {
@@ -297,5 +301,69 @@ describe('syncCellSlots', () => {
     );
     expect(state.slotOf.get(high + 3)).toBeDefined();
     expectMirrorsMembership(state, next);
+  });
+});
+
+// ⭐ WHICH PATH A SYNC TOOK IS NOT VISIBLE FROM OUTSIDE IT. The incremental
+// walk touches the ids the journal names; the canonical one walks every drawn
+// slot — and they publish the same `CellSlotSync`, so a live session could
+// only ever infer which ran from the wall clock. L2-6 / L3-1 measure the gap
+// between them (200 gets against 12,400), and this counter is what a live
+// window can read it off.
+describe('cellSlotStats', () => {
+  beforeEach(() => {
+    resetCellSlotStats();
+  });
+
+  it('separates the journal walk from the whole-list walk', () => {
+    const state = createCellSlotState();
+    const a = [cell(1), cell(2), cell(3)];
+    syncCellSlots(state, a);
+    expect(snapshotCellSlotStats().canonical).toBe(1);
+    expect(snapshotCellSlotStats().incremental).toBe(0);
+
+    const born = cell(9);
+    const next = [a[0], a[2], born];
+    syncCellSlots(state, next, {
+      previousCells: a,
+      removedIds: [2],
+      upserts: [born],
+    });
+    expect(snapshotCellSlotStats().incremental).toBe(1);
+    expect(snapshotCellSlotStats().canonical).toBe(1);
+
+    // A hint against a list this state never mirrored is refused, and the
+    // canonical walk that answers instead is counted as one.
+    const stranger = cell(11);
+    syncCellSlots(state, [...next, stranger], {
+      previousCells: a,
+      removedIds: [],
+      upserts: [stranger],
+    });
+    expect(snapshotCellSlotStats().canonical).toBe(2);
+    expect(snapshotCellSlotStats().incremental).toBe(1);
+  });
+
+  it('counts the published copies, which is what a sync allocates', () => {
+    const state = createCellSlotState();
+    const a = [cell(1), cell(2), cell(3)];
+    syncCellSlots(state, a);
+    expect(snapshotCellSlotStats().publishedCopies).toBe(1);
+    // A pure reorder changes no slot, so the published array is the previous
+    // one and nothing was copied.
+    syncCellSlots(state, [a[2], a[0], a[1]]);
+    expect(snapshotCellSlotStats().canonical).toBe(2);
+    expect(snapshotCellSlotStats().publishedCopies).toBe(1);
+  });
+
+  it('zeroes on reset', () => {
+    const state = createCellSlotState();
+    syncCellSlots(state, [cell(1)]);
+    resetCellSlotStats();
+    expect(snapshotCellSlotStats()).toEqual({
+      canonical: 0,
+      incremental: 0,
+      publishedCopies: 0,
+    });
   });
 });

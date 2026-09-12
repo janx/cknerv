@@ -82,6 +82,10 @@ import {
   writeCohortMotes,
   writeCohortMotesMass,
 } from '../../src/materials/colonyMotes';
+import {
+  resetGpuUploads,
+  snapshotGpuUploads,
+} from '../../src/tweaks/gpuUploadLedger';
 
 /** A camera close enough to unfold the form completely. */
 const NEAR_PX = COHORT_UNFOLD_HI * 2;
@@ -827,6 +831,55 @@ describe('cohort motes — the geometry the layer drives', () => {
     markCohortAttributeRange(mass, 96, 96);
     markCohortAttributeRange(mass, 192, 96);
     expect(mass.updateRanges).toEqual([{ start: 96, count: 192 }]);
+  });
+
+  // ⭐ THE COLONY'S WRITES WERE THE ONE UPLOAD LANE NOTHING COUNTED. The
+  // fabric, the bridge and the Cell buffers all feed `gpuUploadLedger`, so a
+  // probe reading `__uploadStats` saw every byte in the scene except the
+  // cohort's — and the mass ease alone writes 96 floats a cohort on a frame.
+  // Every cohort writer (`writeCohortMotes`, `writeCohortMotesMass`,
+  // `stampCohortMotes`, and the layer's own lane marks) reaches the ledger
+  // through this one function, which is also the only place that knows what
+  // the merge actually left flagged.
+  it('reports what it flagged to the cohort upload lane, merges included', () => {
+    resetGpuUploads();
+    const mass = buildCohortMotesGeometry(4)
+      .getAttribute('aMass') as THREE.BufferAttribute;
+    markCohortAttributeRange(mass, 96, 96);
+    expect(snapshotGpuUploads().lanes.cohort).toEqual({
+      bytes: 384, commits: 1, bytesLast: 384, bytesMax: 384,
+    });
+    // A touching range adds its own bytes and never re-counts the range it
+    // merged with.
+    markCohortAttributeRange(mass, 192, 96);
+    expect(snapshotGpuUploads().lanes.cohort.bytes).toBe(768);
+    // …and a range already covered flags nothing, so it is not a commit.
+    markCohortAttributeRange(mass, 120, 24);
+    expect(snapshotGpuUploads().lanes.cohort).toEqual({
+      bytes: 768, commits: 2, bytesLast: 384, bytesMax: 384,
+    });
+    resetGpuUploads();
+  });
+
+  it('prices each cohort writer in the bytes it actually flags', () => {
+    // One cohort's five lanes: 96 vec3 positions, 96 vec3 origins, and three
+    // scalar lanes of 96.
+    resetGpuUploads();
+    writeCohortMotes(
+      buildCohortMotesGeometry(4), 1, { x: 1, y: 2, z: 3 }, 0.2, 0.4, 1,
+    );
+    expect(snapshotGpuUploads().lanes.cohort.bytes)
+      .toBe((96 * 3 + 96 * 3 + 96 * 3) * Float32Array.BYTES_PER_ELEMENT);
+    expect(snapshotGpuUploads().lanes.cohort.commits).toBe(5);
+
+    resetGpuUploads();
+    writeCohortMotesMass(buildCohortMotesGeometry(4), 2, -0.5);
+    expect(snapshotGpuUploads().lanes.cohort.bytes).toBe(384);
+
+    resetGpuUploads();
+    stampCohortMotes(buildCohortMotesGeometry(4), 3, 12);
+    expect(snapshotGpuUploads().lanes.cohort.bytes).toBe(384);
+    resetGpuUploads();
   });
 
   it('starts every slot silent, at the sentinel, and at full size', () => {

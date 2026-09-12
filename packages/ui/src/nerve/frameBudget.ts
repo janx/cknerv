@@ -82,6 +82,19 @@ const admittedEstimateMs = [0, 0, 0, 0];
 let forcedByReservation = 0;
 let forcedByStarvation = 0;
 let estimateOvershootMs = 0;
+/** The same four, folded forward instead of cleared.
+ *
+ *  The per-frame counters above answer WHY THIS FRAME went over, and they are
+ *  wiped by the next `beginFrameBudget` — so from outside the frame loop they
+ *  can only be caught by stopping the world inside the frame that set them,
+ *  which is exactly the frame a probe cannot predict. A running total over a
+ *  window is what a live read needs: reset once, run the scenario, read once.
+ *  Cost is four adds per frame on numbers this module already had. */
+let windowFrames = 0;
+let windowForcedByReservation = 0;
+let windowForcedByStarvation = 0;
+let windowEstimateOvershootMs = 0;
+let windowOverspendMs = 0;
 /** Frames in a row each consumer has been refused since it last started. */
 const deferredFrames = [0, 0, 0, 0];
 /** The frame serial each consumer last asked in, so a streak is frames IN A
@@ -103,6 +116,16 @@ let frameToken: number | null = null;
  */
 export function beginFrameBudget(token?: number): void {
   if (token !== undefined && token === frameToken) return;
+  // The frame that just ended is only complete now, so this is where it joins
+  // the window — including its overspend, which is a fact about the whole
+  // frame and has no earlier moment to be read at.
+  if (frameSerial > 0) {
+    windowFrames += 1;
+    windowForcedByReservation += forcedByReservation;
+    windowForcedByStarvation += forcedByStarvation;
+    windowEstimateOvershootMs += estimateOvershootMs;
+    windowOverspendMs += Math.max(0, totalSpentMs() - FRAME_HEAVY_BUDGET_MS);
+  }
   frameToken = token ?? null;
   frameSerial += 1;
   for (let rank = 0; rank < FRAME_BUDGET_CONSUMER_COUNT; rank += 1) {
@@ -231,6 +254,18 @@ export function frameBudgetRemainingMs(consumer: FrameBudgetConsumer): number {
   );
 }
 
+/** The forced admissions and the overspend of every frame since the window
+ *  was last zeroed — the reading a probe takes, where the fields beside it in
+ *  `FrameBudgetSnapshot` describe only the frame in progress. */
+export interface FrameBudgetWindowSnapshot {
+  /** Completed frames folded in. The denominator of every field below. */
+  frames: number;
+  forcedByReservation: number;
+  forcedByStarvation: number;
+  estimateOvershootMs: number;
+  overspendMs: number;
+}
+
 export interface FrameBudgetSnapshot {
   serial: number;
   spentMs: number[];
@@ -241,6 +276,7 @@ export interface FrameBudgetSnapshot {
   forcedByReservation: number;
   forcedByStarvation: number;
   estimateOvershootMs: number;
+  window: FrameBudgetWindowSnapshot;
 }
 
 /** Dev read. Allocates, so it is never called from a frame. */
@@ -255,7 +291,25 @@ export function snapshotFrameBudget(): FrameBudgetSnapshot {
     forcedByReservation,
     forcedByStarvation,
     estimateOvershootMs,
+    window: {
+      frames: windowFrames,
+      forcedByReservation: windowForcedByReservation,
+      forcedByStarvation: windowForcedByStarvation,
+      estimateOvershootMs: windowEstimateOvershootMs,
+      overspendMs: windowOverspendMs,
+    },
   };
+}
+
+/** Open a fresh measurement window. Deliberately NOT `resetFrameBudget`: a
+ *  probe that zeroes its counters must not also zero the deferral streaks and
+ *  the spend of the frame it is running inside. */
+export function resetFrameBudgetStats(): void {
+  windowFrames = 0;
+  windowForcedByReservation = 0;
+  windowForcedByStarvation = 0;
+  windowEstimateOvershootMs = 0;
+  windowOverspendMs = 0;
 }
 
 /** Tests, and a scene teardown that must not leave a streak behind. */
@@ -273,4 +327,5 @@ export function resetFrameBudget(): void {
   forcedByReservation = 0;
   forcedByStarvation = 0;
   estimateOvershootMs = 0;
+  resetFrameBudgetStats();
 }

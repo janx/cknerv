@@ -13,6 +13,10 @@ import { shortestPath } from '../../src/geometry/pathRouter';
 import { buildPassiveNeighborGraph } from '../../src/geometry/passiveNeighborGraph';
 import { addCell, removeCells } from '../../src/nerve/incrementalGraph';
 import {
+  resetNeighborGraphBuilderStats,
+  snapshotNeighborGraphBuilderStats,
+} from '../../src/geometry/neighborGraphBuilderStats';
+import {
   applyNeighborAdjacencyPatch,
   applyPassiveSelectionPatch,
   collectNeighborAdjacencyPatch,
@@ -631,6 +635,38 @@ describe('passive selection patch', () => {
       .toThrow(/canonical order/);
     expect(() => collectPassiveSelectionPatch(selection, [edge(1, 2), edge(1, 2)]))
       .toThrow(/canonical order/);
+  });
+
+  // L2-3 priced pass 3 at 5,195-5,563 replaced records of 8,000 per chained
+  // block, entirely from a probe — the apply itself returned the count and
+  // then dropped it on the floor. `topology.rewritten` is where a live window
+  // reads the same number.
+  it('reports what pass 3 replaced to the topology counters, as a sum and as the last apply', () => {
+    resetNeighborGraphBuilderStats();
+    const held: PassiveSelection = {
+      edges: [edge(1, 2, 0.5), edge(1, 3), edge(2, 3, 0.2), edge(3, 4)],
+    };
+    applyPassiveSelectionPatch(held, patchOf(held.edges, [], [], [
+      edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(3, 4),
+    ]));
+    expect(snapshotNeighborGraphBuilderStats().rewritten).toBe(3);
+    expect(snapshotNeighborGraphBuilderStats().rewrittenLast).toBe(3);
+    // A build that moved one value leaves the sum climbing and the last
+    // reading at that build's own count, never at the window's.
+    applyPassiveSelectionPatch(held, patchOf(held.edges, [], [], [
+      edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(3, 4, 0.9),
+    ]));
+    expect(snapshotNeighborGraphBuilderStats().rewritten).toBe(4);
+    expect(snapshotNeighborGraphBuilderStats().rewrittenLast).toBe(1);
+    // A build that confirmed every value says so rather than staying silent.
+    applyPassiveSelectionPatch(held, patchOf(held.edges, [], [], [
+      edge(1, 2, 0.7), edge(1, 3, 0.1), edge(2, 3), edge(3, 4, 0.9),
+    ]));
+    expect(snapshotNeighborGraphBuilderStats().rewritten).toBe(4);
+    expect(snapshotNeighborGraphBuilderStats().rewrittenLast).toBe(0);
+    resetNeighborGraphBuilderStats();
+    expect(snapshotNeighborGraphBuilderStats().rewritten).toBe(0);
+    expect(snapshotNeighborGraphBuilderStats().rewrittenLast).toBe(0);
   });
 
   it('replaces exactly the surviving records whose values moved and keeps every other object', () => {

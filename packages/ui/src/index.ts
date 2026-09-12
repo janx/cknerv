@@ -307,6 +307,21 @@ export * from './derives/producerOriginStats';
 // same surface: both were argued from source until they had a counter.
 export * from './derives/colonyStats';
 export * from './geometry/cellPickStats';
+// Which walk a Cell slot sync took — the journal's or the whole drawn list's.
+export {
+  resetCellSlotStats,
+  snapshotCellSlotStats,
+  type CellSlotStatsSnapshot,
+} from './geometry/cellSlotStats';
+// The shared heavy-work ledger's own counters: why a frame went over budget,
+// summed across a window. The ledger itself is internal to the package; this
+// is the read the app installs so a live session can answer "forced by what?".
+export {
+  resetFrameBudgetStats,
+  snapshotFrameBudget,
+  type FrameBudgetSnapshot,
+  type FrameBudgetWindowSnapshot,
+} from './nerve/frameBudget';
 // The last two readings this package used to put on `window` itself: the
 // adaptive controller's sample windows and the halo layer's live draw counts.
 // They are exported for the same reason every counter above is — the app's

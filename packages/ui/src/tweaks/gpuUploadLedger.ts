@@ -8,7 +8,7 @@
 // richer readout and this ledger stays the cheap sum a per-frame sampler
 // wants. The WINDOW hook lives in ui-app, so the library stays window-free.
 
-export type GpuUploadLane = 'fabric' | 'bridge' | 'cells';
+export type GpuUploadLane = 'fabric' | 'bridge' | 'cells' | 'cohort';
 
 export interface GpuUploadLaneSnapshot {
   /** Σ bytes flagged for upload by this lane. */
@@ -36,6 +36,7 @@ const lanes: Record<GpuUploadLane, GpuUploadLaneSnapshot> = {
   fabric: zeroLane(),
   bridge: zeroLane(),
   cells: zeroLane(),
+  cohort: zeroLane(),
 };
 let totalBytes = 0;
 let totalCommits = 0;
@@ -64,6 +65,7 @@ export function snapshotGpuUploads(): GpuUploadSnapshot {
       fabric: { ...lanes.fabric },
       bridge: { ...lanes.bridge },
       cells: { ...lanes.cells },
+      cohort: { ...lanes.cohort },
     },
     bytes: totalBytes,
     commits: totalCommits,
@@ -74,6 +76,7 @@ export function resetGpuUploads(): void {
   lanes.fabric = zeroLane();
   lanes.bridge = zeroLane();
   lanes.cells = zeroLane();
+  lanes.cohort = zeroLane();
   totalBytes = 0;
   totalCommits = 0;
 }

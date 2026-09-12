@@ -20,6 +20,8 @@
 
 import type { Cell } from '@cknerv/types';
 
+import { cellSlotStats } from './cellSlotStats';
+
 export interface CellSlotRange {
   start: number;
   count: number;
@@ -136,6 +138,7 @@ function syncCellSlotsCanonical(
   state: CellSlotState,
   list: readonly Cell[],
 ): CellSlotSync {
+  cellSlotStats.observeCanonicalSync();
   state.generation += 1;
   const generation = state.generation;
   const { cells, slotOf, stamps } = state;
@@ -217,6 +220,7 @@ function syncCellSlotsCanonical(
     || membershipChanged
     || state.published.length !== state.count
   ) {
+    cellSlotStats.observePublishedCopy();
     state.published = cells.slice();
   }
   return {
@@ -315,7 +319,14 @@ function syncCellSlotsIncremental(
   stamps.length = state.count;
   state.source = list;
   const membershipChanged = removalSlots.length > 0 || addedCount > 0;
-  if (dirty.length > 0 || membershipChanged) state.published = cells.slice();
+  if (dirty.length > 0 || membershipChanged) {
+    cellSlotStats.observePublishedCopy();
+    state.published = cells.slice();
+  }
+  // Counted here and not at the top: the walk above returns null on a journal
+  // that does not fit, and the canonical sync that then answers is the sync
+  // this stage actually paid for.
+  cellSlotStats.observeIncrementalSync();
   return {
     cells: state.published,
     count: state.count,

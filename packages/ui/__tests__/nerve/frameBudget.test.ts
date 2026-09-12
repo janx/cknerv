@@ -18,6 +18,7 @@ import {
   releaseFrameBudget,
   reserveFrameBudget,
   resetFrameBudget,
+  resetFrameBudgetStats,
   snapshotFrameBudget,
   spendFrameBudget,
 } from '../../src/nerve/frameBudget';
@@ -221,6 +222,88 @@ describe('the frame budget', () => {
       forcedByReservation: 0,
       forcedByStarvation: 0,
       estimateOvershootMs: 0,
+      window: {
+        frames: 0,
+        forcedByReservation: 0,
+        forcedByStarvation: 0,
+        estimateOvershootMs: 0,
+        overspendMs: 0,
+      },
     });
+  });
+});
+
+// WHY THESE EXIST AT ALL: the four counters above are cleared by every
+// `beginFrameBudget`, so the only way to catch one live was to stop the world
+// inside the frame it fired in. The window totals are the same four folded
+// forward, which is what a probe that resets once and reads once needs.
+describe('the frame budget, over a window of frames', () => {
+  beforeEach(() => {
+    resetFrameBudget();
+  });
+
+  it('folds each finished frame\u2019s forced admissions forward', () => {
+    // Frame 1: a reserved consumer admitted over a ledger an earlier, honest
+    // estimate had already filled.
+    beginFrameBudget(1);
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 3);
+    expect(mayStartFrameWork(FRAME_BUDGET_FABRIC_DRAIN, 8)).toBe(true);
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 11);
+    expect(mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 3)).toBe(true);
+    expect(snapshotFrameBudget().forcedByReservation).toBe(1);
+    // Nothing is folded until the frame it belongs to has ended.
+    expect(snapshotFrameBudget().window.frames).toBe(0);
+    expect(snapshotFrameBudget().window.forcedByReservation).toBe(0);
+    spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 5);
+
+    beginFrameBudget(2);
+    const folded = snapshotFrameBudget().window;
+    expect(folded.frames).toBe(1);
+    expect(folded.forcedByReservation).toBe(1);
+    // 11 + 5 against a 12 ms budget; 11 against an estimate of 8 and 5
+    // against one of 3.
+    expect(folded.overspendMs).toBe(4);
+    expect(folded.estimateOvershootMs).toBe(5);
+    // …and the per-frame counters started the new frame at zero regardless.
+    expect(snapshotFrameBudget().forcedByReservation).toBe(0);
+
+    // Frames 2-4: the bridge is held, and on frame 5 it advances regardless.
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 12);
+    for (let attempt = 0; attempt < MAX_DEFER_FRAMES; attempt += 1) {
+      expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 4)).toBe(false);
+      beginFrameBudget(3 + attempt);
+      spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 12);
+    }
+    expect(mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 4)).toBe(true);
+    expect(snapshotFrameBudget().forcedByStarvation).toBe(1);
+
+    beginFrameBudget(99);
+    const window = snapshotFrameBudget().window;
+    expect(window.frames).toBe(5);
+    expect(window.forcedByStarvation).toBe(1);
+    expect(window.forcedByReservation).toBe(1);
+  });
+
+  it('zeroes the window without disturbing the frame in progress', () => {
+    beginFrameBudget(1);
+    reserveFrameBudget(FRAME_BUDGET_PLAN_SLICE, 3);
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 11);
+    mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 3);
+    beginFrameBudget(2);
+    expect(snapshotFrameBudget().window.forcedByReservation).toBe(1);
+
+    spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, 7);
+    resetFrameBudgetStats();
+    const after = snapshotFrameBudget();
+    expect(after.window).toEqual({
+      frames: 0,
+      forcedByReservation: 0,
+      forcedByStarvation: 0,
+      estimateOvershootMs: 0,
+      overspendMs: 0,
+    });
+    // The ledger the frame is being kept on is untouched by a probe's reset.
+    expect(after.spentMs[FRAME_BUDGET_FABRIC_DRAIN]).toBe(7);
+    expect(after.serial).toBe(2);
   });
 });

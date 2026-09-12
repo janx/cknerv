@@ -47,9 +47,39 @@ describe('installPulseStatsHook', () => {
     expect(uploads).toHaveProperty('lanes.fabric');
     expect(uploads).toHaveProperty('lanes.bridge');
     expect(uploads).toHaveProperty('lanes.cells');
+    // …and the colony's own writes, which were the one lane in the scene that
+    // reached the GPU without passing a counter.
+    expect(uploads).toHaveProperty('lanes.cohort');
     expect(typeof uploads.bytes).toBe('number');
     window.__uploadStatsReset!();
     expect(window.__uploadStats!().bytes).toBe(0);
+
+    // WHY a frame went over the shared heavy-work budget. The ledger's own
+    // counters are cleared by every `beginFrameBudget`, so before this hook
+    // the only readings that name the cause could not be taken from a page at
+    // all — `window` carries the folded totals, not the frame's.
+    expect(typeof window.__frameBudgetStats).toBe('function');
+    expect(typeof window.__frameBudgetStatsReset).toBe('function');
+    const budget = window.__frameBudgetStats!();
+    expect(budget).toHaveProperty('window.forcedByReservation');
+    expect(budget).toHaveProperty('window.forcedByStarvation');
+    expect(budget).toHaveProperty('window.estimateOvershootMs');
+    expect(budget).toHaveProperty('window.overspendMs');
+    expect(budget.spentMs).toHaveLength(4);
+    window.__frameBudgetStatsReset!();
+    expect(window.__frameBudgetStats!().window.frames).toBe(0);
+
+    // Which walk each Cell slot sync took: the journal's, or the whole drawn
+    // list's. The release build mangles both function names, so a trace
+    // cannot tell them apart and only a counter can.
+    expect(typeof window.__cellSlotStats).toBe('function');
+    expect(typeof window.__cellSlotStatsReset).toBe('function');
+    const slots = window.__cellSlotStats!();
+    expect(slots).toHaveProperty('canonical');
+    expect(slots).toHaveProperty('incremental');
+    expect(slots).toHaveProperty('publishedCopies');
+    window.__cellSlotStatsReset!();
+    expect(window.__cellSlotStats!().canonical).toBe(0);
 
     // The bridge layer's counters and the topology pipeline's ride inside the
     // fabric's snapshot: the layer the fabric is built beside, and the worker
@@ -61,6 +91,10 @@ describe('installPulseStatsHook', () => {
     expect(fabric).toHaveProperty('topology.unchainedApplies');
     expect(fabric).toHaveProperty('topology.staleResends');
     expect(fabric).toHaveProperty('topology.workerFallbacks');
+    // The arbor rescale, which is the largest piece of a chained landing and
+    // had no gauge at all before this wave.
+    expect(fabric).toHaveProperty('topology.rewritten');
+    expect(fabric).toHaveProperty('topology.rewrittenLast');
 
     // What one landed block costs the main thread, task by task: the whole
     // sustain wave is graded on these three numbers, and none of them can be

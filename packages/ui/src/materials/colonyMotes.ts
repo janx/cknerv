@@ -19,6 +19,7 @@ import {
   cohortShadowRadius,
 } from './colonyLens';
 import { MIST_SWIRL } from './colonyMist';
+import { observeGpuUpload } from '../tweaks/gpuUploadLedger';
 import type { SceneColor } from '../visualPalette';
 
 /**
@@ -1109,7 +1110,14 @@ export function buildCohortMotesGeometry(capacity: number): THREE.BufferGeometry
 /** Merge one component range into a BufferAttribute's pending upload ranges.
  * Three clears these ranges after `bufferSubData`, so this also coalesces
  * several cohort writes made before the next render without retaining stale
- * ranges into the following frame. */
+ * ranges into the following frame.
+ *
+ * ⭐ AND IT IS WHERE THE COLONY TELLS THE UPLOAD LEDGER WHAT IT COSTS. Every
+ * cohort write path — the plan's walk, the share walk, the retired tail, the
+ * mass ease, the gulp stamp, the layer's own lane marks — ends here, and this
+ * is the only place that knows what the merge LEFT flagged rather than what a
+ * caller asked for. A range already covered by a pending one is not a new
+ * upload and must not be counted as one: it is the same `bufferSubData`. */
 export function markCohortAttributeRange(
   attribute: THREE.BufferAttribute,
   offset: number,
@@ -1118,6 +1126,7 @@ export function markCohortAttributeRange(
   if (count <= 0) return;
   let from = offset;
   let to = offset + count;
+  let alreadyFlagged = 0;
   const ranges = attribute.updateRanges;
   for (let index = ranges.length - 1; index >= 0; index -= 1) {
     const range = ranges[index];
@@ -1126,10 +1135,15 @@ export function markCohortAttributeRange(
     if (rangeTo < from || rangeFrom > to) continue;
     from = Math.min(from, rangeFrom);
     to = Math.max(to, rangeTo);
+    alreadyFlagged += range.count;
     ranges.splice(index, 1);
   }
   attribute.addUpdateRange(from, to - from);
   attribute.needsUpdate = true;
+  observeGpuUpload(
+    'cohort',
+    (to - from - alreadyFlagged) * attribute.array.BYTES_PER_ELEMENT,
+  );
 }
 
 /** Commit the valid cohort prefix while preserving the allocation for all 64

@@ -21,6 +21,11 @@
 //                                    (patched vs whole applies, chain breaks:
 //                                    `unchainedApplies`, `staleResends`,
 //                                    fallbacks)
+//                                  — `topology.rewritten` / `rewrittenLast` is
+//                                    the arbor rescale: passive records a
+//                                    patch REPLACED because their distance or
+//                                    weight moved, summed and for the last
+//                                    apply alone
 //   window.__fabricStatsReset()  → zero the fabric-churn counters (bridge and
 //                                  topology included)
 //   window.__blockFrameStats()   → { count, bridgeCount, recent, max } — per
@@ -33,10 +38,35 @@
 //                                  Reset, wait out 30 blocks, and read `max`:
 //                                  that is the block frame, task by task.
 //   window.__blockFrameStatsReset() → zero the block-frame gauges
-//   window.__uploadStats()       → { lanes: { fabric, bridge, cells }, bytes,
-//                                    commits } — bytes flagged for
-//                                    bufferSubData by lane (Σ, last, max)
+//   window.__uploadStats()       → { lanes: { fabric, bridge, cells, cohort },
+//                                    bytes, commits } — bytes flagged for
+//                                    bufferSubData by lane (Σ, last, max).
+//                                    `cohort` is the colony's mote and lens
+//                                    lanes, counted as the MERGED ranges: a
+//                                    re-flag of bytes already pending is the
+//                                    same bufferSubData and adds nothing.
 //   window.__uploadStatsReset()  → zero the upload ledger
+//   window.__frameBudgetStats()  → the shared heavy-work ledger: what each of
+//                                  the four consumers spent on the frame in
+//                                  progress, its deferral streaks, and
+//                                  `window` — forced admissions
+//                                  (`forcedByReservation`,
+//                                  `forcedByStarvation`), `estimateOvershootMs`
+//                                  and `overspendMs` summed over every frame
+//                                  since the last reset. The per-frame copies
+//                                  beside them are wiped by the next frame, so
+//                                  `window` is the only one a probe can catch.
+//                                  Allocates — never call it from a frame.
+//   window.__frameBudgetStatsReset() → open a fresh budget window (the
+//                                  deferral streaks and the running frame's
+//                                  spend are deliberately left alone)
+//   window.__cellSlotStats()     → { canonical, incremental, publishedCopies }
+//                                  — which walk each Cell slot sync took. The
+//                                  journal walk touches the ids the render
+//                                  cursor named; the canonical one reads every
+//                                  drawn slot. Expect `canonical` ≈ 2 × the
+//                                  blocks that had a stage exit.
+//   window.__cellSlotStatsReset() → zero the slot-sync counters
 //   window.__qualityStats()      → { mode, effective, source, locked, switches }
 //                                  — after `locked` the tier is monotone
 //                                    non-increasing: read `switches` twice
@@ -114,6 +144,10 @@ import {
   resetBlockFrameStats,
   snapshotGpuUploads,
   resetGpuUploads,
+  snapshotFrameBudget,
+  resetFrameBudgetStats,
+  snapshotCellSlotStats,
+  resetCellSlotStats,
   snapshotProducerOriginStats,
   resetProducerOriginStats,
   snapshotColonyStats,
@@ -137,6 +171,10 @@ declare global {
     __blockFrameStatsReset?: typeof resetBlockFrameStats;
     __uploadStats?: typeof snapshotGpuUploads;
     __uploadStatsReset?: typeof resetGpuUploads;
+    __frameBudgetStats?: typeof snapshotFrameBudget;
+    __frameBudgetStatsReset?: typeof resetFrameBudgetStats;
+    __cellSlotStats?: typeof snapshotCellSlotStats;
+    __cellSlotStatsReset?: typeof resetCellSlotStats;
     __qualityStats?: typeof getQualityRuntimeSnapshot;
     __cknervQualitySamples?: typeof snapshotQualitySamples;
     __cknervQualitySamplesReset?: typeof resetQualitySamples;
@@ -165,6 +203,10 @@ export function installPulseStatsHook(): void {
   window.__blockFrameStatsReset = resetBlockFrameStats;
   window.__uploadStats = snapshotGpuUploads;
   window.__uploadStatsReset = resetGpuUploads;
+  window.__frameBudgetStats = snapshotFrameBudget;
+  window.__frameBudgetStatsReset = resetFrameBudgetStats;
+  window.__cellSlotStats = snapshotCellSlotStats;
+  window.__cellSlotStatsReset = resetCellSlotStats;
   window.__qualityStats = getQualityRuntimeSnapshot;
   window.__cknervQualitySamples = snapshotQualitySamples;
   window.__cknervQualitySamplesReset = resetQualitySamples;

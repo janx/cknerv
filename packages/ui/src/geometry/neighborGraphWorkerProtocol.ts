@@ -9,6 +9,7 @@ import {
   type PassiveSelection,
 } from './neighborGraph';
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
+import { neighborGraphBuilderStats } from './neighborGraphBuilderStats';
 
 export const PACKED_TOPOLOGY_CELL_STRIDE = 4;
 export const PACKED_PREFERRED_EDGE_STRIDE = 2;
@@ -763,6 +764,11 @@ export function applyPassiveSelectionPatch(
     edges[index] = replacement;
     rewritten += 1;
   }
+  // The count the caller returns to the fabric is also the one number that
+  // says how much of this landing was the arbor rescale; without it here the
+  // reading exists only inside an off-line probe.
+  neighborGraphBuilderStats.rewritten += rewritten;
+  neighborGraphBuilderStats.rewrittenLast = rewritten;
   return { added, removed, rewritten };
 }
 

@@ -40,6 +40,13 @@ export interface NeighborGraphBuilderStatsSnapshot {
    * worker, a caller that cannot patch, or the first selection after a build
    * without one). */
   passiveFullApplies: number;
+  /** Surviving passive records the patch REPLACED because their distance or
+   * arbor weight moved — the arbor rescale, which touches most of the list on
+   * most chained builds and is the largest piece of the landing task. Sum
+   * across the window; `rewrittenLast` is the most recent apply alone, so a
+   * window total and a single block can be told apart. */
+  rewritten: number;
+  rewrittenLast: number;
   /** Macrotask slices used by canonical main-thread recovery. */
   recoverySlices: number;
   recoveryMaxSliceMs: number;
@@ -61,6 +68,8 @@ export const neighborGraphBuilderStats: NeighborGraphBuilderStatsSnapshot = {
   staleResends: 0,
   passivePatchedApplies: 0,
   passiveFullApplies: 0,
+  rewritten: 0,
+  rewrittenLast: 0,
   recoverySlices: 0,
   recoveryMaxSliceMs: 0,
   recoveryMaxStepMs: 0,
@@ -84,6 +93,8 @@ export function resetNeighborGraphBuilderStats(): void {
   neighborGraphBuilderStats.staleResends = 0;
   neighborGraphBuilderStats.passivePatchedApplies = 0;
   neighborGraphBuilderStats.passiveFullApplies = 0;
+  neighborGraphBuilderStats.rewritten = 0;
+  neighborGraphBuilderStats.rewrittenLast = 0;
   neighborGraphBuilderStats.recoverySlices = 0;
   neighborGraphBuilderStats.recoveryMaxSliceMs = 0;
   neighborGraphBuilderStats.recoveryMaxStepMs = 0;

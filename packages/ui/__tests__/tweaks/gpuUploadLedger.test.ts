@@ -16,6 +16,7 @@ describe('gpuUploadLedger', () => {
     observeGpuUpload('fabric', 256);
     observeGpuUpload('cells', 816_000);
     observeGpuUpload('bridge', 224);
+    observeGpuUpload('cohort', 3456);
     const s = snapshotGpuUploads();
     expect(s.lanes.fabric).toEqual({
       bytes: 4352, commits: 2, bytesLast: 256, bytesMax: 4096,
@@ -24,8 +25,9 @@ describe('gpuUploadLedger', () => {
       bytes: 816_000, commits: 1, bytesLast: 816_000, bytesMax: 816_000,
     });
     expect(s.lanes.bridge.bytes).toBe(224);
-    expect(s.bytes).toBe(4352 + 816_000 + 224);
-    expect(s.commits).toBe(4);
+    expect(s.lanes.cohort.bytes).toBe(3456);
+    expect(s.bytes).toBe(4352 + 816_000 + 224 + 3456);
+    expect(s.commits).toBe(5);
     expect(gpuUploadedBytes()).toBe(s.bytes);
   });
 
@@ -51,6 +53,7 @@ describe('gpuUploadLedger', () => {
         fabric: { bytes: 0, commits: 0, bytesLast: 0, bytesMax: 0 },
         bridge: { bytes: 0, commits: 0, bytesLast: 0, bytesMax: 0 },
         cells: { bytes: 0, commits: 0, bytesLast: 0, bytesMax: 0 },
+        cohort: { bytes: 0, commits: 0, bytesLast: 0, bytesMax: 0 },
       },
       bytes: 0,
       commits: 0,
