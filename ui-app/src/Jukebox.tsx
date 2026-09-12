@@ -670,6 +670,12 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
     <div
       data-jukebox
       data-jukebox-open={open ? 'true' : 'false'}
+      // An occluder of the scene like any rail: the Cell inspection layout
+      // scores it as an obstacle and dims it under a plate, which is what keeps
+      // the chip — and the open player — from printing through the transparent
+      // CELL SCAN window onto the braid drawn on the canvas beneath. Without
+      // the attribute it was the one HUD surface the walk could not see.
+      data-hud-occlusion="true"
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
       style={floatingStyle}

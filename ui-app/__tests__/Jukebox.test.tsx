@@ -470,6 +470,11 @@ describe('Jukebox', () => {
     });
 
     expect(floating.style.position).toBe('fixed');
+    // The chip stands over the scene the way a rail does, so it says so: the
+    // Cell inspection layout reads this to keep its plates off the chip and to
+    // dim the chip under a plate rather than let it print through the
+    // transparent CELL SCAN window.
+    expect(floating.dataset.hudOcclusion).toBe('true');
     // 14 px inside the SAFE-AREA edge, which is the edge the HUD's rails
     // stand off too (`HudOverlay.tsx`, `ROOT_STYLE`) — an additive `calc`,
     // never `max(14px, env(...))`, which parts from the frame on exactly the
