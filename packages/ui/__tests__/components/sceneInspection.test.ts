@@ -18,6 +18,7 @@ import {
   INSPECTOR_SAFE_TOP_PX,
   inspectionStageViewport,
   resolveStickyInspectorPlacement,
+  writeInspectionStageViewport,
   sceneInspectorPlacement,
   type SceneInspectionHandles,
 } from '../../src/components/sceneInspection';
@@ -1061,6 +1062,23 @@ describe('the stage the card is placed into', () => {
       .toEqual({ width: IPAD_W, height: IPAD_WINDOW_H });
     expect(inspectionStageViewport(IPAD_W, IPAD_CANVAS_H, { width: IPAD_W, height: 0 }))
       .toEqual({ width: IPAD_W, height: IPAD_CANVAS_H });
+  });
+
+  it('answers into a box the frame loop owns, which is the form it asks in', () => {
+    // The frame loop asks this sixty times a second for as long as a card is
+    // open; the literal form stays for every other caller.
+    const scratch = { width: -1, height: -1 };
+    expect(writeInspectionStageViewport(scratch, IPAD_W, IPAD_CANVAS_H, {
+      width: IPAD_W,
+      height: IPAD_WINDOW_H,
+    })).toBe(scratch);
+    expect(scratch).toEqual({ width: IPAD_W, height: IPAD_WINDOW_H });
+    // Refilled, not merged: a later frame with no layer reading must not keep
+    // the earlier one's height.
+    writeInspectionStageViewport(scratch, IPAD_W, IPAD_CANVAS_H, null);
+    expect(scratch).toEqual({ width: IPAD_W, height: IPAD_CANVAS_H });
+    writeInspectionStageViewport(scratch, IPAD_W, IPAD_CANVAS_H, { width: 0, height: IPAD_WINDOW_H });
+    expect(scratch).toEqual({ width: IPAD_W, height: IPAD_WINDOW_H });
   });
 
   it('changes COMPOSITION between the two boxes, which is why they may not be mixed', () => {

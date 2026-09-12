@@ -796,6 +796,24 @@ export function sceneInspectorPlacement({
  * allocation beyond the solve itself), so the frame loop calls it directly and
  * jsdom can exercise the contract without R3F.
  */
+/** The solver takes its ten arguments as one object and destructures them at
+ *  the signature, so it neither keeps nor mutates what it is handed — and this
+ *  call is in a frame loop. One object, refilled. (Every card's frame loop
+ *  fills and reads it inside one synchronous block, so sharing it across
+ *  dialects is sharing a register, not state.) */
+const STICKY_PLACEMENT_INPUT = {
+  anchorX: 0,
+  anchorY: 0,
+  panelWidth: 0,
+  panelHeight: 0,
+  viewportWidth: 0,
+  viewportHeight: 0,
+  preferredY: undefined as number | undefined,
+  preferredX: undefined as number | undefined,
+  heldSide: null as SceneInspectorPlacementSide | null,
+  obstacles: NO_OBSTACLES as readonly SceneInspectorObstacle[],
+};
+
 export function resolveStickyInspectorPlacement(
   handles: SceneInspectionHandles,
   anchorX: number,
@@ -805,18 +823,18 @@ export function resolveStickyInspectorPlacement(
   obstacles: readonly SceneInspectorObstacle[] = NO_OBSTACLES,
 ): SceneInspectorPlacement {
   const lock = handles.placementLock;
-  const placement = sceneInspectorPlacement({
-    anchorX,
-    anchorY,
-    panelWidth: handles.measured.width,
-    panelHeight: handles.measured.height,
-    viewportWidth,
-    viewportHeight,
-    preferredY: lock.y ?? undefined,
-    preferredX: lock.x ?? undefined,
-    heldSide: lock.side,
-    obstacles,
-  });
+  const input = STICKY_PLACEMENT_INPUT;
+  input.anchorX = anchorX;
+  input.anchorY = anchorY;
+  input.panelWidth = handles.measured.width;
+  input.panelHeight = handles.measured.height;
+  input.viewportWidth = viewportWidth;
+  input.viewportHeight = viewportHeight;
+  input.preferredY = lock.y ?? undefined;
+  input.preferredX = lock.x ?? undefined;
+  input.heldSide = lock.side;
+  input.obstacles = obstacles;
+  const placement = sceneInspectorPlacement(input);
   const { family } = placement;
   if (lock.family !== family) {
     lock.family = family;
@@ -1059,11 +1077,26 @@ export function inspectionStageViewport(
   canvasHeight: number,
   layer: InspectionCardSize | null,
 ): InspectionCardSize {
-  if (!layer) return { width: canvasWidth, height: canvasHeight };
-  return {
-    width: layer.width > 0 ? layer.width : canvasWidth,
-    height: layer.height > 0 ? layer.height : canvasHeight,
-  };
+  return writeInspectionStageViewport(
+    { width: canvasWidth, height: canvasHeight },
+    canvasWidth,
+    canvasHeight,
+    layer,
+  );
+}
+
+/** The same answer, into a box the caller owns. The frame loop asks this
+ *  question sixty times a second for as long as a card is open, and a literal
+ *  per frame is a literal per frame. */
+export function writeInspectionStageViewport(
+  target: InspectionCardSize,
+  canvasWidth: number,
+  canvasHeight: number,
+  layer: InspectionCardSize | null,
+): InspectionCardSize {
+  target.width = layer && layer.width > 0 ? layer.width : canvasWidth;
+  target.height = layer && layer.height > 0 ? layer.height : canvasHeight;
+  return target;
 }
 
 /** The layer's box, kept OFF the frame loop: `handles.measured` is read from a
@@ -1173,6 +1206,7 @@ export function SceneInspectionAnchor({
   const anchorRef = useRef<THREE.Group>(null);
   const projected = useRef(new THREE.Vector3());
   const stageBox = useInspectionStageBox();
+  const stageScratch = useRef<InspectionCardSize>({ width: 0, height: 0 });
 
   useFrame(({ camera, size }) => {
     const anchor = anchorRef.current;
@@ -1207,7 +1241,12 @@ export function SceneInspectionAnchor({
     // box — see `inspectionStageViewport`.
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
-    const stage = inspectionStageViewport(size.width, size.height, stageBox.current);
+    const stage = writeInspectionStageViewport(
+      stageScratch.current,
+      size.width,
+      size.height,
+      stageBox.current,
+    );
     const placement = resolveStickyInspectorPlacement(
       handles,
       anchorX,

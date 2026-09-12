@@ -157,6 +157,7 @@ import { HUD_COLORS, HUD_MOTION, HUD_TYPE, rgba } from './hud/hudTheme';
 // and THREE's CSS-string parse is measurable at that rate.
 const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_HEX.halo);
 import CellNucleus from './CellNucleus';
+import { applyCellPickerHover } from './cellPickerHoverWord';
 import {
   clearPeerNodeHover,
   markPeerNodeHover,
@@ -1739,31 +1740,14 @@ function CellPicker({
   }, [gl]);
 
   useEffect(() => () => {
-    delete gl.domElement.dataset.cellPickerHover;
-    gl.domElement.style.cursor = cellCanvasCursor(
-      false,
-      gl.domElement.dataset.cellCausalNavigationHover !== undefined,
-      peerNodeHovered(gl.domElement),
-    );
+    applyCellPickerHover(gl.domElement, null);
   }, [gl]);
 
+  // `onPointerMove` arrives many times a second over one Cell; the word and the
+  // cursor are written only where the canvas does not already say them.
   const setHovered = (id: number | null) => {
     hoveredCellIdRef.current = id;
-    if (id === null) {
-      delete gl.domElement.dataset.cellPickerHover;
-    } else {
-      gl.domElement.dataset.cellPickerHover = String(id);
-    }
-    // A nearer causal endpoint can stop propagation and deliberately own the
-    // same screen point. Its marker remains the active affordance even when
-    // this farther picker receives the synthetic pointer-out cleanup.
-    const causalNavigationOwnsCursor =
-      gl.domElement.dataset.cellCausalNavigationHover !== undefined;
-    gl.domElement.style.cursor = cellCanvasCursor(
-      id !== null,
-      causalNavigationOwnsCursor,
-      peerNodeHovered(gl.domElement),
-    );
+    applyCellPickerHover(gl.domElement, id);
   };
 
   return (
