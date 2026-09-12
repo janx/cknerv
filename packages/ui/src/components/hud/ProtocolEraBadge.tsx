@@ -10,7 +10,10 @@ import {
 import { HUD_COLORS, HUD_TYPE, STALE_OPACITY } from './hudTheme';
 
 export default function ProtocolEraBadge({ chain, source, record }: {
-  chain: ChainEntry;
+  /** Only what the era derivation reads: the network this chain IS, and the
+   *  epoch it has reached. Narrowed so CKB·01 can be handed a projection of
+   *  the entity rather than the entity, which every batch replaces. */
+  chain: Pick<ChainEntry, 'chain_name' | 'epoch'>;
   source?: EnrichmentSourceStatus;
   record?: ProtocolEraRecord | null;
 }) {

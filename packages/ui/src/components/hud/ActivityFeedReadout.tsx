@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type {
   ActivityFeedRecord,
   EnrichmentSourceStatus,
@@ -40,9 +41,16 @@ export default function ActivityFeedReadout({ source, record, compact = false, f
    *  that answered both with the same form would be guessing at one of them. */
   folded?: boolean;
 }) {
+  // The rows are a walk of the whole record — seven kinds, each with two
+  // regexes, a codepoint spread, a BigInt and a CKB format. The record lands
+  // on its own 30–60 s cadence; the panel around it re-renders whenever the
+  // chain does, which is once a block (report L4-3).
+  const rows = useMemo(
+    () => (record ? deriveActivityRows(record) : null),
+    [record],
+  );
   if (!source || !record) return null;
   const visualState = activityFeedVisualState(source, record);
-  const rows = deriveActivityRows(record);
   if (!visualState || !rows) return null;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;

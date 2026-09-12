@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type {
   AssetEcosystemRecord,
   ChainCensus,
@@ -89,12 +90,22 @@ export default function CellCensusReadout({
    *  that answered both with the same form would be guessing at one of them. */
   folded?: boolean;
 }) {
+  // The bar splits every family in the census record by the inventory the
+  // index assigned it — a walk of the whole list, on a record that lands every
+  // 30–60 s inside a panel that re-renders once a block (report L4-3).
+  const families = source && scriptFamilyCensus
+    && scriptFamilyCensusVisualState(source, scriptFamilyCensus)
+    ? scriptFamilyCensus
+    : null;
+  const inventory = useMemo(
+    () => (families ? chainInventoryBuckets(families) : null),
+    [families],
+  );
   const visualState = source && record ? assetEcosystemVisualState(source, record) : null;
   const usableRecord = visualState ? record! : null;
   const familyState = source && scriptFamilyCensus
     ? scriptFamilyCensusVisualState(source, scriptFamilyCensus)
     : null;
-  const families = familyState ? scriptFamilyCensus! : null;
   if (!usableRecord && !census && !families) return null;
 
   const stale = visualState === 'stale';
@@ -198,7 +209,7 @@ export default function CellCensusReadout({
           <TaxonomyBar
             title="TYPES"
             scope={familyStale ? 'STALE' : undefined}
-            buckets={chainInventoryBuckets(families)}
+            buckets={inventory ?? []}
           />
         </div>
       ) : null}

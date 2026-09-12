@@ -31,8 +31,23 @@ const fmt = (n: number) => n.toLocaleString('en-US');
 export const CHAIN_PANEL_WIDTH_PX = 340;
 export const CHAIN_PANEL_DENSE_WIDTH_PX = 268;
 
+/**
+ * THE WHOLE OF WHAT CKB·01 READS OFF THE CHAIN ENTITY — the tip, the epoch,
+ * the mempool, the reorg tally, and the network's own name, which the era
+ * badge reads to decide whether the record it was handed is about this chain.
+ *
+ * The entity itself is shallow-cloned by every batch that touches it — a
+ * mempool tick, a peer refresh, a transaction, an enrichment status — so the
+ * panel re-rendered, and its three sections re-derived their whole records,
+ * for clones that moved nothing it prints (report L4-3). `HudOverlay` hands it
+ * a projection memoized on these fields; `ChainEntry` is structurally one, so
+ * every other consumer still passes the entity.
+ */
+export type ChainReadout =
+  Pick<ChainEntry, 'tip' | 'epoch' | 'mempool' | 'reorgs' | 'chain_name'>;
+
 function BlockchainReadout({ chain, cellPopulation, enrichmentSource, assetEcosystem, scriptFamilyCensus, protocolEra, activityFeed, transactionHorizon, compactActivity = false, folded = false, reorgLive = false, style }: {
-  chain: ChainEntry;
+  chain: ChainReadout;
   /** Population model, or null for a consumer that derives none. Absent means
    *  the panel is absent — it never guesses a scope. */
   cellPopulation?: CellPopulationFieldModel | null;

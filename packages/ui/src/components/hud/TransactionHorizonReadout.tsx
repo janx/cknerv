@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type {
   EnrichmentSourceStatus,
   TransactionHorizonRecord,
@@ -28,9 +29,14 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
    *  that answered both with the same form would be guessing at one of them. */
   folded?: boolean;
 }) {
+  // Two 24-entry walks and four locale formats, on a record that moves every
+  // 30–60 s inside a panel that re-renders once a block (report L4-3).
+  const visual = useMemo(
+    () => (record ? deriveTransactionHorizonVisual(record) : null),
+    [record],
+  );
   if (!source || !record) return null;
   const visualState = transactionHorizonVisualState(source, record);
-  const visual = deriveTransactionHorizonVisual(record);
   if (!visualState || !visual) return null;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;

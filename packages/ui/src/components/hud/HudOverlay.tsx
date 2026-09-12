@@ -34,6 +34,8 @@ import {
   viewportMinusSafeArea,
 } from './hudTheme';
 import { revealStageStyle } from './primitives';
+import { stageCellsControlStands, useStageCellsDisclosed } from './stageCellsDisclosure';
+import { useCellDisplayRuntime } from '../../tweaks/cellDisplay';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
   type BuildInfo,
@@ -48,6 +50,7 @@ import {
   useStatusStripFold,
 } from './useStatusStripFold';
 import BlockchainReadout, {
+  type ChainReadout,
   CHAIN_PANEL_DENSE_WIDTH_PX,
   CHAIN_PANEL_WIDTH_PX,
 } from './BlockchainReadout';
@@ -536,7 +539,39 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
   // query and wins over the measurement.
   const rootRef = useRef<HTMLDivElement>(null);
   const leftRailRef = useRef<HTMLDivElement>(null);
+  // WHAT CKB·01 PRINTS OFF THE CHAIN, and nothing else that rides along with
+  // it. `chain` is shallow-cloned by every batch that touches the entity — a
+  // mempool tick, a peer refresh, a transaction, an enrichment status — and
+  // the panel re-rendered for all of them, re-deriving its three enrichment
+  // sections each time for records that had not moved (report L4-3).
+  const chainReadout = useMemo<ChainReadout>(() => ({
+    tip: chain.tip,
+    epoch: chain.epoch,
+    mempool: chain.mempool,
+    reorgs: chain.reorgs,
+    chain_name: chain.chain_name,
+    // The two nested objects are listed by the FIELDS they carry, not by
+    // identity: a clone that rebuilt `epoch` or `mempool` with the same
+    // numbers in it is not news either.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [
+    chain.tip,
+    chain.epoch.number,
+    chain.epoch.index,
+    chain.epoch.length,
+    chain.mempool.pending,
+    chain.mempool.proposed,
+    chain.reorgs,
+    chain.chain_name,
+  ]);
   const stripProbeRef = useRef<HTMLDivElement>(null);
+  // The same two stores the cap control itself subscribes to, read here so the
+  // count can be withheld before it ever reaches a strip. Both publish on
+  // change only — a tier click, a cap drag — so this costs no render.
+  const stageCellsStands = stageCellsControlStands(
+    useStageCellsDisclosed(),
+    useCellDisplayRuntime().mode,
+  );
   const stripEstimate = useMediaQuery(STATUS_STRIP_FOLD_ESTIMATE_QUERY);
   const stripFolded = useStatusStripFold(stripProbeRef, rootRef, stripEstimate);
   const compactTopBar = mobileTopBar || stripFolded;
@@ -908,7 +943,14 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
    *  identities. */
   const stripProps = {
     build,
-    cellCount: cellCount ?? cellsStats.inView,
+    // ⭐ THE COUNT TRAVELS ONLY WHILE SOMETHING UP THERE PRINTS IT. The bar
+    // carries `cellCount` for exactly one module — the STAGE CELLS cap — and
+    // that module is not in the bar until the quality rail has been used
+    // (`stageCellsDisclosure.ts`). Handed down unconditionally it moved on
+    // every cells batch, which re-rendered BOTH strip copies, the visible one
+    // and the hidden probe the fold is measured on, for a number nothing was
+    // showing (report L4-1).
+    cellCount: stageCellsStands ? cellCount ?? cellsStats.inView : undefined,
     cellCapacity,
     enrichmentSource,
     actions: topBarActions,
@@ -1020,7 +1062,7 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
                   style={bootPanelStyle('chain', PANEL_SCROLL_STYLE)}
                 >
                   <BlockchainReadout
-                    chain={chain}
+                    chain={chainReadout}
                     cellPopulation={cellPopulation}
                     enrichmentSource={enrichmentSource}
                     assetEcosystem={assetEcosystem}
