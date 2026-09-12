@@ -86,6 +86,7 @@ function makeHandles(options: {
         scanned: 0,
         liveKeys: new Set<string>(),
         addCandidates: new Map<string, NeighborEdge>(),
+        addWeights: [],
         stable: 0,
         revived: 0,
         flushAdmitted: 0,

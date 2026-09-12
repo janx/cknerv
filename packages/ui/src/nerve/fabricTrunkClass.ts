@@ -226,6 +226,7 @@ let trunkWeightsScratch = new Float64Array(0);
 export function fabricTrunkTier(
   edges: readonly FabricTrunkCandidate[],
   share: number = FABRIC_TRUNK_SHARE,
+  weights?: Float64Array,
 ): FabricTrunkTier {
   const drawn = edges.length;
   const wanted = Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : 0;
@@ -235,19 +236,24 @@ export function fabricTrunkTier(
   if (trunkWeightsScratch.length < drawn) {
     trunkWeightsScratch = new Float64Array(drawn);
   }
-  const weights = trunkWeightsScratch;
+  const scratch = trunkWeightsScratch;
   let count = 0;
-  for (const edge of edges) {
-    const trunkness = fabricEdgeTrunkness(edge.w);
+  for (let index = 0; index < edges.length; index += 1) {
+    // The landing's parallel array when it has one — it carries the build's
+    // EXACT weights, where a held record may be a build or two behind inside
+    // the grain the patch spends (see `PASSIVE_WEIGHT_GRAIN`). `NaN` there
+    // reads as the no-arbor sentinel, exactly as an absent `w` does.
+    const w = weights !== undefined ? weights[index] : edges[index].w;
+    const trunkness = fabricEdgeTrunkness(w);
     if (trunkness > 0) {
-      weights[count] = trunkness;
+      scratch[count] = trunkness;
       count += 1;
     }
   }
   if (count === 0) return DISABLED_TIER;
   // Typed-array sort is numeric ascending with no comparator and no
   // per-element allocation — this runs on every completed build.
-  const arbor = weights.subarray(0, count);
+  const arbor = scratch.subarray(0, count);
   arbor.sort();
   if (target >= count) {
     // The budget wants more than the forest has: promote all of it.

@@ -120,6 +120,25 @@ export function emptyLivingNeighborGraph(): LivingNeighborGraph {
  *  read, at admission, the weight it was queued with. */
 export interface PassiveSelection {
   edges: NeighborEdge[];
+  /** This build's arbor weights, one per edge in `edges` order, `NaN` where
+   *  an edge carries none.
+   *
+   *  The records are immutable values — the fabric's deferred cohorts hold
+   *  them across builds and read the weight they were queued with — so a
+   *  landing that wanted to publish a rescaled weight had to replace the
+   *  record, and `w = sqrt(subtreeSize / maxSubtreeSize)` rescales on nearly
+   *  every build. This array is the other half of that trade: the exact
+   *  weights, overwritten IN PLACE by the landing, for the two readers that
+   *  want them exactly (the width tier, and the fabric at the moment it
+   *  admits an edge), while a record is replaced only when something a reader
+   *  can see has moved.
+   *
+   *  It is a growth-only buffer: only `[0, edges.length)` is meaningful, and
+   *  a longer buffer left by a wider selection carries nothing into the
+   *  answer. Absent on a selection nothing has patched (an empty one, the
+   *  main-thread fallback's freshly built records, a lab's hand-made list),
+   *  where every record's own `w` is already this build's. */
+  weights?: Float64Array;
 }
 
 export function emptyPassiveSelection(): PassiveSelection {

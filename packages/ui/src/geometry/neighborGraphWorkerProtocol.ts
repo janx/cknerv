@@ -23,6 +23,38 @@ export const PACKED_PASSIVE_KEY_STRIDE = 2;
  * for no weight — the fields of a record that can move while its key stays. */
 export const PACKED_PASSIVE_VALUE_STRIDE = 2;
 
+/**
+ * How far an arbor weight may move inside a held record before the record is
+ * replaced.
+ *
+ * A record's own `w` reaches exactly two readers: `fabricTrunkTier`, which
+ * takes the whole selection's weights from `PassiveSelection.weights` and so
+ * never reads a record's at all, and `NeuralFabric` at the instant it ADMITS
+ * an edge, where `arborBrightness` and `fabricEdgeTrunkness` are frozen into
+ * a state that is never re-derived. An edge being admitted is an edge that
+ * just entered the selection, and its record was built by this very patch —
+ * so the grain is spent only on records nothing will read again until they
+ * move for a reason of their own. Two hundredths of a weight is under a
+ * fortieth of `arborBrightness`'s range even at the top of the curve, and the
+ * whole point is that the drift below it is not a fact about any edge, only
+ * about which tree happened to be the largest this block.
+ */
+export const PASSIVE_WEIGHT_GRAIN = 0.02;
+
+/**
+ * Everything a reader can see about a weight BESIDES its magnitude: whether
+ * the edge carries an arbor weight at all — `arborBrightness` answers a
+ * different curve without one — and whether that weight can reach the wide
+ * pass, which is `fabricEdgeTrunkness`'s positive/sentinel split. A crossing
+ * of either is visible however small the move, so the grain never applies to
+ * one. (Spelled here rather than imported from the fabric so the worker's
+ * half of this module stays free of the nerve layer; the agreement with
+ * `fabricEdgeTrunkness` is pinned in the protocol's tests.) */
+export function passiveWeightClass(w: number | undefined): 0 | 1 | 2 {
+  if (w === undefined) return 0;
+  return Number.isFinite(w) && w > 0 ? 2 : 1;
+}
+
 /** CSR adjacency preserving each Set's insertion order for deterministic
  * equal-hop routing choices. */
 export interface SerializedNeighborAdjacency {
@@ -625,7 +657,28 @@ export function deserializePassiveSelection(
     PACKED_PASSIVE_EDGE_STRIDE,
     'passive selection',
   );
-  return { edges: unpackPassiveEdges(serialized.edges) };
+  const edges = unpackPassiveEdges(serialized.edges);
+  const weights = new Float64Array(edges.length);
+  for (let index = 0; index < edges.length; index += 1) {
+    weights[index] = serialized.edges[
+      index * PACKED_PASSIVE_EDGE_STRIDE + 3
+    ];
+  }
+  return { edges, weights };
+}
+
+/** The selection's weight buffer, big enough for this build. Growth-only: a
+ *  buffer a wider selection left behind is kept and only `[0, length)` is ever
+ *  written or read, so no build inherits another's values. */
+function ensurePassiveWeights(
+  selection: PassiveSelection,
+  length: number,
+): Float64Array {
+  const held = selection.weights;
+  if (held !== undefined && held.length >= length) return held;
+  const grown = new Float64Array(length);
+  selection.weights = grown;
+  return grown;
 }
 
 /** What one passive patch did to the held list, in the list's own records. */
@@ -749,18 +802,28 @@ export function applyPassiveSelectionPatch(
       addition -= 1;
     }
   }
-  // Pass 3: the values. A record whose distance or weight moved is replaced,
-  // never edited; an added record already carries this build's values, so
+  // Pass 3: the values. The exact weights land in the parallel array, every
+  // index, every build — that is what the width tier reads. A RECORD is
+  // replaced, never edited, only when a reader could see the difference: its
+  // distance moved, its weight crossed a class, or its weight moved by more
+  // than the grain. An added record already carries this build's values, so
   // it is confirmed here, not rewritten.
+  const weights = ensurePassiveWeights(selection, edges.length);
   let rewritten = 0;
   for (let index = 0; index < edges.length; index += 1) {
     const edge = edges[index];
     const d = values[index * PACKED_PASSIVE_VALUE_STRIDE];
     const w = values[index * PACKED_PASSIVE_VALUE_STRIDE + 1];
-    const hasWeight = !Number.isNaN(w);
-    if (edge.d === d && (hasWeight ? edge.w === w : edge.w === undefined)) continue;
+    weights[index] = w;
+    const next = Number.isNaN(w) ? undefined : w;
+    if (
+      edge.d === d
+      && passiveWeightClass(edge.w) === passiveWeightClass(next)
+      && (next === undefined
+        || Math.abs((edge.w as number) - next) <= PASSIVE_WEIGHT_GRAIN)
+    ) continue;
     const replacement: NeighborEdge = { from: edge.from, to: edge.to, d };
-    if (hasWeight) replacement.w = w;
+    if (next !== undefined) replacement.w = next;
     edges[index] = replacement;
     rewritten += 1;
   }

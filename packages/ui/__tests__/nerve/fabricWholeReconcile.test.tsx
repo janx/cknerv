@@ -25,6 +25,10 @@ import { resetFabricStats, snapshotFabricStats } from '../../src/nerve/fabricSta
 import { resetSimClock } from '../../src/tweaks/simClock';
 import NeuralFabric, { type NeuralFabricHandles } from '../../src/nerve/NeuralFabric';
 import type { FabricLifecycleRecord } from '../../src/nerve/fabricLifecycleSlots';
+import { fabricEdgeSeed } from '../../src/geometry/edgeBezier';
+import { arborBrightness } from '../../src/nerve/fabricLuminance';
+import { fabricEdgeTrunkness } from '../../src/nerve/fabricTrunkClass';
+import type { Cell } from '@cknerv/types';
 
 vi.mock('@react-three/fiber', () => ({
   useFrame: () => {},
@@ -41,6 +45,8 @@ const slotWrites = vi.hoisted(() => ({
   high: 0,
   count: 0,
   arrays: null as unknown,
+  /** Records kept whole, for the cases that read one rather than digest it. */
+  capture: null as FabricLifecycleRecord[] | null,
 }));
 
 /** ⚠️ `brightnessMul` is `arborBrightness(w, seed)` = `TWIG_MIN + (1 −
@@ -77,6 +83,7 @@ vi.mock('../../src/nerve/fabricLifecycleSlots', async (importOriginal) => {
     ) => {
       slotWrites.count += 1;
       slotWrites.arrays = arrays;
+      slotWrites.capture?.push({ ...record });
       foldWrite(`${slotBaseSegment}|${record.fromX},${record.fromY},${record.fromZ}|`
         + `${record.ctrlX},${record.ctrlY},${record.ctrlZ}|`
         + `${record.toX},${record.toY},${record.toZ}|`
@@ -95,6 +102,7 @@ function resetSlotWrites(): void {
   slotWrites.high = 0x01000193;
   slotWrites.count = 0;
   slotWrites.arrays = null;
+  slotWrites.capture = null;
 }
 
 function streamDigest(): string {
@@ -120,6 +128,26 @@ function arraysDigest(): string {
     }
   }
   return `${low.toString(16).padStart(8, '0')}${high.toString(16).padStart(8, '0')}`;
+}
+
+/** A Cell whose only fabric-relevant field is where it sits. */
+function cell(id: number, x: number): Cell {
+  return {
+    id,
+    born_at_ms: 0,
+    death_at_ms: null,
+    birth_block: 1,
+    tag: null,
+    pos_seed: [x, 0, 0],
+    out_point: { tx_hash: `0x${id}`, index: 0 },
+    capacity: 0,
+    data_hex: '0x',
+    data_bytes: 0,
+    content_hash: `0x${String(id).padStart(64, '0')}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
+  };
 }
 
 function mountFabric(): NeuralFabricHandles {
@@ -284,4 +312,35 @@ describe('a whole reconcile over the 12,000-Cell stage', () => {
     expect(cut.arraysDigest).toBe(golden.arraysDigest);
     expect(cut.trunkTierEdges).toBe(golden.trunkTierEdges);
   }, 300_000);
+});
+
+describe('what a whole reconcile freezes into a new edge', () => {
+  it('takes the landing\'s exact weight, not the weight its record was left at', () => {
+    // T12 lets a surviving record keep a weight up to `PASSIVE_WEIGHT_GRAIN`
+    // behind the build's, because the two readers of a weight take the
+    // landing's parallel array instead. This is the admission half of that:
+    // the record here is a grain stale and the array is right, and what the
+    // fabric freezes is what the array says.
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0)],
+      [2, cell(2, 6)],
+    ]);
+    const exact = 0.7;
+    const stale = exact - 0.019;
+    const handles = mountFabric();
+    slotWrites.capture = [];
+    handles.setFabric(
+      { edges: [{ from: 1, to: 2, d: 6, w: stale }], weights: Float64Array.of(exact) },
+      cells,
+      40,
+    );
+    const seed = fabricEdgeSeed(1, 2);
+    expect(slotWrites.capture).toHaveLength(1);
+    expect(slotWrites.capture![0].brightnessMul)
+      .toBeCloseTo(arborBrightness(exact, seed), 12);
+    expect(slotWrites.capture![0].trunkness).toBe(fabricEdgeTrunkness(exact));
+    // The record the selection was handed is untouched — it is a value, and
+    // whoever else holds it still reads the weight they were given.
+    expect(stale).toBeLessThan(exact);
+  });
 });

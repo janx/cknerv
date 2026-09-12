@@ -115,6 +115,11 @@ export interface FabricWholeReconcile {
   readonly liveKeys: Set<string>;
   /** Fresh edges in first-seen order: the commit's admission list. */
   readonly addCandidates: Map<string, NeighborEdge>;
+  /** The landing's exact arbor weight for each add candidate, in the same
+   *  order. A held record's own `w` may sit a grain behind this build's (see
+   *  `PASSIVE_WEIGHT_GRAIN`), and an admission freezes what it reads into a
+   *  state that is never re-derived. */
+  readonly addWeights: (number | undefined)[];
   /** Existing edges the scan left untouched, and dying ones it brought back. */
   stable: number;
   revived: number;

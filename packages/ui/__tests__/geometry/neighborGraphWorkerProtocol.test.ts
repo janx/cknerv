@@ -12,13 +12,16 @@ import {
 import { shortestPath } from '../../src/geometry/pathRouter';
 import { buildPassiveNeighborGraph } from '../../src/geometry/passiveNeighborGraph';
 import { addCell, removeCells } from '../../src/nerve/incrementalGraph';
+import { fabricEdgeTrunkness } from '../../src/nerve/fabricTrunkClass';
 import {
   resetNeighborGraphBuilderStats,
   snapshotNeighborGraphBuilderStats,
 } from '../../src/geometry/neighborGraphBuilderStats';
 import {
   applyNeighborAdjacencyPatch,
+  PASSIVE_WEIGHT_GRAIN,
   applyPassiveSelectionPatch,
+  passiveWeightClass,
   collectNeighborAdjacencyPatch,
   collectPassiveSelectionPatch,
   createNeighborGraphWorkerSession,
@@ -101,6 +104,41 @@ function expectCanonicalOrder(edges: readonly NeighborEdge[], label: string): vo
     const b = edges[index];
     expect(a.from < b.from || (a.from === b.from && a.to < b.to), `${label}: ${edgeKeyOf(a)} before ${edgeKeyOf(b)}`)
       .toBe(true);
+  }
+}
+
+/**
+ * A patched selection against the whole one the mirror built.
+ *
+ * Keys, order and distances are exact — a patch that lost an edge or moved
+ * one is a wrong selection. The WEIGHTS a reader takes are exact too, and
+ * they are the parallel array, not the records. A record's own `w` is allowed
+ * to sit up to {@link PASSIVE_WEIGHT_GRAIN} behind: it is read only where the
+ * fabric admits an edge, and holding a replacement-free record there is the
+ * whole of T12 (see `passiveWeightChain.test.ts` for what that costs the tier
+ * and the admissions over sixteen chained blocks — nothing).
+ */
+function expectSamePassive(
+  held: PassiveSelection,
+  truth: PassiveSelection,
+  label: string,
+): void {
+  expect(held.edges.map(edgeKeyOf), `${label}: passive vs mirror keys`)
+    .toEqual(truth.edges.map(edgeKeyOf));
+  expect(held.edges.map((e) => e.d), `${label}: passive vs mirror distances`)
+    .toEqual(truth.edges.map((e) => e.d));
+  for (let index = 0; index < truth.edges.length; index += 1) {
+    const want = truth.edges[index].w;
+    const where = `${label}: ${edgeKeyOf(truth.edges[index])}`;
+    expect(held.weights?.[index] ?? Number.NaN, `${where} tier weight`)
+      .toBe(want ?? Number.NaN);
+    const holding = held.edges[index].w;
+    expect(passiveWeightClass(holding), `${where} record class`)
+      .toBe(passiveWeightClass(want));
+    if (want !== undefined && holding !== undefined) {
+      expect(Math.abs(holding - want), `${where} record drift`)
+        .toBeLessThanOrEqual(PASSIVE_WEIGHT_GRAIN);
+    }
   }
 }
 
@@ -669,6 +707,63 @@ describe('passive selection patch', () => {
     expect(snapshotNeighborGraphBuilderStats().rewrittenLast).toBe(0);
   });
 
+  it('keeps a record whose weight only drifted, and still hands the tier the exact weight', () => {
+    // `w = sqrt(subtreeSize / maxSubtreeSize)` rescales on nearly every build,
+    // and the two readers of a held record's weight cannot see a drift this
+    // small: the tier reads the array below, and the fabric reads a record
+    // only at the moment it admits the edge.
+    const held: PassiveSelection = {
+      edges: [edge(1, 2, 0.5), edge(1, 3, 0.25), edge(2, 3)],
+    };
+    const before = [...held.edges];
+    const delta = applyPassiveSelectionPatch(held, patchOf(held.edges, [], [], [
+      edge(1, 2, 0.5 + PASSIVE_WEIGHT_GRAIN * 0.9),
+      edge(1, 3, 0.25 - PASSIVE_WEIGHT_GRAIN / 2),
+      edge(2, 3),
+    ]));
+    expect(delta.rewritten).toBe(0);
+    expect(held.edges[0]).toBe(before[0]);
+    expect(held.edges[1]).toBe(before[1]);
+    expect(held.edges[2]).toBe(before[2]);
+    // …and the exact values are there for the tier, every index, every build.
+    expect([...held.weights!.subarray(0, 3)]).toEqual([
+      0.5 + PASSIVE_WEIGHT_GRAIN * 0.9,
+      0.25 - PASSIVE_WEIGHT_GRAIN / 2,
+      Number.NaN,
+    ]);
+  });
+
+  it('replaces a record whenever a reader could see the difference', () => {
+    const moved = (from: NeighborEdge, to: NeighborEdge): number => {
+      const held: PassiveSelection = { edges: [from, edge(9, 10)] };
+      return applyPassiveSelectionPatch(
+        held,
+        patchOf(held.edges, [], [], [to, edge(9, 10)]),
+      ).rewritten;
+    };
+    // Past the grain.
+    expect(moved(edge(1, 2, 0.5), edge(1, 2, 0.5 + PASSIVE_WEIGHT_GRAIN * 1.01))).toBe(1);
+    // A distance, however still the weight.
+    expect(moved(edge(1, 2, 0.5), edge(1, 2, 0.5, 7))).toBe(1);
+    // An arbor gained or lost — `arborBrightness` answers a different curve
+    // without one, so the size of the move is beside the point.
+    expect(moved(edge(1, 2), edge(1, 2, 0.001))).toBe(1);
+    expect(moved(edge(1, 2, 0.001), edge(1, 2))).toBe(1);
+    // A weight that carries no arbor is not the same as no weight, and is not
+    // the same as one that does: both crossings are visible.
+    expect(moved(edge(1, 2, 0), edge(1, 2))).toBe(1);
+    expect(moved(edge(1, 2, 0), edge(1, 2, 0.001))).toBe(1);
+  });
+
+  it('spends its grain on the class the trunk tier actually reads', () => {
+    // The rule above is only honest if "carries an arbor" means what
+    // `fabricEdgeTrunkness` means by it; this is that agreement, spelled out.
+    for (const w of [undefined, -1, 0, 1e-9, 0.001, 0.5, 1, Number.NaN]) {
+      const promoted = fabricEdgeTrunkness(w) > 0;
+      expect(passiveWeightClass(w)).toBe(w === undefined ? 0 : (promoted ? 2 : 1));
+    }
+  });
+
   it('replaces exactly the surviving records whose values moved and keeps every other object', () => {
     const held: PassiveSelection = {
       edges: [edge(1, 2, 0.5), edge(1, 3), edge(2, 3, 0.2), edge(3, 4)],
@@ -1064,7 +1159,7 @@ describe('applyNeighborAdjacencyPatch under living-mesh churn (lattice, ties)', 
       } else {
         held = deserializePassiveSelection(response.passiveGraph);
       }
-      expect(held.edges, `${label}: passive vs mirror`).toEqual(truthPassive.edges);
+      expectSamePassive(held, truthPassive, label);
       expectCanonicalOrder(held.edges, label);
       applied = response.generation;
       const truth = fullAdjacency(executeNeighborGraphWorkerRequest({

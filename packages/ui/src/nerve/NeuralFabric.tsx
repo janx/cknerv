@@ -515,10 +515,20 @@ interface RecallApertureState {
   departingStrength: number;
 }
 
+/** A landing's packed weight lane reads `NaN` for an edge with no arbor,
+ *  which is the absent `w` every consumer already knows how to answer. */
+function weightOf(packed: number | undefined): number | undefined {
+  return packed === undefined || Number.isNaN(packed) ? undefined : packed;
+}
+
 /** One deferred add candidate of a staggered setFabric diff. */
 interface PendingFabricAdd {
   key: string;
   edge: NeighborEdge;
+  /** The landing's exact arbor weight for this edge, carried with the edge so
+   *  a cohort admitted seconds later freezes the brightness the reconcile
+   *  that queued it would have frozen. */
+  weight: number | undefined;
 }
 
 /** Deferred remainder of ONE oversized setFabric diff (cohort staggering —
@@ -1947,7 +1957,10 @@ export default function NeuralFabric({
      * the partition, and with it each edge's summed light across the two
      * passes is exactly 1.0× of what it draws today. */
     const applyTrunkTier = (graph: PassiveSelection): void => {
-      const tier = fabricTrunkTier(graph.edges);
+      // The landing's parallel weights when it has them: a held record's own
+      // `w` may sit a grain behind this build's (see `PASSIVE_WEIGHT_GRAIN`),
+      // and the threshold is a fact about the WHOLE selection's weights.
+      const tier = fabricTrunkTier(graph.edges, undefined, graph.weights);
       fabricStats.trunkTierEdges = tier.edges;
       fabricStats.trunkTierThreshold = tier.threshold;
       fabricStats.weightedSelectionEdges = tier.weighted;
@@ -1969,6 +1982,12 @@ export default function NeuralFabric({
       e: NeighborEdge,
       cells: ReadonlyMap<number, Cell>,
       bornAt: number,
+      // The landing's exact arbor weight for this edge where the caller knows
+      // it (the whole reconcile's scan knows the edge's index into the
+      // selection). The record's own `w` is the answer everywhere else, and
+      // is exact there: an edge being admitted off the delta path is one that
+      // just entered, carrying a record this build built.
+      weight: number | undefined = e.w,
     ): 'missing-cell' | 'slotted' | 'unslotted' => {
       const a = cells.get(e.from);
       const c = cells.get(e.to);
@@ -1993,8 +2012,8 @@ export default function NeuralFabric({
         deathKind: null,
         deadEnd: null,
         growDir: 1,
-        brightnessMul: arborBrightness(e.w, seed),
-        trunkness: fabricEdgeTrunkness(e.w),
+        brightnessMul: arborBrightness(weight, seed),
+        trunkness: fabricEdgeTrunkness(weight),
         fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
         toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
         usage: 0,
@@ -2037,6 +2056,7 @@ export default function NeuralFabric({
         scanned: 0,
         liveKeys: new Set<string>(),
         addCandidates: new Map<string, NeighborEdge>(),
+        addWeights: [],
         stable: 0,
         revived: 0,
         flushAdmitted: 0,
@@ -2066,7 +2086,7 @@ export default function NeuralFabric({
         ) {
           const slice = pendingFlush.cohorts[cohortIdx];
           for (let i = slice.addStart; i < slice.addEnd; i += 1) {
-            const { key, edge } = pendingFlush.adds[i];
+            const { key, edge, weight } = pendingFlush.adds[i];
             // growEdges may have raced the key in; keep fresher state.
             if (states.has(key)) continue;
             const admitted = admitFabricEdge(
@@ -2074,6 +2094,7 @@ export default function NeuralFabric({
               edge,
               pendingFlush.cells,
               grownBornAt,
+              weight,
             );
             if (admitted === 'missing-cell') continue;
             reconcile.flushAdmitted += 1;
@@ -2103,7 +2124,7 @@ export default function NeuralFabric({
       edges: number,
     ): boolean => {
       const states = edgeStatesRef.current;
-      const { graph, cells, now, liveKeys, addCandidates } = reconcile;
+      const { graph, cells, now, liveKeys, addCandidates, addWeights } = reconcile;
       const end = Math.min(
         graph.edges.length,
         reconcile.scanned + Math.max(1, edges),
@@ -2153,7 +2174,12 @@ export default function NeuralFabric({
         const a = cells.get(e.from);
         const c = cells.get(e.to);
         if (!a || !c) continue;
+        // The two stay in lockstep because this is the only place either
+        // grows, and the `has` guard above keeps a duplicate graph edge from
+        // re-entering the Map without re-entering the array. The commit walks
+        // the Map in insertion order and indexes the array by the same count.
         addCandidates.set(key, e);
+        addWeights.push(graph.weights ? weightOf(graph.weights[i]) : e.w);
       }
       reconcile.scanned = end;
       return end >= graph.edges.length;
@@ -2166,7 +2192,7 @@ export default function NeuralFabric({
      */
     const commitWholeReconcile = (reconcile: FabricWholeReconcile): void => {
       const {
-        graph, cells, now, liveKeys, addCandidates, wasPopulated,
+        graph, cells, now, liveKeys, addCandidates, addWeights, wasPopulated,
       } = reconcile;
       const states = edgeStatesRef.current;
       let statsAdded = 0;
@@ -2206,15 +2232,16 @@ export default function NeuralFabric({
       let deferredAdds: PendingFabricAdd[] | null = null;
       let addIndex = 0;
       for (const [key, e] of addCandidates) {
+        const weight = addWeights[addIndex];
         if (addIndex < immediateAdds) {
-          const admitted = admitFabricEdge(key, e, cells, now);
+          const admitted = admitFabricEdge(key, e, cells, now, weight);
           if (admitted !== 'missing-cell') {
             statsAdded += 1;
             if (admitted === 'unslotted') reconcile.overflowed = true;
             else renderOrderRef.current.push(key);
           }
         } else {
-          (deferredAdds ??= []).push({ key, edge: e });
+          (deferredAdds ??= []).push({ key, edge: e, weight });
           statsAdded += 1;
         }
         addIndex += 1;
@@ -2552,7 +2579,7 @@ export default function NeuralFabric({
             const slice = pendingCohorts.cohorts[pendingCohorts.next];
             pendingCohorts.next += 1;
             for (let i = slice.addStart; i < slice.addEnd; i += 1) {
-              const { key, edge } = pendingCohorts.adds[i];
+              const { key, edge, weight } = pendingCohorts.adds[i];
               // growEdges may have raced this key in — keep fresher state.
               if (pumpStates.has(key)) continue;
               // Admission time IS the birth time: a queued edge grows the
@@ -2564,6 +2591,7 @@ export default function NeuralFabric({
                 edge,
                 pendingCohorts.cells,
                 now,
+                weight,
               );
               if (admitted === 'missing-cell') continue;
               cohortChanged = true;
