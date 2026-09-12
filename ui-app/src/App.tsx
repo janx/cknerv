@@ -222,6 +222,56 @@ interface AppProps {
   initialCellsRevision: number;
 }
 
+/**
+ * THE IDLE A LOOKUP IS ALREADY IN.
+ *
+ * Three selection lookups — cell semantics, transaction semantics, peer
+ * sighting — clear themselves whenever there is no subject to ask about, and
+ * their effects re-run on every enrichment source refresh. Written as a fresh
+ * object each time, "nothing is being looked up" was an App render per probe
+ * round with nothing selected, and every one of those fanned out through the
+ * whole tree (report L6-7). These recognise the state they are already in and
+ * return it, which is React's own bail-out.
+ */
+function idleSemanticsLookup<R>(current: {
+  key: string | null;
+  phase: 'waiting' | 'loading' | 'ready' | 'unavailable' | 'error';
+  record: R | null;
+  message: string | null;
+}) {
+  return current.key === null
+    && current.phase === 'waiting'
+    && current.record === null
+    && current.message === null
+    ? current
+    : { key: null, phase: 'waiting' as const, record: null, message: null };
+}
+
+function idlePeerSightingLookup(current: {
+  key: string | null;
+  phase: PeerSightingPhase;
+  record: PeerSightingRecord | null;
+  reason: PeerSightingAbsence | null;
+  advertised: PeerAdvertisedEvidence | null;
+  message: string | null;
+}) {
+  return current.key === null
+    && current.phase === 'waiting'
+    && current.record === null
+    && current.reason === null
+    && current.advertised === null
+    && current.message === null
+    ? current
+    : {
+      key: null,
+      phase: 'waiting' as const,
+      record: null,
+      reason: null,
+      advertised: null,
+      message: null,
+    };
+}
+
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0];
 const STREAM_STALE_AFTER_MS = 15_000;
 
@@ -1222,12 +1272,13 @@ export default function App({
     : null;
   useEffect(() => {
     if (!enrichmentConfig.enabled || !selectedCell || !selectedOutPointKey) {
-      setSelectedSemanticsLookup({
-        key: null,
-        phase: 'waiting',
-        record: null,
-        message: null,
-      });
+      // ⭐ IDLE IS A STATE, NOT AN EVENT. This effect re-runs on every source
+      // status refresh — an enrichment probe round, once a minute — and with
+      // nothing selected it wrote a fresh "nothing is being looked up" object
+      // into state each time, costing App a second render per round for a
+      // reading that had not moved (report L6-7). Three lookups do this; all
+      // three now recognise the idle they are already in.
+      setSelectedSemanticsLookup(idleSemanticsLookup);
       return;
     }
     if (cachedSelectedCellSemantics) {
@@ -1335,12 +1386,7 @@ export default function App({
   }>({ key: null, phase: 'waiting', record: null, message: null });
   useEffect(() => {
     if (!transactionSemanticsEnabled || !selectedTransactionHash) {
-      setSelectedTransactionLookup({
-        key: null,
-        phase: 'waiting',
-        record: null,
-        message: null,
-      });
+      setSelectedTransactionLookup(idleSemanticsLookup);
       return;
     }
     if (cachedSelectedTransactionSemantics) {
@@ -1992,14 +2038,7 @@ export default function App({
   });
   useEffect(() => {
     if (!peerSightingEnabled || !inspectedNetNodeId) {
-      setPeerSightingLookup({
-        key: null,
-        phase: 'waiting',
-        record: null,
-        reason: null,
-        advertised: null,
-        message: null,
-      });
+      setPeerSightingLookup(idlePeerSightingLookup);
       return;
     }
     const settle = (outcome: PeerSightingOutcome) => setPeerSightingLookup({

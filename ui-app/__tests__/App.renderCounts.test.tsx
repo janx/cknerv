@@ -60,17 +60,27 @@ import {
   seedCaches,
   selectCell,
   sourceStatus,
+  useRealNodeHealth,
   KNOWN_PRODUCERS,
 } from './helpers/appHarness';
 
 /** Mount, let the connectors open and the camera frame land, then start
  *  counting from the standing tree. */
-async function mountApp(openCardOn: number | null = null) {
+async function mountApp(options: {
+  /** Open a Cell card before the window opens. */
+  card?: number | null;
+  /** Run the REAL node-health poll at this cadence instead of the capture-
+   *  only stand-in; the caller owns `fetch` and the clock. */
+  nodeHealthPollMs?: number;
+} = {}) {
   resetHarness();
   seedCaches();
+  if (options.nodeHealthPollMs !== undefined) {
+    useRealNodeHealth(options.nodeHealthPollMs);
+  }
   render(<App {...appProps()} />);
   await act(async () => { await Promise.resolve(); });
-  if (openCardOn !== null) await selectCell(openCardOn);
+  if (options.card != null) await selectCell(options.card);
   resetRenders();
 }
 
@@ -86,7 +96,7 @@ describe.each([
   ['with a Cell card open', 1],
 ] as const)('the idle polls reach no scene root (%s)', (_label, card) => {
   it('holds every root through three mempool ticks', async () => {
-    await mountApp(card);
+    await mountApp({ card });
 
     for (let i = 0; i < 3; i += 1) await pushChain(mempoolTick(i + 1));
 
@@ -98,7 +108,7 @@ describe.each([
   });
 
   it('holds every root through three peers polls', async () => {
-    await mountApp(card);
+    await mountApp({ card });
 
     for (let i = 0; i < 3; i += 1) await pushChain(peersPoll());
 
@@ -109,7 +119,7 @@ describe.each([
   });
 
   it('holds every root through three node-health polls', async () => {
-    await mountApp(card);
+    await mountApp({ card });
 
     for (let i = 0; i < 3; i += 1) await pushHealth(1_000 + i);
 
@@ -196,5 +206,69 @@ describe('the semantic marker keys on what it reads', () => {
 
     expect(renderCount('CellSemanticOrbit'), renderSummary()).toBe(0);
     expect(renderCount('CellGalaxy'), renderSummary()).toBe(0);
+  });
+});
+
+
+describe('an idle publish that carries nothing reaches nobody', () => {
+  // A body the derive reads as a live node: every adapter alive, no
+  // quarantine, a tip that moved a moment ago.
+  const LIVE_BODY = {
+    degraded: false,
+    adapters: [{ name: 'ckb', alive: true }],
+    tip_age_ms: 1_200,
+    quarantined_projections: [],
+  };
+  const POLL_MS = 250;
+
+  function serving(body: unknown) {
+    return vi.fn(async () => new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+  }
+
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('spends nothing on node-health polls that say what the last one said', async () => {
+    // The channel re-derives its whole reading every 2 s and hands React a
+    // fresh object whose only moving part is a freshness stamp with no
+    // rendered output while the node is live (report L6-6). Every one of those
+    // was an App render and, before T3, two scene-root renders under it.
+    vi.useFakeTimers();
+    const fetchStub = serving(LIVE_BODY);
+    vi.stubGlobal('fetch', fetchStub);
+    await mountApp({ nodeHealthPollMs: POLL_MS });
+    // The first poll runs on connect and lands during the mount — the node
+    // channel starts at `null`, which is silence rather than health, so that
+    // one IS a reading. The window opens after it.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    resetRenders();
+
+    // One poll per `act`: React coalesces every update inside one of them,
+    // so three polls folded into a single window would read as one render
+    // whether or not each of them published.
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS); });
+    }
+
+    expect(fetchStub.mock.calls.length, 'the poll never ran').toBeGreaterThanOrEqual(4);
+    expect(renderCount('App'), renderSummary()).toBe(0);
+    expect(renderCount('HudOverlay'), renderSummary()).toBe(0);
+  });
+
+  it('spends one render on an enrichment probe round with nothing selected', async () => {
+    // The publish itself is App's to pay: the semantics cache is App state.
+    // What it must not also pay is the three selection lookups each writing a
+    // fresh idle object into state for a selection that does not exist
+    // (report L6-7).
+    enableEnrichment();
+    await mountApp();
+    await pushSemantics([sourceStatus()]);
+    resetRenders();
+
+    await pushSemantics([sourceStatus({ last_success_at_ms: 1234567899000 })]);
+
+    expect(renderCount('App'), renderSummary()).toBe(1);
   });
 });

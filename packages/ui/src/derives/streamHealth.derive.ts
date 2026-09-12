@@ -79,6 +79,52 @@ export interface NodeStreamHealth extends StreamHealth {
 }
 
 /**
+ * Whether a fresh node reading is a LIFECYCLE event — a change in what this
+ * channel actually says — rather than the same answer re-derived.
+ *
+ * This is the node hop's copy of the rule the three socket trackers already
+ * keep (`@cknerv/cache`'s `lifecycleChanged`): phase, reason and — here —
+ * the fault are the whole rendered surface, and `lastMessageAtMs` is
+ * deliberately excluded. That stamp is `now − tipAgeMs`, so it moves on every
+ * single poll; publishing for it re-rendered App, the HUD and (before the
+ * inspection hold was fixed) both scene roots twice a second for a number
+ * with no rendered output while the node is live — the banner returns null
+ * outright until a channel leaves `live` (report L6-6).
+ *
+ * The stamp is not lost: the caller keeps the latest reading internally and
+ * the next lifecycle publish carries it, which is exactly the "last frame"
+ * instant an age readout wants when a channel finally has something to say.
+ *
+ * `null` is a reading too — "the server will not answer, and that is the
+ * SOCKETS' story" — so null → null is not an event either.
+ */
+export function nodeStreamHealthLifecycleChanged(
+  previous: NodeStreamHealth | null,
+  next: NodeStreamHealth | null,
+): boolean {
+  if (previous === null || next === null) return previous !== next;
+  if (previous.phase !== next.phase || previous.reason !== next.reason) {
+    return true;
+  }
+  return nodeFaultChanged(previous.fault, next.fault);
+}
+
+function nodeFaultChanged(
+  previous: NodeFault | null,
+  next: NodeFault | null,
+): boolean {
+  if (previous === null || next === null) return previous !== next;
+  if (previous.kind !== next.kind) return true;
+  // A quarantine is a NAMED list and the banner prints the names, so two
+  // quarantines of different views are two different sentences.
+  if (previous.kind !== 'quarantined' || next.kind !== 'quarantined') {
+    return false;
+  }
+  return previous.projections.length !== next.projections.length
+    || previous.projections.some((name, i) => name !== next.projections[i]);
+}
+
+/**
  * The node's hop as a transport phase.
  *
  * It has two states and no dwell, because the supervisor it reads has none to

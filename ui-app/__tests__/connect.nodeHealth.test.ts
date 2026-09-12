@@ -112,6 +112,71 @@ describe('connectNodeHealth', () => {
     channel.disconnect();
   });
 
+  it('re-derives its whole reading every poll and publishes only the changes', async () => {
+    // The stamp inside the reading is `now − tipAgeMs`, so it moves on every
+    // single poll. Every one of those was a React state write, an App render
+    // and a HUD render for a number the banner does not print while the node
+    // is live (report L6-6). Same rule the three socket trackers keep.
+    let tipAgeMs = 1_200;
+    const fetch = vi.fn(async () => new Response(
+      JSON.stringify({ ...LIVE_BODY, tip_age_ms: tipAgeMs }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetch);
+    const onHealth = vi.fn();
+
+    const channel = connectNodeHealth(onHealth, { pollMs: POLL_MS, now: () => 10_000 });
+    await vi.advanceTimersByTimeAsync(0);
+    // The first reading always publishes: the channel starts at `null`, which
+    // is silence rather than health.
+    expect(onHealth).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 4; i += 1) {
+      tipAgeMs += 500;
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    }
+    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(onHealth).toHaveBeenCalledTimes(1);
+
+    // …and the stamp is not lost. The poll that finally has something to say
+    // carries the freshness as it stood THEN, which is the "last frame"
+    // instant an age readout wants beside a frozen band.
+    tipAgeMs = 9_000;
+    fetch.mockImplementation(async () => new Response(
+      JSON.stringify({
+        degraded: true,
+        adapters: [{ name: 'ckb', alive: false }],
+        tip_age_ms: tipAgeMs,
+        quarantined_projections: [],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(onHealth).toHaveBeenCalledTimes(2);
+    expect(onHealth.mock.calls[1][0]).toMatchObject({
+      phase: 'stale',
+      fault: { kind: 'unreachable' },
+      lastMessageAtMs: 10_000 - 9_000,
+    });
+    channel.disconnect();
+  });
+
+  it('says nothing twice while the server goes on refusing to answer', async () => {
+    const fetch = vi.fn(async () => { throw new Error('refused'); });
+    vi.stubGlobal('fetch', fetch);
+    const onHealth = vi.fn();
+
+    const channel = connectNodeHealth(onHealth, { pollMs: POLL_MS });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onHealth).toHaveBeenCalledOnce();
+    expect(onHealth).toHaveBeenCalledWith(null);
+
+    await vi.advanceTimersByTimeAsync(POLL_MS * 3);
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(onHealth).toHaveBeenCalledTimes(1);
+    channel.disconnect();
+  });
+
   it('drops the request already on the wire when the caller disconnects', async () => {
     const { fetch, signals } = hangingFetch();
     vi.stubGlobal('fetch', fetch);

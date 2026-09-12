@@ -23,6 +23,7 @@ import {
   deriveNodeStreamHealth,
   failBootPhase,
   failBootRequest,
+  nodeStreamHealthLifecycleChanged,
   reportBootRequestProgress,
   reportBootRequestResponse,
   type NodeStreamHealth,
@@ -273,6 +274,23 @@ export function connectNodeHealth(
   /** The request on the wire, so `disconnect` can drop it rather than leave
    *  the page holding a socket for an answer nobody will read. */
   let inFlight: AbortController | null = null;
+  /** The last reading TAKEN, published or not. The stamp inside it moves on
+   *  every poll and has no rendered output while the node is live, so a poll
+   *  that only restamps updates this and publishes nothing; the next poll
+   *  that actually changes the channel's sentence carries the current stamp
+   *  with it. Same rule, same reason, as the three socket trackers'
+   *  `lifecycleChanged` in `@cknerv/cache`. */
+  let published: NodeStreamHealth | null = null;
+  let everPublished = false;
+  const publish = (next: NodeStreamHealth | null) => {
+    if (everPublished && !nodeStreamHealthLifecycleChanged(published, next)) {
+      published = next;
+      return;
+    }
+    published = next;
+    everPublished = true;
+    onHealth(next);
+  };
   const poll = async (): Promise<void> => {
     const controller = new AbortController();
     inFlight = controller;
@@ -287,7 +305,7 @@ export function connectNodeHealth(
       if (!resp.ok) throw new Error(`health: ${resp.status}`);
       const body = (await resp.json()) as HealthResponse;
       if (stopped) return;
-      onHealth(deriveNodeStreamHealth({
+      publish(deriveNodeStreamHealth({
         degraded: body.degraded === true,
         adapters: (body.adapters ?? []).map((adapter) => ({
           name: adapter.name ?? '',
@@ -304,7 +322,7 @@ export function connectNodeHealth(
     } catch {
       // An abandoned request and a refused one are the same reading: the
       // server did not answer, so this channel has nothing to say.
-      if (!stopped) onHealth(null);
+      if (!stopped) publish(null);
     } finally {
       clearTimeout(deadline);
       if (inFlight === controller) inFlight = null;

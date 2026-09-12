@@ -142,6 +142,7 @@ export * from './derives/sceneView.derive';
 // no socket for still there?
 export {
   deriveNodeStreamHealth,
+  nodeStreamHealthLifecycleChanged,
   deriveStreamHealthSummary,
   type NodeFault,
   type NodeHealthProbe,

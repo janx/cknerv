@@ -6,6 +6,8 @@ import {
   deriveStreamHealthSummary,
   formatStreamAge,
   formatStreamChannels,
+  nodeStreamHealthLifecycleChanged,
+  type NodeStreamHealth,
 } from '../../src/derives/streamHealth.derive';
 
 function health(
@@ -200,5 +202,62 @@ describe('the node channel', () => {
       cells: health('live', 9_400),
     }, 10_000);
     expect(summary.nodeFault).toBeNull();
+  });
+});
+
+describe('nodeStreamHealthLifecycleChanged', () => {
+  const live = (lastMessageAtMs: number): NodeStreamHealth => ({
+    phase: 'live', attempt: 0, lastMessageAtMs, reason: null, fault: null,
+  });
+  const quarantined = (projections: string[]): NodeStreamHealth => ({
+    phase: 'stale',
+    attempt: 0,
+    lastMessageAtMs: 1_000,
+    reason: 'lagged',
+    fault: { kind: 'quarantined', projections },
+  });
+
+  it('reads a moved freshness stamp as no event at all', () => {
+    // `lastMessageAtMs` is `now − tipAgeMs`: it moves on every 2 s poll, and
+    // the banner prints nothing at all while every channel is live. Publishing
+    // for it re-rendered App and the HUD twice a second (report L6-6).
+    expect(nodeStreamHealthLifecycleChanged(live(1_000), live(3_000))).toBe(false);
+  });
+
+  it('reads the phase, the reason and the fault as the channel speaking', () => {
+    expect(nodeStreamHealthLifecycleChanged(live(1_000), {
+      ...live(1_000), phase: 'stale',
+    })).toBe(true);
+    expect(nodeStreamHealthLifecycleChanged(live(1_000), {
+      ...live(1_000), reason: 'closed',
+    })).toBe(true);
+    expect(nodeStreamHealthLifecycleChanged(live(1_000), {
+      ...live(1_000), fault: { kind: 'unreachable' },
+    })).toBe(true);
+  });
+
+  it('tells two faults of the same rank apart by their named list', () => {
+    // The banner prints the names, so a quarantine of a different view is a
+    // different sentence — and the same list restated is not.
+    expect(nodeStreamHealthLifecycleChanged(
+      quarantined(['cells']), quarantined(['cells']),
+    )).toBe(false);
+    expect(nodeStreamHealthLifecycleChanged(
+      quarantined(['cells']), quarantined(['semantics']),
+    )).toBe(true);
+    expect(nodeStreamHealthLifecycleChanged(
+      quarantined(['cells']), quarantined(['cells', 'semantics']),
+    )).toBe(true);
+    expect(nodeStreamHealthLifecycleChanged(
+      quarantined(['cells']), { ...quarantined(['cells']), fault: { kind: 'unreachable' } },
+    )).toBe(true);
+  });
+
+  it('treats silence as a reading of its own, once', () => {
+    // `null` is this channel's word for "the server will not answer, and that
+    // is the SOCKETS' story" — an event when it arrives, and not again.
+    expect(nodeStreamHealthLifecycleChanged(null, null)).toBe(false);
+    expect(nodeStreamHealthLifecycleChanged(live(1_000), null)).toBe(true);
+    expect(nodeStreamHealthLifecycleChanged(null, live(1_000))).toBe(true);
   });
 });

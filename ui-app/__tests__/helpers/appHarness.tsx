@@ -107,6 +107,19 @@ function countingHudOverlay(): ComponentType<never> {
   return HudOverlayStub as unknown as ComponentType<never>;
 }
 
+/**
+ * A counter that is NOT memoized. `Tweaks` takes no props, so a memoized stand-
+ * in would bail on every re-render and count nothing; unmemoized and mounted
+ * unconditionally as App's first child, its count IS App's own render count.
+ */
+export function appRenderCounter(): ComponentType<never> {
+  function AppRenderCounter() {
+    records.push({ name: 'App', changed: [] });
+    return null;
+  }
+  return AppRenderCounter as unknown as ComponentType<never>;
+}
+
 /** Drop everything recorded so far. Called after the mount settles, so a
  *  window's counts start from a tree that is already standing. */
 export function resetRenders(): void {
@@ -118,6 +131,7 @@ export function resetRenders(): void {
 export function resetHarness(): void {
   records.length = 0;
   lastProps.clear();
+  realNodeHealthPollMs = null;
   streams.entity = null;
   streams.cells = null;
   streams.semantics = null;
@@ -339,21 +353,40 @@ export function cacheMock(
   };
 }
 
+/** Poll cadence for the tests that drive the REAL node-health channel (see
+ *  `useRealNodeHealth`); `null` keeps the capture-only stand-in. */
+let realNodeHealthPollMs: number | null = null;
+
+/**
+ * Run the actual `connectNodeHealth` under this mount, so a test can read what
+ * the POLL publishes rather than what a stub decided to. The caller owns
+ * `fetch` and the clock. Reset by `resetHarness`.
+ */
+export function useRealNodeHealth(pollMs: number): void {
+  realNodeHealthPollMs = pollMs;
+}
+
 /** `ui-app/src/connect` — only the node-health poll is reached from App. */
 export function connectMock(
   actual: Record<string, unknown>,
 ): Record<string, unknown> {
+  const real = actual.connectNodeHealth as (
+    onHealth: (next: unknown) => void,
+    opts?: { pollMs?: number },
+  ) => { disconnect: () => void };
   return {
     ...actual,
     connectNodeHealth: (onHealth: (next: unknown) => void) => {
       streams.health = onHealth;
-      return INERT;
+      return realNodeHealthPollMs === null
+        ? INERT
+        : real(onHealth, { pollMs: realNodeHealthPollMs });
     },
   };
 }
 
 export function tweaksMock(): Record<string, unknown> {
-  return { default: countingComponent('Tweaks') };
+  return { default: appRenderCounter() };
 }
 
 export function jukeboxMock(): Record<string, unknown> {
