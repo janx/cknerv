@@ -525,11 +525,21 @@ cursor and does not prepare, revalidate, or solve routes while the camera moves.
 gesture events: world position and orientation are converted to a conservative
 CSS-pixel drift at the selected Cell's distance, and the projection matrix is
 compared directly. This covers orbit dragging, its damping tail, wheel/dolly,
-route flights, resize/FOV changes, and standalone Labs. Motion starts once
-accumulated drift exceeds 0.1 CSS px. Rest requires at least three frames and
-80 ms whose accumulated drift is no more than 0.02 CSS px; this lower threshold absorbs the
-remaining 0.92 damping tail without flashing leaders back on. A still-held
-pointer does not count as camera motion. The first settled frame clears the old
+route flights, resize/FOV changes, and standalone Labs. Motion opens on any
+frame whose drift exceeds `CONSTELLATION_CAMERA_MOTION_PX` (3 CSS px) or whose
+projection changed. Rest requires `CONSTELLATION_CAMERA_SETTLE_FRAMES` (3)
+consecutive frames and `CONSTELLATION_CAMERA_SETTLE_MS` (40) at or under
+`CONSTELLATION_CAMERA_REST_PX` (2 CSS px a frame). The two thresholds are the
+hysteresis: a 0.92 damping tail that has fallen under two pixels a frame cannot
+climb back over three on its own, so rest is never withdrawn by the tail, and
+what the tail still moves after rest — at most 25 px of travel — is carried by
+the ordinary drift path with the leaders up, re-anchored each frame and the
+seats held. Measured against OrbitControls' damping, the constellation is back
+within three frames of the galaxy dropping under two pixels a frame, where the
+earlier rule (rest at 0.02 px of accumulated drift) kept it frozen for 1.3 s
+after a one-pixel nudge and 2 s after a forty-pixel fling. A still-held
+pointer does not count as camera motion, and neither does the canopy's own
+turn or a slow deliberate orbit under the motion drift. The first settled frame clears the old
 connector signature and resumes the bounded canonical cursor against the latest
 anchor, viewport, open panels and HUD geometry. Thus returning to an identical
 connector bucket cannot leave leaders hidden, and a resize, new selection or

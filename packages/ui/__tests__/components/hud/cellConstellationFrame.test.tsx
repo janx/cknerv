@@ -1756,3 +1756,53 @@ describe('a seat that moved is travelled to (P4)', () => {
     expect(cell.leaderShown()).toBe(true);
   });
 });
+
+describe('the damping tail after a camera move', () => {
+  it('carries the sub-threshold tail with the leaders up and the seats held', () => {
+    // The camera gate closes once the per-frame drift is under
+    // CONSTELLATION_CAMERA_REST_PX; what OrbitControls' 0.92 damping still
+    // moves after that — up to 25 px — reaches the writer as ordinary drift.
+    // That drift must not cost a frame of leaders: re-anchoring a proven line
+    // for a move of two pixels or less always succeeds, and a locked solve
+    // lands inside its slice.
+    const { handles, hosts } = wired();
+    expect(commit(handles, 960, 540)).not.toBeNull();
+    const seat = hosts.analysis.style.transform;
+    resetConstellationWorkStats();
+
+    // Fast motion first: the writer suspends — leaders down, seats frozen.
+    let x = 960;
+    for (let frame = 0; frame < 10; frame += 1) {
+      x += 5;
+      suspendConstellationFrame(handles, x, 540, 1920, 1080, EDGE);
+    }
+    expect(handles.leaders.analysis.over?.style.visibility).toBe('hidden');
+    expect(hosts.analysis.style.transform).toBe(seat);
+
+    // Then the tail, on the step-budget clock the neighbouring tests use.
+    let tick = 0;
+    const now = () => { tick += 0.05; return tick; };
+    let px = 1.9;
+    let landedFrame = -1;
+    let leadersDownAfterLanding = 0;
+    for (let frame = 1; frame <= 60; frame += 1) {
+      x += px;
+      px *= 0.92;
+      advanceConstellationFrame(handles, x, 540, 1920, 1080, SAFE_TOP, EDGE, [], 0, frame, now);
+      if (landedFrame < 0 && handles.connectorKey !== '') landedFrame = frame;
+      if (landedFrame >= 0 && frame > landedFrame
+        && handles.leaders.analysis.over?.style.visibility === 'hidden') {
+        leadersDownAfterLanding += 1;
+      }
+    }
+    // The first settled frame lands a canonical answer, and from then on every
+    // tail frame keeps the leaders up: no gap after the camera stops.
+    expect(landedFrame).toBeGreaterThan(0);
+    expect(landedFrame).toBeLessThanOrEqual(3);
+    expect(leadersDownAfterLanding).toBe(0);
+    expect(handles.leaders.analysis.over?.style.visibility).toBe('');
+    // Seventy-odd pixels of travel is inside the hold radius: the seats stay.
+    expect(hosts.analysis.style.transform).toBe(seat);
+    expect(snapshotConstellationWorkStats().seatTweens).toBe(0);
+  });
+});
