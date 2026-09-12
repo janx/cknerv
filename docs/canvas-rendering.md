@@ -192,6 +192,23 @@ measurements.
 The reducer remains pure and owns ordering semantics. Components may derive
 GPU-ready state but must not repeat domain reduction.
 
+**The display plane is versioned by `displayToken`, not by the identity of its
+structures.** `displayMembers` is copy-on-write — the journal's `entered` and
+`exited` lists are a diff against the previous Set, so that Set keeps its past
+— but `displayResidents` is PATCHED IN PLACE for an edit to a key it already
+holds: a death, a tag, an exit. The map is around 9,400 entries on a live page
+(78 % of the stage are residents) and a typical block edits one of them, so a
+copy per batch was a whole-stage allocation for a record-sized change. Only an
+ARRIVAL — a key the map does not hold — copies it.
+
+What that costs, and the rule it imposes: a consumer must key on
+`displayToken` (and read which rows moved off `displayChanges`), never on the
+identity of `displayResidents`; and a cache object held from an earlier batch
+may share that Map with the current one, so its residents are not a frozen
+past. The reducer itself obeys this by remembering, per touched id, the record
+that stood there before the patch — the stage tallies are a diff either side of
+an edit, and a map patched in place cannot answer for its own history.
+
 Every stream connector (`packages/cache/src/projectionStream.ts`,
 `entityStream.ts`) coalesces a frame's deltas into one reducer apply and
 publishes the result to React once. A batch whose deltas all reduced to no-ops

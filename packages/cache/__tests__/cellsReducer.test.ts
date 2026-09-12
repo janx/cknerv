@@ -1152,3 +1152,159 @@ describe('cellsCacheRevisionOnly', () => {
     expect(cellsCacheRevisionOnly(seeded, seeded)).toBe(false);
   });
 });
+
+// A staged resident is a Cell the display lane delivered and the canonical map
+// never held — 78 % of the stage on a live page (L6-3). Patching one used to
+// copy the whole ~9,400-entry Map, and a typical block kills or exits one, so
+// the copy was paid every block for a record-sized edit. The map is versioned
+// by `displayToken` and patched in place now; these are the three edits that
+// do it, and what each of them still has to report.
+describe('a staged resident is edited where it stands', () => {
+  const resident = (id: number) => cell(id, { pos_seed: [id, 0, 0] });
+
+  /** A stage of `n` residents: delivered by the display lane, never born into
+   *  the canonical map. */
+  function staged(n: number) {
+    const cells = Array.from({ length: n }, (_, i) => resident(i + 1));
+    return applyCellDelta(emptyCellsCache(), {
+      type: 'display',
+      enter_ids: cells.map((c) => c.id),
+      enter_cells: cells,
+      exit_ids: [],
+    } as CellDelta);
+  }
+
+  it('takes a death without copying the map it is already in', () => {
+    const before = staged(6);
+    expect(before.displayResidents.size).toBe(6);
+    const liveBefore = before.stagePopulation.residentLive;
+
+    const after = applyCellDelta(before, { type: 'death', id: 3, at_ms: 9000 });
+
+    expect(after).not.toBe(before);
+    expect(after.displayResidents).toBe(before.displayResidents);
+    expect(after.displayToken).not.toBe(before.displayToken);
+    expect(after.displayResidents.get(3)?.death_at_ms).toBe(9000);
+    // The journal names it, so a consumer keyed on the token knows which row.
+    expect(after.displayChanges.updated).toContain(3);
+    expect(after.displayChanges.baseToken).toBe(before.displayToken);
+    // …and the stage tallies moved, which is the reading a copy used to carry:
+    // the BEFORE record cannot be read back off a map that was patched.
+    expect(after.stagePopulation.residentLive).toBe(liveBefore - 1);
+    expect(after.stagePopulation.plain).toBe(before.stagePopulation.plain - 1);
+  });
+
+  it('takes a tag the same way, and leaves the tallies a tag cannot move', () => {
+    const before = staged(6);
+    const after = applyCellDelta(before, { type: 'tag', id: 2, tag: 'dao' });
+
+    expect(after.displayResidents).toBe(before.displayResidents);
+    expect(after.displayToken).not.toBe(before.displayToken);
+    expect(after.displayResidents.get(2)?.tag).toBe('dao');
+    expect(after.displayChanges.updated).toContain(2);
+    // A tag moves neither the script mix nor the census bin, so both tallies
+    // keep their identity — the diff either side of the patch has to say so,
+    // or every block would re-rank the stage for nothing.
+    expect(after.stageScripts).toBe(before.stageScripts);
+    expect(after.stagePopulation).toBe(before.stagePopulation);
+  });
+
+  it('takes an exit the same way, and subtracts what left', () => {
+    const before = staged(6);
+    const liveBefore = before.stagePopulation.residentLive;
+
+    const after = applyCellDelta(before, {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [],
+      exit_ids: [4],
+    } as CellDelta);
+
+    expect(after.displayResidents).toBe(before.displayResidents);
+    expect(after.displayResidents.has(4)).toBe(false);
+    expect(after.displayMembers).not.toBe(before.displayMembers); // the Set still copies
+    expect(after.displayToken).not.toBe(before.displayToken);
+    expect(after.displayChanges.exited).toContain(4);
+    expect(after.stagePopulation.residentLive).toBe(liveBefore - 1);
+  });
+
+  it('leaves a replayed edit a pure no-op — nothing patched, no token turnover', () => {
+    const before = staged(6);
+    const dead = applyCellDelta(before, { type: 'death', id: 3, at_ms: 9000 });
+    const replayed = applyCellDelta(dead, { type: 'death', id: 3, at_ms: 9000 });
+    expect(replayed).toBe(dead);
+    const noExit = applyCellDelta(dead, {
+      type: 'display', enter_ids: [], enter_cells: [], exit_ids: [99],
+    } as CellDelta);
+    expect(noExit).toBe(dead);
+  });
+
+  it('carries every edit of one batch, in order, on one token turnover', () => {
+    const before = staged(6);
+    const after = applyRevisionedCellDeltas(before, [
+      { revision: 1, delta: { type: 'death', id: 3, at_ms: 9000 } },
+      { revision: 2, delta: { type: 'tag', id: 2, tag: 'dao' } },
+      {
+        revision: 3,
+        delta: {
+          type: 'display', enter_ids: [], enter_cells: [], exit_ids: [4],
+        } as CellDelta,
+      },
+    ] as RevisionedCellDelta[]);
+
+    expect(after.displayResidents).toBe(before.displayResidents);
+    expect(after.displayToken).not.toBe(before.displayToken);
+    expect(after.displayResidents.get(3)?.death_at_ms).toBe(9000);
+    expect(after.displayResidents.get(2)?.tag).toBe('dao');
+    expect(after.displayResidents.has(4)).toBe(false);
+    expect(after.stagePopulation.residentLive)
+      .toBe(before.stagePopulation.residentLive - 2);
+    expect([...after.displayChanges.updated].sort()).toEqual([2, 3]);
+    expect(after.displayChanges.exited).toEqual([4]);
+  });
+
+  it('answers for a record the same batch already replaced', () => {
+    // ⭐ The sharp edge of patching in place, and the one the population
+    // equivalence soak caught: a batch re-ships a staged resident with a
+    // different record (the ENTER path, which copies the map) and THEN patches
+    // it. The stage tallies are a diff either side of the whole batch, so the
+    // record they compare against is the one the batch STARTED from — and the
+    // only moment that is still readable is the batch's FIRST touch of the id,
+    // which here is the enter, not the patch.
+    const before = staged(6);
+    const daoBefore = before.stagePopulation.dao;
+    const plainBefore = before.stagePopulation.plain;
+    const after = applyRevisionedCellDeltas(before, [
+      {
+        revision: 1,
+        delta: {
+          type: 'display',
+          enter_ids: [],
+          enter_cells: [cell(3, {
+            pos_seed: [3, 0, 0],
+            asset_kind: 'dao',
+            type_shape_seed: [0x12345678, 0x9abcdef0],
+          })],
+          exit_ids: [],
+        },
+      },
+      { revision: 2, delta: { type: 'tag', id: 3, tag: 'dex' } },
+    ] as RevisionedCellDelta[]);
+
+    expect(after.displayResidents.get(3)?.tag).toBe('dex');
+    expect(after.stagePopulation.dao).toBe(daoBefore + 1);
+    expect(after.stagePopulation.plain).toBe(plainBefore - 1);
+  });
+
+  it('still copies the map when a resident ARRIVES, which is a key it did not hold', () => {
+    const before = staged(6);
+    const after = applyCellDelta(before, {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [resident(7)],
+      exit_ids: [],
+    } as CellDelta);
+    expect(after.displayResidents).not.toBe(before.displayResidents);
+    expect(before.displayResidents.has(7)).toBe(false);
+  });
+});

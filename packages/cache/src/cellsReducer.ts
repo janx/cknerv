@@ -587,6 +587,17 @@ interface CellGalaxyDraft {
    * `displayToken` exactly once. */
   displayMembersOwned: boolean;
   displayResidentsOwned: boolean;
+  /** True once EITHER display structure has changed this batch — the one
+   *  `displayToken` turnover, and what tells the journal the display plane
+   *  moved. It is no longer the same question as "was a structure copied":
+   *  an edit to a resident this map already holds is made in place. */
+  displayTouched: boolean;
+  /** What each patched-in-place resident carried BEFORE the batch touched it.
+   *  The stage tallies are a DIFF of the record either side of the edit, and a
+   *  map patched in place cannot answer for its own past — `prev` and `next`
+   *  are looking at the same Map. `has` distinguishes "absent before" from
+   *  "not touched"; one entry per touched id, not one per resident. */
+  residentBefore: Map<number, Cell | undefined>;
   /** A `link` delta appended this batch, so the two link lists must be trimmed
    * to capacity once at finalize. A prune-only batch leaves this false and is
    * never trimmed (it only shrinks the lists), matching the old per-append
@@ -612,6 +623,8 @@ function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
     pulseLinksOwned: false,
     displayMembersOwned: false,
     displayResidentsOwned: false,
+    displayTouched: false,
+    residentBefore: new Map(),
     linksAppended: false,
     touchedCellIds: new Set(),
     touchedDisplayIds: new Set(),
@@ -766,6 +779,7 @@ function advanceStageTallies(
     if (prev.displayMembers.has(id)) {
       before = prev.cells.get(id);
       if (before !== undefined) beforeCanonical = true;
+      else if (draft.residentBefore.has(id)) before = draft.residentBefore.get(id);
       else before = prev.displayResidents.get(id);
     }
     let after: Cell | undefined;
@@ -808,21 +822,52 @@ function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
   return draft.value.cells;
 }
 
-// Copy the member Set on first write only. `displayToken` turns over on the
-// first copy of EITHER display structure this batch, so it is bumped here only
-// when the resident map has not already bumped it — exactly one turnover.
+// `displayToken` turns over on the first change to EITHER display structure
+// this batch — exactly one turnover, whether the structure was copied or
+// patched.
+function bumpDisplayToken(draft: CellGalaxyDraft): void {
+  if (draft.displayTouched) return;
+  draft.value.displayToken = {};
+  draft.displayTouched = true;
+}
+
+// Copy the member Set on first write only. Membership is a SET: an id joining
+// or leaving is the whole content of the change, and the journal's entered /
+// exited lists are computed by diffing it against the previous one.
 function writableDisplayMembers(draft: CellGalaxyDraft): void {
+  bumpDisplayToken(draft);
   if (draft.displayMembersOwned) return;
   draft.value.displayMembers = new Set(draft.value.displayMembers);
-  if (!draft.displayResidentsOwned) draft.value.displayToken = {};
   draft.displayMembersOwned = true;
 }
 
-// Copy the resident Map on first write only, with the same one-turnover rule.
+// An edit to a resident the map ALREADY HOLDS — a death, a tag, an exit — is
+// made where the record stands. The map is ~9,400 entries on a live page and a
+// typical block edits one of them (L6-3), so the copy was a whole-stage
+// allocation for a record-sized change. What makes it safe is that the display
+// plane is versioned by `displayToken` and read through the journal beside it:
+// no consumer may key on the identity of `displayResidents` (see
+// `docs/canvas-rendering.md` §4.2). Call `patchDisplayResidents` BEFORE the
+// edit; `noteResidentBefore` is the half of it that EVERY resident write owes,
+// copied map or not, because the batch's first touch of an id is the last
+// moment its past is readable.
+function noteResidentBefore(draft: CellGalaxyDraft, id: number): void {
+  if (draft.residentBefore.has(id)) return;
+  draft.residentBefore.set(id, draft.value.displayResidents.get(id));
+}
+
+function patchDisplayResidents(draft: CellGalaxyDraft, id: number): void {
+  noteResidentBefore(draft, id);
+  bumpDisplayToken(draft);
+}
+
+// Copy the resident Map for an ARRIVAL: a key the map does not hold is a
+// different change from an edit to one it does — the record becomes visible
+// where nothing was, and the map grows.
 function writableDisplayResidents(draft: CellGalaxyDraft): void {
+  bumpDisplayToken(draft);
   if (draft.displayResidentsOwned) return;
   draft.value.displayResidents = new Map(draft.value.displayResidents);
-  if (!draft.displayMembersOwned) draft.value.displayToken = {};
   draft.displayResidentsOwned = true;
 }
 
@@ -966,7 +1011,7 @@ function mutateCellDelta(
         changed = true;
       }
       if (staged !== undefined && staged.death_at_ms !== d.at_ms) {
-        writableDisplayResidents(draft);
+        patchDisplayResidents(draft, d.id);
         c.displayResidents.set(d.id, { ...staged, death_at_ms: d.at_ms });
         draft.residentUpdatedIds.add(d.id);
         changed = true;
@@ -985,7 +1030,7 @@ function mutateCellDelta(
         changed = true;
       }
       if (staged !== undefined && staged.tag !== d.tag) {
-        writableDisplayResidents(draft);
+        patchDisplayResidents(draft, d.id);
         c.displayResidents.set(d.id, { ...staged, tag: d.tag });
         draft.residentUpdatedIds.add(d.id);
         changed = true;
@@ -1096,6 +1141,7 @@ function mutateCellDelta(
         const identical =
           retained !== undefined && cellContentEquals(retained, cell);
         if (isMember && identical) continue;
+        noteResidentBefore(draft, cell.id);
         writableDisplayResidents(draft);
         c.displayResidents.set(
           cell.id,
@@ -1133,7 +1179,7 @@ function mutateCellDelta(
           if (c.displayMembers.delete(id)) draft.touchedDisplayIds.add(id);
         }
         if (wasResident) {
-          writableDisplayResidents(draft);
+          patchDisplayResidents(draft, id);
           c.displayResidents.delete(id);
         }
         changed = true;
@@ -1184,7 +1230,7 @@ export function applyCellDelta(
     draft.residentUpdatedIds,
     draft.value.cellChanges.updated,
     prev.displayToken,
-    draft.displayMembersOwned || draft.displayResidentsOwned,
+    draft.displayTouched,
   );
   draft.value.stats = nextCellsStats(
     // The draft's stats, not prev's: a `script_census` delta already
@@ -1238,7 +1284,7 @@ export function applyRevisionedCellDeltas(
     draft.residentUpdatedIds,
     draft.value.cellChanges.updated,
     prev.displayToken,
-    draft.displayMembersOwned || draft.displayResidentsOwned,
+    draft.displayTouched,
   );
   draft.value.stats = nextCellsStats(
     // Draft stats for the same reason as the single-delta path: keep the

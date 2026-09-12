@@ -1294,13 +1294,24 @@ export default function App({
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
   // Canonical-first over the display plane's resident payloads (staged
   // members outside the retained set).
-  const selectedCell = useMemo(() => {
-    if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECTION_PREFIX)) return null;
-    const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
-    return Number.isFinite(id)
-      ? cellsCache.cells.get(id) ?? cellsCache.displayResidents.get(id) ?? null
-      : null;
-  }, [selectedCellId, cellsCache.cells, cellsCache.displayResidents]);
+  // ⚠️ Keyed on `displayToken`, not on the resident Map's identity: an edit to
+  // a resident the map already holds — this Cell's own death, most of all — is
+  // patched where the record stands and turns the token over without replacing
+  // the Map (§4.2). Reading identity here would show a corpse alive until the
+  // next arrival.
+  const selectedCell = useMemo(
+    () => {
+      if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECTION_PREFIX)) {
+        return null;
+      }
+      const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
+      return Number.isFinite(id)
+        ? cellsCache.cells.get(id) ?? cellsCache.displayResidents.get(id) ?? null
+        : null;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedCellId, cellsCache.cellsToken, cellsCache.displayToken],
+  );
   const cachedSelectedCellSemantics = selectedCell
     ? semanticsCache.cells.get(outPointKey(selectedCell.out_point)) ?? null
     : null;

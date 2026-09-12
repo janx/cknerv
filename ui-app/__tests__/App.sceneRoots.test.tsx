@@ -303,6 +303,17 @@ describe('colony topology signature', () => {
       .not.toContain('networkRoster');
   });
 
+  it('keys the selected Cell on the display token, not on the resident Map', () => {
+    // The resident Map is patched in place for an edit to a key it already
+    // holds — this Cell's own death above all — and turns `displayToken` over
+    // without being replaced (`docs/canvas-rendering.md` §4.2). A memo keyed
+    // on the Map's identity would print a corpse as alive until some other
+    // Cell arrived on stage.
+    const deps = memoDeps('selectedCell');
+    expect(deps).toContain('cellsCache.displayToken');
+    expect(deps).not.toContain('cellsCache.displayResidents');
+  });
+
   it('keys the producer tail on its key set, and on nothing a block moves', () => {
     // The same trap one tier along, and a worse one to read: a block bumps its
     // producer's count and re-divides EVERY share against the window, so the

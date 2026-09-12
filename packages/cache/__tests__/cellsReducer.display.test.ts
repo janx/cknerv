@@ -565,24 +565,40 @@ describe('the display copy is split: members and residents copy independently', 
     expect(after.displayResidents.has(RESIDENT)).toBe(true);
   });
 
-  it('a resident exit copies the Map (and the Set, which it also leaves)', () => {
+  it('a resident exit patches the Map where it stands, and copies the Set it leaves', () => {
+    // ⭐ CONTRACT: the resident Map is versioned by `displayToken`, not by its
+    // identity — an edit to a key it already holds is made in place, because
+    // the map is ~9,400 entries on a live page and a typical block edits one
+    // (L6-3, `docs/canvas-rendering.md` §4.2). Membership is still a copied
+    // Set: the journal's entered/exited lists are a diff against the previous
+    // one, so that Set has to keep its past.
     const before = staged();
     const after = applyCellDelta(before, displayDelta({ exit_ids: [RESIDENT] }));
 
-    expect(after.displayResidents).not.toBe(before.displayResidents);
+    expect(after.displayResidents).toBe(before.displayResidents);
     expect(after.displayMembers).not.toBe(before.displayMembers);
     expect(after.displayResidents.has(RESIDENT)).toBe(false);
     expect(after.displayMembers.has(RESIDENT)).toBe(false);
+    expect(after.displayToken).not.toBe(before.displayToken);
+    expect(after.displayChanges.exited).toContain(RESIDENT);
   });
 
-  it('leaves both prev maps untouched (purity)', () => {
+  it('leaves the member Set pure, and says so about the resident Map', () => {
+    // The Set is a value a consumer may hold across batches. The Map is not:
+    // it is read through the token and the journal, and a batch that patches a
+    // resident patches it for everyone looking at that Map instance. This is
+    // the whole cost of not copying it, pinned rather than implied.
     const before = staged();
     const membersBefore = [...before.displayMembers];
     const residentsBefore = [...before.displayResidents.keys()];
     applyCellDelta(before, displayDelta({ enter_cells: [cell(1)] }));
-    applyCellDelta(before, displayDelta({ exit_ids: [RESIDENT] }));
     expect([...before.displayMembers]).toEqual(membersBefore);
     expect([...before.displayResidents.keys()]).toEqual(residentsBefore);
+
+    applyCellDelta(before, displayDelta({ exit_ids: [RESIDENT] }));
+    expect([...before.displayMembers]).toEqual(membersBefore);
+    expect([...before.displayResidents.keys()])
+      .toEqual(residentsBefore.filter((id) => id !== RESIDENT));
   });
 });
 
