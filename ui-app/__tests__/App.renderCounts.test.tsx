@@ -41,6 +41,10 @@ vi.mock('../src/Jukebox', async () => (
 import { livePulseDepartureDelayS } from '@cknerv/ui';
 import App from '../src/App';
 import {
+  resetTweaksPanelForTest,
+  toggleTweaksPanel,
+} from '../src/tweaks-panel';
+import {
   appProps,
   cellSemantics,
   disableEnrichment,
@@ -270,5 +274,39 @@ describe('an idle publish that carries nothing reaches nobody', () => {
     await pushSemantics([sourceStatus({ last_success_at_ms: 1234567899000 })]);
 
     expect(renderCount('App'), renderSummary()).toBe(1);
+  });
+});
+
+
+describe('leva is mounted when it is asked for', () => {
+  afterEach(() => { resetTweaksPanelForTest(); });
+
+  it('leaves the bridge unmounted on a page nobody has asked to tune', async () => {
+    // `TweakSync` is five `useControls` over five full schemas, and it is an
+    // unmemoized child of App, so it re-ran on every App render — 3.6 ms of a
+    // block frame in a dev profile for a panel nobody opened.
+    resetTweaksPanelForTest();
+    await mountApp();
+
+    await pushBlock(400, KNOWN_PRODUCERS[0]);
+
+    expect(renderCount('TweakSync'), renderSummary()).toBe(0);
+  });
+
+  it('mounts it in the same gesture that opens the panel', async () => {
+    resetTweaksPanelForTest();
+    await mountApp();
+
+    act(() => { toggleTweaksPanel(); });
+
+    expect(renderCount('TweakSync'), renderSummary()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('has it standing from the first frame with ?dev=1', async () => {
+    resetTweaksPanelForTest('?dev=1');
+    render(<App {...appProps()} />);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(renderCount('TweakSync'), renderSummary()).toBeGreaterThanOrEqual(1);
   });
 });

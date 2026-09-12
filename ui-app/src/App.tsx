@@ -204,6 +204,7 @@ import {
 import { restoreCellGalaxyFocus } from './cell-galaxy-focus';
 import CameraFraming, { useInitialStageCamera } from './CameraFraming';
 import { useInspectionExit } from './inspection-exit';
+import { useTweaksPanel } from './tweaks-panel';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -694,6 +695,10 @@ export default function App({
   // where the module it names happens to be mounted, so the default matches
   // `DEFAULT_PANEL_VISIBILITY.sound` and the HUD publishes every change.
   const [soundVisible, setSoundVisible] = useState(true);
+  // The dev panel's two readings — whether anyone has asked for it, and
+  // whether it is open. The store owns the backtick; App owns what hangs on
+  // it. See `tweaks-panel.ts`.
+  const tweaksPanel = useTweaksPanel();
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
   // Cell and network ids retain separate state shapes because their scene
@@ -2524,9 +2529,18 @@ export default function App({
               recentBlockActiveRef={recentBlockActiveRef}
             />
           )}
-          {/* Mirrors the backtick leva panel into the LIVE tuning store.
-              Re-renders only on knob drag (no per-frame cost); mount once. */}
-          <TweakSync />
+          {/* Mirrors the backtick leva panel into the LIVE tuning store —
+              five `useControls` over five whole schemas, and an unmemoized
+              child of App, so it re-ran on every App render for a panel nobody
+              had opened. It is mounted when someone asks (the backtick, or
+              `?dev=1`) and stays mounted after, so a second open is instant.
+              `LIVE` already carries the schema defaults without it — the
+              initialiser in `liveTweaks.ts` is what puts them there, pinned in
+              `__tests__/tweaks/liveTweaks.test.tsx` — so an unopened panel
+              leaves every frame-loop consumer reading exactly what it read
+              before. ⚠️ `<Tweaks/>` above is NOT gated with it: that element is
+              what stops leva injecting its own always-visible panel. */}
+          {tweaksPanel.armed ? <TweakSync /> : null}
           {/* Samples gl.info when the ` panel toggle or ?render-stats=1 is on;
               inert otherwise. Mount once. */}
           <RenderStatsSampler forceEnabled={forceRenderStats} />

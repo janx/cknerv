@@ -1,15 +1,26 @@
 // Leva knobs panel — hidden by default, toggled with the backtick (`)
 // key. Mirrors ckb-rcg's TweaksPanel.
 //
-// Why this component must exist: @cknerv/ui primitives (CellGalaxy,
-// useSimFrame, …) call leva's `useControls`. If no <Leva>
-// is rendered, leva auto-injects its own default panel — always visible,
-// no toggle. Rendering our own <Leva> suppresses that auto-panel and lets
-// us drive `hidden` ourselves. Honors `?dev=1` for parity with ckb-rcg.
+// Why this component must exist, and why it is mounted even on a page nobody
+// will ever tune: @cknerv/ui primitives (the status strip, the sim clock, the
+// adaptive-quality controller) call leva's `useControls`. If no <Leva> has
+// claimed the root when the first of them mounts, leva injects its own default
+// panel — its skin, 10 px from the top right, over CELL·03, always visible, no
+// toggle. Rendering our own <Leva> suppresses that and lets us drive `hidden`
+// ourselves, and `<Leva hidden>` renders null, so the closed panel is not DOM.
+//
+// What is NOT mounted until someone asks is `TweakSync`, the bridge that
+// registers five whole schemas with leva — see `tweaks-panel.ts`, which owns
+// the backtick and the `?dev=1` switch for both halves.
+//
+// `memo` because it takes no props and nothing App does can change what it
+// draws: unmemoized, it re-rendered (and re-ran `useControls`) on every App
+// render, which is once a block plus every poll.
 
-import { useEffect, useState } from 'react';
+import { memo } from 'react';
 import { Leva, useControls } from 'leva';
 import { HUD_COLORS, HUD_FONTS, QUALITY_MODE_CONTROL } from '@cknerv/ui';
+import { useTweaksPanel } from './tweaks-panel';
 
 /**
  * The dev panel in the instrument's own language.
@@ -45,36 +56,13 @@ const TWEAKS_THEME = {
   fontSizes: { root: '10px' },
 } as const;
 
-export default function Tweaks() {
+function Tweaks() {
   // Registered here (before <Canvas>) so this top-level control lands at the
   // TOP of the leva panel, above the tweak folders. The sampler + panel read
   // the same control (leva dedups by key).
   useControls('Time', QUALITY_MODE_CONTROL);
 
-  const [shown, setShown] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('dev') === '1';
-  });
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '`') return;
-      // Don't steal the backtick while the user is typing into a field.
-      const t = e.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === 'INPUT' ||
-          t.tagName === 'TEXTAREA' ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      e.stopPropagation();
-      setShown((v) => !v);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const { shown } = useTweaksPanel();
 
   // `TWEAKS · DEV` rather than leva's own wordmark: the panel is one of this
   // instrument's surfaces while it is open, and the backtick that opens it is
@@ -88,3 +76,5 @@ export default function Tweaks() {
     />
   );
 }
+
+export default memo(Tweaks);

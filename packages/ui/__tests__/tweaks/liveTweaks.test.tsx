@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
 import { defaultsFrom, applyTweaks, LIVE } from '../../src/tweaks/liveTweaks';
-import { galaxySchema, peerSchema } from '../../src/tweaks/tweakSchema';
+import TweakSync from '../../src/tweaks/TweakSync';
+import {
+  galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema,
+} from '../../src/tweaks/tweakSchema';
 
 describe('defaultsFrom', () => {
   it('extracts the numeric value from each knob def', () => {
@@ -37,5 +41,34 @@ describe('applyTweaks', () => {
     applyTweaks(live, { cell: { fabricAlpha: 0.3 } });
     expect(live.galaxy.rotationRate).toBe(1);
     expect(live.cell.fabricAlpha).toBe(0.3);
+  });
+});
+
+describe('LIVE stands on the schema defaults with no bridge mounted', () => {
+  // What makes it safe to mount `TweakSync` only when someone asks for the
+  // panel: every frame-loop consumer reads `LIVE.<folder>.<key>` on every
+  // frame, and if the BRIDGE were the thing that put the defaults there, an
+  // unopened panel would leave the scene reading an empty store.
+  it('is initialised from the schemas themselves', () => {
+    expect(LIVE.galaxy).toEqual(defaultsFrom(galaxySchema));
+    expect(LIVE.delivery).toEqual(defaultsFrom(deliverySchema));
+    expect(LIVE.peer).toEqual(defaultsFrom(peerSchema));
+    expect(LIVE.cell).toEqual(defaultsFrom(cellSchema));
+    expect(LIVE.nerve).toEqual(defaultsFrom(nerveSchema));
+  });
+
+  it('is unmoved by the bridge arriving at those same defaults', () => {
+    const folders = () => structuredClone({
+      galaxy: LIVE.galaxy,
+      delivery: LIVE.delivery,
+      peer: LIVE.peer,
+      cell: LIVE.cell,
+      nerve: LIVE.nerve,
+    });
+    const before = folders();
+
+    render(<TweakSync />);
+
+    expect(folders()).toEqual(before);
   });
 });

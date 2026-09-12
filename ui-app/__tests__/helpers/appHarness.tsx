@@ -108,16 +108,17 @@ function countingHudOverlay(): ComponentType<never> {
 }
 
 /**
- * A counter that is NOT memoized. `Tweaks` takes no props, so a memoized stand-
- * in would bail on every re-render and count nothing; unmemoized and mounted
- * unconditionally as App's first child, its count IS App's own render count.
+ * A counter that is NOT memoized — for a child that takes no props, where a
+ * memo would bail on every re-render and count nothing. Its count is the count
+ * of its PARENT's renders, which for a child of App is App's own.
  */
-export function appRenderCounter(): ComponentType<never> {
-  function AppRenderCounter() {
-    records.push({ name: 'App', changed: [] });
+export function plainCounter(name: string): ComponentType<never> {
+  function PlainCounter() {
+    records.push({ name, changed: [] });
     return null;
   }
-  return AppRenderCounter as unknown as ComponentType<never>;
+  PlainCounter.displayName = name;
+  return PlainCounter as unknown as ComponentType<never>;
 }
 
 /** Drop everything recorded so far. Called after the mount settles, so a
@@ -304,7 +305,6 @@ const INERT_UI_EXPORTS = [
   'SightedInspectionAnchor',
   'SightedInspectionOverlay',
   'SimClockTicker',
-  'TweakSync',
 ] as const;
 
 /**
@@ -321,6 +321,10 @@ export function uiMock(actual: Record<string, unknown>): Record<string, unknown>
   mocked.NeuralNetwork = countingComponent('NeuralNetwork');
   mocked.CellSemanticOrbit = countingComponent('CellSemanticOrbit');
   mocked.HudOverlay = countingHudOverlay();
+  // Counted rather than inert: whether leva's bridge is mounted at all is a
+  // reading, not scenery. Unmemoized, because it takes no props and a memo
+  // would hide every re-render it costs.
+  mocked.TweakSync = plainCounter('TweakSync');
   return mocked;
 }
 
@@ -386,7 +390,7 @@ export function connectMock(
 }
 
 export function tweaksMock(): Record<string, unknown> {
-  return { default: appRenderCounter() };
+  return { default: plainCounter('App') };
 }
 
 export function jukeboxMock(): Record<string, unknown> {
