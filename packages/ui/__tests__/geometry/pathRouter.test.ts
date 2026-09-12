@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
+  anchorProximity,
   anchorProximityScore,
   nearestGraphNode,
   rescueOrigin,
   RESCUE_MIN_HOPS,
+  rimEntry,
   rimEntryScore,
   shortestPath,
   shortestPathsToTargets,
@@ -586,6 +588,80 @@ describe('typed-array search engine — byte-identical to the Set/Map reference'
       expect(rescueOrigin(graph, dst, score, { ...options, scratch }))
         .toEqual(referenceRescueOrigin(graph, dst, score, options));
     }
+  });
+
+  it.each(ID_FAMILIES)(
+    'the score specs answer exactly what their closures answer, %s',
+    (_label, idOf) => {
+      // The two scores this module owns are now arithmetic on the scratch's
+      // own position table. The closures are the same arithmetic one node at a
+      // time, and they are the reference the golden was written through: over
+      // a real builder graph, with a ninth of the stage already gone from the
+      // publish, both forms have to choose the same node every time.
+      const rand = mulberry32(0x5c0e + idOf(3));
+      const { cells, graph, ids } = seededField(rand, 900, idOf);
+      const published = new Map(cells);
+      for (let i = 0; i < ids.length; i += 9) published.delete(ids[i]);
+      const scratch = createRouteScratch(16); // grows through the whole walk
+      for (let q = 0; q < 60; q++) {
+        const dst = ids[Math.floor(rand() * ids.length)];
+        const spec = q % 2 === 0
+          ? anchorProximity(published, [
+            (rand() * 2 - 1) * 80, (rand() * 2 - 1) * 4, (rand() * 2 - 1) * 72,
+          ])
+          : rimEntry(published, dst);
+        const closure = q % 2 === 0
+          ? anchorProximityScore(published, [
+            (spec as { x: number }).x,
+            (spec as { y: number }).y,
+            (spec as { z: number }).z,
+          ])
+          : rimEntryScore(published, dst);
+        expect(rescueOrigin(graph, dst, spec, { scratch })).toEqual(
+          referenceRescueOrigin(graph, dst, closure, {
+            valid: (id) => published.has(id),
+          }),
+        );
+      }
+    },
+  );
+
+  it('never answers a spec off a table a compaction renumbered', () => {
+    // A compaction throws the slot registry away and every slot is reassigned
+    // to a different id — so a position stamp taken BEFORE it would name
+    // another Cell's coordinates. The generation is therefore opened after the
+    // compaction check, and this is what proves the order.
+    const edges: [number, number][] = [];
+    for (let i = 2; i <= 9501; i++) edges.push([1, i]);
+    const star = mkGraph(edges);
+    const starCells = new Map<number, RescuePositioned>();
+    for (let i = 1; i <= 9501; i++) starCells.set(i, { pos_seed: [i, 0, 0] });
+    const scratch = createRouteScratch();
+    const anchor = anchorProximity(starCells, [9501, 0, 0]);
+    expect(rescueOrigin(star, 2, anchor, { minHops: 1, scratch })).toEqual([9501, 1, 2]);
+    expect(scratch.slotCount).toBe(9501);
+
+    // A tiny graph over the SAME publish trips the compaction, and the slot
+    // numbers the star's stamps referred to now belong to these three ids.
+    const small = mkGraph([[7, 8], [8, 9]]);
+    expect(rescueOrigin(small, 7, anchorProximity(starCells, [9, 0, 0]), {
+      minHops: 1,
+      scratch,
+    })).toEqual([9, 8, 7]);
+    expect(scratch.slotCount).toBe(3);
+
+    // The next publish drops the node the last answer named. A generation
+    // taken before the compaction would be the one this publish is about to
+    // be given, and those three slots would still read as resolved — off the
+    // publish before them, where the departed Cell was still placed.
+    const departed = new Map(starCells);
+    departed.delete(9);
+    expect(rescueOrigin(small, 7, anchorProximity(departed, [9, 0, 0]), {
+      minHops: 1,
+      scratch,
+    })).toEqual([8, 7]);
+    // And the star, whose table has to be resolved from nothing again.
+    expect(rescueOrigin(star, 2, anchor, { minHops: 1, scratch })).toEqual([9501, 1, 2]);
   });
 
   it('follows copy-on-write graph mutations between searches on one scratch', () => {

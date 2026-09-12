@@ -13,9 +13,9 @@ import {
   type OriginEntryIndexBuilder,
 } from '../geometry/originEntry';
 import {
-  anchorProximityScore,
+  anchorProximity,
   rescueOrigin,
-  rimEntryScore,
+  rimEntry,
   type RouteScratch,
 } from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
@@ -111,15 +111,14 @@ function planRescuePulse(
   );
   const rescue: RescueKind = inputAnchor ? 'anchored' : 'rim';
   const score = inputAnchor
-    ? anchorProximityScore(cells, inputAnchor.pos_seed)
-    : rimEntryScore(cells, dst);
-  // The cells-membership predicate keeps every hop renderable at plan time:
-  // the frame loop extinguishes a pulse whose hop endpoints are missing
-  // from the cells map, and this pulse is its block's only light.
-  const path = rescueOrigin(graph, dst, score, {
-    valid: (id) => cells.has(id),
-    scratch: routeScratch,
-  });
+    ? anchorProximity(cells, inputAnchor.pos_seed)
+    : rimEntry(cells, dst);
+  // Membership in the publish keeps every hop renderable at plan time: the
+  // frame loop extinguishes a pulse whose hop endpoints are missing from the
+  // cells map, and this pulse is its block's only light. The score spec
+  // carries the publish, so that gate and the score are one table read —
+  // this walk reaches the whole stage on a dark block.
+  const path = rescueOrigin(graph, dst, score, { scratch: routeScratch });
   if (!path || path.length < 2) return null;
   if (substituted) stats.bumpRescue('dst-substituted');
   stats.bumpRescue(rescue);

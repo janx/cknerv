@@ -1,0 +1,370 @@
+{
+ "stage": {
+  "size": 12000,
+  "nodes": 12000,
+  "edges": 37613,
+  "digest": "6bc54908d004b3c6"
+ },
+ "blocks": [
+  {
+   "index": 0,
+   "kind": "anchored",
+   "dst": 6195,
+   "origin": 2003,
+   "hops": 37,
+   "pathDigest": "cad8d8f431f84a56",
+   "bestScore": -2.64127115419
+  },
+  {
+   "index": 1,
+   "kind": "rim",
+   "dst": 2846,
+   "origin": 447,
+   "hops": 23,
+   "pathDigest": "0698b771f03d3953",
+   "bestScore": 1.19420066708
+  },
+  {
+   "index": 2,
+   "kind": "anchored",
+   "dst": 2269,
+   "origin": 3727,
+   "hops": 27,
+   "pathDigest": "55c4a2ea0e28be1c",
+   "bestScore": 0
+  },
+  {
+   "index": 3,
+   "kind": "rim",
+   "dst": 5472,
+   "origin": 7916,
+   "hops": 22,
+   "pathDigest": "a0de448be9a65529",
+   "bestScore": 1.26756352114
+  },
+  {
+   "index": 4,
+   "kind": "anchored",
+   "dst": 9805,
+   "origin": 3301,
+   "hops": 29,
+   "pathDigest": "3286523640d075d0",
+   "bestScore": -4.65406464148
+  },
+  {
+   "index": 5,
+   "kind": "rim",
+   "dst": 5175,
+   "origin": 7599,
+   "hops": 16,
+   "pathDigest": "60a33886b1c1fff0",
+   "bestScore": 1.28351178876
+  },
+  {
+   "index": 6,
+   "kind": "anchored",
+   "dst": 11331,
+   "origin": 7655,
+   "hops": 13,
+   "pathDigest": "ce137d0a6882312c",
+   "bestScore": 0
+  },
+  {
+   "index": 7,
+   "kind": "rim",
+   "dst": 10679,
+   "origin": 9365,
+   "hops": 9,
+   "pathDigest": "f21dbcb1feb0863b",
+   "bestScore": 1.35476234542
+  },
+  {
+   "index": 8,
+   "kind": "anchored",
+   "dst": 5267,
+   "origin": 7855,
+   "hops": 16,
+   "pathDigest": "779b9a974040fba9",
+   "bestScore": -1.94890277698
+  },
+  {
+   "index": 9,
+   "kind": "rim",
+   "dst": 11122,
+   "origin": 447,
+   "hops": 22,
+   "pathDigest": "6e15d78379607025",
+   "bestScore": 1.20094972223
+  },
+  {
+   "index": 10,
+   "kind": "anchored",
+   "dst": 2788,
+   "origin": 7800,
+   "hops": 30,
+   "pathDigest": "fb2852a9514ac803",
+   "bestScore": 0
+  },
+  {
+   "index": 11,
+   "kind": "rim",
+   "dst": 3479,
+   "origin": 9365,
+   "hops": 12,
+   "pathDigest": "828bd39320d4b455",
+   "bestScore": 1.35513849648
+  },
+  {
+   "index": 12,
+   "kind": "anchored",
+   "dst": 4209,
+   "origin": 10694,
+   "hops": 16,
+   "pathDigest": "1a601a4320f461b1",
+   "bestScore": -2.00265048317
+  },
+  {
+   "index": 13,
+   "kind": "rim",
+   "dst": 9829,
+   "origin": 7599,
+   "hops": 8,
+   "pathDigest": "546b36c3998dc87d",
+   "bestScore": 1.28406502623
+  },
+  {
+   "index": 14,
+   "kind": "anchored",
+   "dst": 4838,
+   "origin": 7485,
+   "hops": 12,
+   "pathDigest": "b64a1c7ad6151110",
+   "bestScore": 0
+  },
+  {
+   "index": 15,
+   "kind": "rim",
+   "dst": 7134,
+   "origin": 7710,
+   "hops": 10,
+   "pathDigest": "e2ea32db3c2c3d49",
+   "bestScore": 1.54311257471
+  },
+  {
+   "index": 16,
+   "kind": "anchored",
+   "dst": 1449,
+   "origin": 3537,
+   "hops": 34,
+   "pathDigest": "0bba1942d5a14ed4",
+   "bestScore": -2.50847751684
+  },
+  {
+   "index": 17,
+   "kind": "rim",
+   "dst": 4939,
+   "origin": 7710,
+   "hops": 15,
+   "pathDigest": "47ad09edd58578c7",
+   "bestScore": 1.4880720116
+  },
+  {
+   "index": 18,
+   "kind": "anchored",
+   "dst": 9514,
+   "origin": 7731,
+   "hops": 20,
+   "pathDigest": "84ea8feaa7294098",
+   "bestScore": 0
+  },
+  {
+   "index": 19,
+   "kind": "rim",
+   "dst": 4204,
+   "origin": 3274,
+   "hops": 18,
+   "pathDigest": "1e587102d8e5c400",
+   "bestScore": 1.27410706819
+  },
+  {
+   "index": 20,
+   "kind": "anchored",
+   "dst": 11422,
+   "origin": 9232,
+   "hops": 14,
+   "pathDigest": "7c32333bbb3868a9",
+   "bestScore": -0.436735703669
+  },
+  {
+   "index": 21,
+   "kind": "rim",
+   "dst": 2296,
+   "origin": 7916,
+   "hops": 17,
+   "pathDigest": "736753fef94b3908",
+   "bestScore": 1.24740711732
+  },
+  {
+   "index": 22,
+   "kind": "anchored",
+   "dst": 10265,
+   "origin": 2602,
+   "hops": 22,
+   "pathDigest": "a64118cd726f5ba7",
+   "bestScore": 0
+  },
+  {
+   "index": 23,
+   "kind": "rim",
+   "dst": 31,
+   "origin": 9365,
+   "hops": 20,
+   "pathDigest": "cda5dad42d911672",
+   "bestScore": 1.18011584494
+  },
+  {
+   "index": 24,
+   "kind": "anchored",
+   "dst": 8081,
+   "origin": 4286,
+   "hops": 7,
+   "pathDigest": "ecd0458bed2c3cb9",
+   "bestScore": -1.46407292936
+  },
+  {
+   "index": 25,
+   "kind": "rim",
+   "dst": 1588,
+   "origin": 447,
+   "hops": 10,
+   "pathDigest": "eb92052ccea9806e",
+   "bestScore": 1.14081443486
+  },
+  {
+   "index": 26,
+   "kind": "anchored",
+   "dst": 6694,
+   "origin": 5098,
+   "hops": 31,
+   "pathDigest": "d99ace7972855837",
+   "bestScore": 0
+  },
+  {
+   "index": 27,
+   "kind": "rim",
+   "dst": 6659,
+   "origin": 7710,
+   "hops": 11,
+   "pathDigest": "18fa04893f8a319f",
+   "bestScore": 1.48245960946
+  },
+  {
+   "index": 28,
+   "kind": "anchored",
+   "dst": 2639,
+   "origin": 7081,
+   "hops": 32,
+   "pathDigest": "c3b157385368c86a",
+   "bestScore": -5.53500669958
+  },
+  {
+   "index": 29,
+   "kind": "rim",
+   "dst": 1617,
+   "origin": 447,
+   "hops": 25,
+   "pathDigest": "24ec6172fb48806c",
+   "bestScore": 1.25038540304
+  },
+  {
+   "index": 30,
+   "kind": "anchored",
+   "dst": 6065,
+   "origin": 1356,
+   "hops": 31,
+   "pathDigest": "9b7e1f4e316630a8",
+   "bestScore": 0
+  },
+  {
+   "index": 31,
+   "kind": "rim",
+   "dst": 7426,
+   "origin": 10915,
+   "hops": 15,
+   "pathDigest": "3585bbdb1164c599",
+   "bestScore": 1.2436754868
+  },
+  {
+   "index": 32,
+   "kind": "anchored",
+   "dst": 9370,
+   "origin": 3836,
+   "hops": 44,
+   "pathDigest": "20f8487a6d1ae1fc",
+   "bestScore": -2.72699907826
+  },
+  {
+   "index": 33,
+   "kind": "rim",
+   "dst": 7649,
+   "origin": 9365,
+   "hops": 21,
+   "pathDigest": "a82b47571ef48fb9",
+   "bestScore": 1.32881385916
+  },
+  {
+   "index": 34,
+   "kind": "anchored",
+   "dst": 5055,
+   "origin": 5392,
+   "hops": 26,
+   "pathDigest": "0a1c1a531985f50d",
+   "bestScore": 0
+  },
+  {
+   "index": 35,
+   "kind": "rim",
+   "dst": 6076,
+   "origin": 447,
+   "hops": 17,
+   "pathDigest": "e952c98d40a56ccb",
+   "bestScore": 1.278201751
+  },
+  {
+   "index": 36,
+   "kind": "anchored",
+   "dst": 5888,
+   "origin": 10378,
+   "hops": 7,
+   "pathDigest": "f0381949b2706617",
+   "bestScore": -1.2311587367
+  },
+  {
+   "index": 37,
+   "kind": "rim",
+   "dst": 11440,
+   "origin": 7710,
+   "hops": 14,
+   "pathDigest": "2b336e7ad518d574",
+   "bestScore": 1.49160636018
+  },
+  {
+   "index": 38,
+   "kind": "anchored",
+   "dst": 302,
+   "origin": 6915,
+   "hops": 31,
+   "pathDigest": "90b52e0a69577790",
+   "bestScore": 0
+  },
+  {
+   "index": 39,
+   "kind": "rim",
+   "dst": 581,
+   "origin": 7710,
+   "hops": 14,
+   "pathDigest": "65762090fba62bfa",
+   "bestScore": 1.41389609654
+  }
+ ]
+}

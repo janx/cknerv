@@ -88,6 +88,23 @@ export interface RouteScratch {
   parent: Int32Array;
   /** BFS queue of slots; a search pushes each slot at most once. */
   queue: Int32Array;
+  /** slot → the position the rescue's scores read. Float64, because the
+   *  scores have to stay bit-identical to the closures they replace: a
+   *  `pos_seed` is a double, and a rounded copy of one is a different argmax.
+   *  Meaningful only where `posStamp[slot] === posGeneration`. */
+  posX: Float64Array;
+  posY: Float64Array;
+  posZ: Float64Array;
+  posStamp: Int32Array;
+  /** One bit per slot: the publish of the current generation holds the id.
+   *  This is the rescue's validity gate — what the caller used to pass as a
+   *  predicate, answered out of the scratch instead. */
+  validBits: Uint32Array;
+  /** The publish the table was resolved against, and the generation counting
+   *  it. A rescue over a NEW publish resolves what it reaches again; one over
+   *  the publish already in the table touches no hash at all. */
+  posSource: ReadonlyMap<number, RescuePositioned> | null;
+  posGeneration: number;
   /** slot → neighbour slots in the adjacency Set's own iteration order,
    *  or null before the node was first expanded. */
   neighbourSlots: (Int32Array | null)[];
@@ -121,6 +138,13 @@ export function createRouteScratch(
     targetEpoch: new Int32Array(cap),
     parent: new Int32Array(cap),
     queue: new Int32Array(cap),
+    posX: new Float64Array(cap),
+    posY: new Float64Array(cap),
+    posZ: new Float64Array(cap),
+    posStamp: new Int32Array(cap),
+    validBits: new Uint32Array((cap + 31) >> 5),
+    posSource: null,
+    posGeneration: 0,
     neighbourSlots: [],
     neighbourSource: [],
     cachedNodes: 0,
@@ -178,10 +202,23 @@ function growRouteScratch(scratch: RouteScratch): void {
     b.set(a);
     return b;
   };
+  const growF = (a: Float64Array): Float64Array => {
+    const b = new Float64Array(cap);
+    b.set(a);
+    return b;
+  };
   scratch.visitedEpoch = grow(scratch.visitedEpoch);
   scratch.targetEpoch = grow(scratch.targetEpoch);
   scratch.parent = grow(scratch.parent);
   scratch.queue = grow(scratch.queue);
+  scratch.posX = growF(scratch.posX);
+  scratch.posY = growF(scratch.posY);
+  scratch.posZ = growF(scratch.posZ);
+  scratch.posStamp = grow(scratch.posStamp);
+  // Slots keep their numbers, so the bitset's words keep their meaning.
+  const bits = new Uint32Array((cap + 31) >> 5);
+  bits.set(scratch.validBits);
+  scratch.validBits = bits;
 }
 
 function slotFor(scratch: RouteScratch, id: number): number {
@@ -215,6 +252,13 @@ function beginSearch(scratch: RouteScratch, liveNodeCount: number): number {
     scratch.targetEpoch = fresh.targetEpoch;
     scratch.parent = fresh.parent;
     scratch.queue = fresh.queue;
+    scratch.posX = fresh.posX;
+    scratch.posY = fresh.posY;
+    scratch.posZ = fresh.posZ;
+    scratch.posStamp = fresh.posStamp;
+    scratch.validBits = fresh.validBits;
+    scratch.posSource = null;
+    scratch.posGeneration = 0;
     scratch.neighbourSlots = [];
     scratch.neighbourSource = [];
     // The cache dies with the registry: a cached array holds slot indices and
@@ -362,6 +406,21 @@ export function shortestPathsToTargets(
 // reachable node that maximizes a caller-supplied score. Every hop of the
 // returned path is a real adjacency edge by construction, which is what
 // survives the frame loop's per-hop edge gate.
+//
+// It is the planner's largest single grain, because the argmax is over the
+// WHOLE reachable component: 12,000 nodes on the bench stage, scored once
+// each. The walk cannot stop at some margin past `RESCUE_MIN_HOPS` — both
+// scores get BETTER with distance from the destination (proximity to a coin
+// that may be anywhere on the stage, rim-wardness along an outward radial),
+// so there is no depth past which the rest of the component is provably
+// worse. Measured over the forty dark blocks of `__tests__/fixtures/
+// rescueOriginChain.json`: the chosen origin sits 7 to 44 hops out, median
+// 18, and a cap at `RESCUE_MIN_HOPS + 4` would move 30 of the 40 answers.
+// So the grain is paid down per NODE instead: the score is arithmetic on the
+// scratch's own position table (`RescueScoreSpec`), which asks the publish
+// once per node reached and nothing at all on a second attempt over the same
+// publish — 0.87x the closure form on a new publish and 0.63x on a repeat,
+// over the 12,000-Cell stage (interleaved A/B, min of 15, load 2.3).
 
 /** Hop ceiling for rescue routes. Deliberately below DEFAULT_MAX_HOPS: a
  *  rescue pulse is one deliberate inbound flow, not a cascade — ~48 hops
@@ -383,6 +442,73 @@ export interface RescuePositioned {
   pos_seed: readonly [number, number, number];
 }
 
+/** How the rescue ranks a node, in a form the walk can evaluate without
+ *  leaving its typed arrays — the two scores this module owns, each carrying
+ *  the publish its positions come from.
+ *
+ *  A dark block's BFS reaches the whole stage (12,000 nodes on the bench
+ *  fixture), and a closure score cost it two hash lookups on `cells` and two
+ *  calls per node; the spec costs one lookup per node per PUBLISH and none
+ *  thereafter, because the scratch keeps the resolved position and the
+ *  membership bit. Membership in `cells` is the validity gate — the same
+ *  predicate every caller passed, which is why a spec needs no `valid`. */
+export type RescueScoreSpec =
+  | {
+    readonly kind: 'anchor';
+    readonly cells: ReadonlyMap<number, RescuePositioned>;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+  }
+  | {
+    readonly kind: 'rim';
+    readonly cells: ReadonlyMap<number, RescuePositioned>;
+    readonly dirX: number;
+    readonly dirZ: number;
+  };
+
+/** Either of the module's own scores, or any function of an id — the general
+ *  form, which pays a call per visited node and is what a test or a future
+ *  ladder rung reaches for. */
+export type RescueScore = RescueScoreSpec | ((id: number) => number);
+
+/** {@link anchorProximityScore} as a spec: prefer the node nearest the
+ *  consumed coin's true address. */
+export function anchorProximity(
+  cells: ReadonlyMap<number, RescuePositioned>,
+  anchorPos: readonly [number, number, number],
+): RescueScoreSpec {
+  return {
+    kind: 'anchor',
+    cells,
+    x: anchorPos[0],
+    y: anchorPos[1],
+    z: anchorPos[2],
+  };
+}
+
+/** {@link rimEntryScore} as a spec: prefer the most rim-ward node in `dstId`'s
+ *  outward radial. The radial is read once here, exactly as the closure reads
+ *  it once at construction. */
+export function rimEntry(
+  cells: ReadonlyMap<number, RescuePositioned>,
+  dstId: number,
+): RescueScoreSpec {
+  let dirX = 0;
+  let dirZ = 0;
+  const dst = cells.get(dstId);
+  if (dst) {
+    const ex = dst.pos_seed[0] / FIELD_HALF_X;
+    const ez = dst.pos_seed[2] / FIELD_HALF_Z;
+    const len = Math.hypot(ex, ez);
+    if (len > 1e-9) {
+      dirX = ex / len;
+      dirZ = ez / len;
+    }
+  }
+  return { kind: 'rim', cells, dirX, dirZ };
+}
+
 export interface RescueOriginOptions {
   maxHops?: number;
   minHops?: number;
@@ -390,10 +516,32 @@ export interface RescueOriginOptions {
    *  hops — the BFS refuses to traverse them. The renderer's per-hop gate
    *  extinguishes a pulse whose hop endpoints are missing from the cells
    *  map, so the caller passes cells-membership here and the whole path is
-   *  renderable at plan time by construction. */
+   *  renderable at plan time by construction. A SPEC score carries that
+   *  membership itself and needs none. */
   valid?: (id: number) => boolean;
   /** Search scratch; the module's shared one when absent. */
   scratch?: RouteScratch;
+}
+
+/** Point the scratch's position table at a publish. Same instance as last
+ *  time → every slot the table already holds stays valid, which is what makes
+ *  a block's second rescue attempt free; a different instance → a new
+ *  generation, and what the next walk reaches is resolved against it.
+ *
+ *  Keying on the instance is the rule the neighbour cache already lives by
+ *  one level up: a published Cell map is replaced, never edited (the reducer
+ *  copies on write), so an unchanged instance is a publish that has not moved. */
+function beginPositions(
+  scratch: RouteScratch,
+  cells: ReadonlyMap<number, RescuePositioned>,
+): void {
+  if (scratch.posSource === cells) return;
+  scratch.posSource = cells;
+  if (scratch.posGeneration === 0x7fffffff) {
+    scratch.posStamp.fill(0);
+    scratch.posGeneration = 0;
+  }
+  scratch.posGeneration += 1;
 }
 
 /**
@@ -409,7 +557,7 @@ export interface RescueOriginOptions {
 export function rescueOrigin(
   graph: NeighborAdjacency,
   dst: number,
-  score: (id: number) => number,
+  score: RescueScore,
   options: RescueOriginOptions = {},
 ): number[] | null {
   const maxHops = options.maxHops ?? RESCUE_MAX_HOPS;
@@ -419,11 +567,31 @@ export function rescueOrigin(
   const adjacency = graph.adjacency;
   if (!adjacency.has(dst)) return null;
 
+  // One walk, three shapes of score: 0 = anchor proximity, 1 = rim entry,
+  // -1 = a caller's function. The kind is read ONCE, so the hot loop tests an
+  // integer rather than dispatching on a union per node.
+  const spec = typeof score === 'function' ? null : score;
+  const scoreFn = typeof score === 'function' ? score : null;
+  const kind = spec === null ? -1 : spec.kind === 'anchor' ? 0 : 1;
+  const ax = spec !== null && spec.kind === 'anchor' ? spec.x : 0;
+  const ay = spec !== null && spec.kind === 'anchor' ? spec.y : 0;
+  const az = spec !== null && spec.kind === 'anchor' ? spec.z : 0;
+  const dirX = spec !== null && spec.kind === 'rim' ? spec.dirX : 0;
+  const dirZ = spec !== null && spec.kind === 'rim' ? spec.dirZ : 0;
+  const hasDir = dirX !== 0 || dirZ !== 0;
+  const source = spec === null ? null : spec.cells;
+
   // parent[slot] = the neighbour one hop closer to dst, so the origin's
   // parent chain IS the pulse path in travel order — no reverse needed.
+  // The position table is opened AFTER the compaction check: a compaction
+  // renumbers every slot, and a stamp carried across one would name a table
+  // entry that now belongs to a different Cell.
   const epoch = beginSearch(scratch, adjacency.size);
+  if (source !== null) beginPositions(scratch, source);
+  const generation = scratch.posGeneration;
   const dstSlot = slotFor(scratch, dst);
   let { ids, visitedEpoch, parent, queue } = scratch;
+  let { posX, posY, posZ, posStamp, validBits } = scratch;
   visitedEpoch[dstSlot] = epoch;
   parent[dstSlot] = -1;
   queue[0] = dstSlot;
@@ -438,28 +606,82 @@ export function rescueOrigin(
   let bestFarId = -1;
   let bestFarScore = Number.NEGATIVE_INFINITY;
   for (let depth = 1; depth <= maxHops; depth++) {
+    // The near set answers only for a search that never reaches minHops at
+    // all, so once one far candidate stands the whole `bestAny` ladder is
+    // dead — and `depth` is level-invariant, so neither test belongs per node.
+    const far = depth >= minHops;
+    const nearStillCounts = bestFarSlot === -1;
     while (head < levelEnd) {
       const cur = queue[head++];
       const neighbours = adjacency.get(ids[cur]);
       if (neighbours === undefined) continue;
       const nb = neighbourSlotsOf(scratch, cur, neighbours);
       ({ ids, visitedEpoch, parent, queue } = scratch);
+      ({ posX, posY, posZ, posStamp, validBits } = scratch);
       for (let i = 0; i < nb.length; i++) {
         const slot = nb[i];
         if (visitedEpoch[slot] === epoch) continue;
         visitedEpoch[slot] = epoch;
         const id = ids[slot];
         if (valid && !valid(id)) continue; // never traverse THROUGH it either
+        let s: number;
+        if (kind < 0) {
+          s = scoreFn!(id);
+        } else {
+          // The table answers both questions at once: a slot resolved in this
+          // generation carries its Cell's position, or its bit says the
+          // publish does not hold the id — which is the validity gate, and a
+          // node failing it is not traversed THROUGH either.
+          let px: number;
+          let py: number;
+          let pz: number;
+          const word = slot >> 5;
+          const bit = 1 << (slot & 31);
+          if (posStamp[slot] === generation) {
+            if ((validBits[word] & bit) === 0) continue;
+            px = posX[slot];
+            py = posY[slot];
+            pz = posZ[slot];
+          } else {
+            posStamp[slot] = generation;
+            const cell = source!.get(id);
+            if (cell === undefined) {
+              validBits[word] &= ~bit;
+              continue;
+            }
+            validBits[word] |= bit;
+            px = posX[slot] = cell.pos_seed[0];
+            py = posY[slot] = cell.pos_seed[1];
+            pz = posZ[slot] = cell.pos_seed[2];
+          }
+          if (kind === 0) {
+            const dx = px - ax;
+            const dy = py - ay;
+            const dz = pz - az;
+            s = -(dx * dx + dy * dy + dz * dz);
+          } else {
+            const ex = px / FIELD_HALF_X;
+            const ez = pz / FIELD_HALF_Z;
+            const rf = Math.hypot(ex, ez);
+            if (rf < 1e-9 || !hasDir) s = rf;
+            else {
+              const cos = (ex * dirX + ez * dirZ) / rf;
+              s = rf * (0.5 + 0.5 * Math.max(0, cos));
+            }
+          }
+        }
         parent[slot] = cur;
         queue[tail++] = slot;
-        const s = score(id);
-        if (s > bestAnyScore || (s === bestAnyScore && id < bestAnyId)) {
+        if (
+          nearStillCounts
+          && (s > bestAnyScore || (s === bestAnyScore && id < bestAnyId))
+        ) {
           bestAnySlot = slot;
           bestAnyId = id;
           bestAnyScore = s;
         }
         if (
-          depth >= minHops
+          far
           && (s > bestFarScore || (s === bestFarScore && id < bestFarId))
         ) {
           bestFarSlot = slot;
