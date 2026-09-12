@@ -2,9 +2,24 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const useFrameMock = vi.fn();
+/** The two halves of the loop bracket the sampler reads main-thread busy
+ * from. Real `addEffect`/`addAfterEffect` run before every root renders and
+ * after the last one has; here the harness drives them in that order. */
+const addEffectMock = vi.fn();
+const addAfterEffectMock = vi.fn();
+const stopEffect = vi.fn();
+const stopAfterEffect = vi.fn();
 
 vi.mock('@react-three/fiber', () => ({
   useFrame: (cb: () => void) => useFrameMock(cb),
+  addEffect: (cb: (timestamp: number) => void) => {
+    addEffectMock(cb);
+    return stopEffect;
+  },
+  addAfterEffect: (cb: (timestamp: number) => void) => {
+    addAfterEffectMock(cb);
+    return stopAfterEffect;
+  },
 }));
 
 vi.mock('leva', () => ({
@@ -38,6 +53,10 @@ beforeEach(() => {
   setQualityMode('auto');
   setAdaptiveQuality('high');
   useFrameMock.mockClear();
+  addEffectMock.mockClear();
+  addAfterEffectMock.mockClear();
+  stopEffect.mockClear();
+  stopAfterEffect.mockClear();
 });
 
 afterEach(() => {
@@ -61,6 +80,34 @@ function sampleWindow(frameMs: number): void {
 
 function sampleWindows(frameMs: number, count: number): void {
   for (let index = 0; index < count; index += 1) sampleWindow(frameMs);
+}
+
+function loopEffect(mock: typeof addEffectMock): (timestamp: number) => void {
+  const calls = mock.mock.calls;
+  return calls[calls.length - 1][0] as (timestamp: number) => void;
+}
+
+/** One frame with the loop bracket around it, as the real loop runs it:
+ *  before-effect, the subscriber chain (the sampler among them), the render,
+ *  after-effect — and then the machine idles until the next frame. */
+function busyFrame(frameMs: number, busyMs: number): void {
+  loopEffect(addEffectMock)(now);
+  now += busyMs;
+  frame();
+  loopEffect(addAfterEffectMock)(now);
+  now += Math.max(0, frameMs - busyMs);
+}
+
+/** One sample window's frames, each costing `busyMs` of main thread. */
+function busyWindow(frameMs: number, busyMs: number): void {
+  const count = Math.max(1, Math.round(WINDOW_MS / frameMs));
+  for (let index = 0; index < count; index += 1) {
+    busyFrame(WINDOW_MS / count, busyMs);
+  }
+}
+
+function busyWindows(frameMs: number, busyMs: number, count: number): void {
+  for (let index = 0; index < count; index += 1) busyWindow(frameMs, busyMs);
 }
 
 /** Windows the controller needs to lock: warmup, then the stable window. */
@@ -483,5 +530,157 @@ describe('a stall is not evidence', () => {
     const last = snapshotQualitySamples().at(-1)!;
     expect(last.stalled).toBe(true);
     expect(last.maxFrameMs).toBeGreaterThanOrEqual(500);
+  });
+});
+
+describe('AdaptiveQualityController main-thread busy', () => {
+  it('brackets the loop once, and lets go of it on unmount', () => {
+    const view = render(<AdaptiveQualityController />);
+    expect(addEffectMock).toHaveBeenCalledTimes(1);
+    expect(addAfterEffectMock).toHaveBeenCalledTimes(1);
+    expect(stopEffect).not.toHaveBeenCalled();
+    view.unmount();
+    expect(stopEffect).toHaveBeenCalledTimes(1);
+    expect(stopAfterEffect).toHaveBeenCalledTimes(1);
+  });
+
+  it('is unchanged by a loop whose frames cost nothing', () => {
+    // Equivalence pin, as the motion and block refs have: a bracket that
+    // reports an idle main thread steps the tier down exactly where the bare
+    // controller does.
+    const bare = lockedStepDownWindows();
+    render(<AdaptiveQualityController />);
+    windowsToLock(16);
+    sampleWindows(16, 8);
+    const before = getQualityRuntimeSnapshot().switches;
+    let windows = 0;
+    while (getQualityRuntimeSnapshot().switches === before) {
+      busyWindow(40, 1);
+      windows += 1;
+      if (windows > 40) throw new Error('the GPU-bound page never stepped down');
+    }
+    expect(windows).toBe(bare);
+  });
+
+  it('will not spend the tier on windows the main thread owned', () => {
+    render(<AdaptiveQualityController />);
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+
+    // The same 40 ms frames that cost the bare controller a tier in ~14
+    // windows, with 34 of every 40 ms spent inside the frame loop (85 %, the
+    // share measured live at load 63-71). Forty windows — thrice the hold.
+    busyWindows(40, 34, 40);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'high', locked: true, switches,
+    });
+
+    // The evidence was held, not thrown away: the machine's GPU turning out
+    // to be the limit spends the tier from where the gate stopped it, inside
+    // one hold rather than after a fresh one.
+    const windows = windowsToStepDown(40);
+    expect(windows).toBeLessThanOrEqual(18);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      effective: 'med', locked: true, switches: switches + 1,
+    });
+  });
+
+  it('reports the busy it weighed, and its verdict', () => {
+    render(<AdaptiveQualityController />);
+    resetQualitySamples();
+    busyWindows(20, 15, 3);
+    busyWindows(20, 2, 3);
+    const samples = snapshotQualitySamples();
+    expect(samples.length).toBeGreaterThanOrEqual(5);
+    const bound = samples.filter((sample) => sample.mainThreadBound);
+    const free = samples.filter((sample) => !sample.mainThreadBound);
+    expect(bound.length).toBeGreaterThanOrEqual(2);
+    expect(free.length).toBeGreaterThanOrEqual(2);
+    for (const sample of bound) {
+      expect(sample.busyMs).toBeGreaterThan(sample.windowMs * 0.6);
+    }
+    for (const sample of free) {
+      expect(sample.busyMs).toBeLessThan(sample.windowMs * 0.6);
+    }
+  });
+
+  it('drops the busy with the window it belonged to', () => {
+    const motionActiveRef = { current: false };
+    render(<AdaptiveQualityController motionActiveRef={motionActiveRef} />);
+    windowsToLock(16);
+    const switches = getQualityRuntimeSnapshot().switches;
+    resetQualitySamples();
+
+    // A drag whose frames were entirely main-thread, then a settled page
+    // whose frames are the GPU's. The dropped windows must leave none of
+    // their busy behind, or the page could never spend a tier after a drag.
+    motionActiveRef.current = true;
+    busyWindows(40, 39, 6);
+    motionActiveRef.current = false;
+    busyWindows(40, 2, 4);
+    const samples = snapshotQualitySamples();
+    expect(samples.length).toBeGreaterThanOrEqual(3);
+    expect(samples.every((sample) => !sample.mainThreadBound)).toBe(true);
+    expect(Math.max(...samples.map((sample) => sample.busyMs)))
+      .toBeLessThan(WINDOW_MS * 0.2);
+
+    // …and the tier goes, on the schedule the post-lock hold gives it.
+    let windows = 4;
+    while (getQualityRuntimeSnapshot().switches === switches) {
+      busyWindow(40, 2);
+      windows += 1;
+      if (windows > 40) throw new Error('the settled page never stepped down');
+    }
+    expect(windows).toBeLessThanOrEqual(18);
+  });
+
+  it('measures a frame with one clock read and no allocation of its own', () => {
+    render(<AdaptiveQualityController />);
+    const before = loopEffect(addEffectMock);
+    const after = loopEffect(addAfterEffectMock);
+    const ticks = 400_000;
+    // ⚠️ The suite's clock is a SPY, and a spy records every call it takes —
+    // 400,000 argument arrays would be the only thing this test measured. A
+    // plain counter stands in for the length of the loop.
+    const spiedClock = performance.now;
+    const clock = { reads: 0, ms: 0 };
+    (performance as unknown as { now: () => number }).now = () => {
+      clock.reads += 1;
+      clock.ms += 1;
+      return clock.ms;
+    };
+    try {
+      // A control that allocates one small object per frame, so the
+      // instrument is calibrated against something it must be able to tell
+      // apart. Every object is RETAINED: a young-generation collection in the
+      // middle of the loop would otherwise hide the allocation completely,
+      // and it did — the first version of this case measured the control as
+      // 1.7 MB SMALLER than where it started.
+      const kept: unknown[] = [];
+      const controlBase = process.memoryUsage().heapUsed;
+      for (let index = 0; index < ticks; index += 1) {
+        kept.push({ startedAt: index, busyMs: index });
+      }
+      const controlGrowth = process.memoryUsage().heapUsed - controlBase;
+      expect(kept.length).toBe(ticks);
+      expect(controlGrowth).toBeGreaterThan(8 * 1024 * 1024);
+
+      const base = process.memoryUsage().heapUsed;
+      for (let index = 0; index < ticks; index += 1) {
+        before(index);
+        after(index);
+      }
+      const growth = process.memoryUsage().heapUsed - base;
+      // One read, in the after-effect: the frame's begin comes from the rAF
+      // timestamp the loop already had.
+      expect(clock.reads).toBe(ticks);
+      // One clock read and three numeric writes a frame: at 400,000 frames
+      // ANY per-frame object would be ten megabytes (V8's smallest is 24 B),
+      // which is the whole distance between these two numbers.
+      expect(growth).toBeLessThan(1024 * 1024);
+      expect(growth).toBeLessThan(controlGrowth / 8);
+    } finally {
+      (performance as unknown as { now: () => number }).now = spiedClock;
+    }
   });
 });

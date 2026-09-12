@@ -36,6 +36,54 @@ export const ADAPTIVE_EMA_TIME_MS = 1_500;
  */
 export const ADAPTIVE_STALL_FRAME_MS = 250;
 
+/**
+ * The share of a sample window's wall clock above which the MAIN THREAD, not
+ * the renderer, owned its frame time — and past which the window may not step
+ * the tier DOWN.
+ *
+ * Every rung of the cascade buys GPU time and nothing else: raster density,
+ * DPR, ambient counts, transient concurrency. A window whose frames were long
+ * because the main thread was busy is therefore not evidence that the tier is
+ * too expensive — a step down would leave exactly the same main-thread cost on
+ * the next frame, and the page would have given up a tier and kept its frame
+ * time. It is the argument the post-block window already makes
+ * (`recentBlockActiveRef`), generalised: there the cause is named by a
+ * sentinel, here it is measured.
+ *
+ * Measured 2026-09-12 with 24 normal-priority busy loops beside the page
+ * (/proc/loadavg 63–71): AUTO walked high → med → low inside 70 s of idle, on
+ * windows whose mean frame was 51 ms and whose main thread was busy for ~85 %
+ * of the wall clock (probe busy p50 40.6 ms against a 47.9 ms mean interval;
+ * CDP's own TaskDuration read 47.3 ms a frame, 99 %). Those windows are the
+ * replay fixture behind `adaptiveQualityBusyGate.test.ts`. On the same page
+ * left quiet the reading is 15–20 %, which is the safety property: a real GPU
+ * limit must still be able to spend a tier.
+ *
+ * Sixty percent rather than a tighter line because the reading is a LOWER
+ * BOUND — `AdaptiveQualityController` measures each frame's begin to the end
+ * of the R3F loop, not the tasks after it — and because the gate can only
+ * ever WITHHOLD a step: an under-measured window must land on today's
+ * behaviour, and only a window plainly owned by the main thread should be
+ * refused. Measured per 750 ms window on the dev build: at load 64, 48 of 50
+ * windows read past the line (run share 0.816); left quiet, 12 of 52 do (run
+ * share 0.425) — and those twelve gate nothing, because a 16.7 ms window has
+ * no slow evidence for the gate to hold. The rule only ever bites on a
+ * window that is BOTH slow and the main thread's.
+ */
+export const BUSY_DOWN_GATE_SHARE = 0.6;
+
+/**
+ * Did the main thread own this window? Strictly past the share, so a window
+ * exactly at the line is still the renderer's: the rule has to be able to NAME
+ * the main thread, and an absent or nonsensical reading (no bracket installed,
+ * a zero-length window) names nothing.
+ */
+export function mainThreadOwnsWindow(busyMs: number, windowMs: number): boolean {
+  if (!Number.isFinite(busyMs) || !Number.isFinite(windowMs)) return false;
+  if (windowMs <= 0) return false;
+  return busyMs > windowMs * BUSY_DOWN_GATE_SHARE;
+}
+
 /** Calibration ends once the tier has held this long without a switch. What is
  * decided at the door is the CEILING: no sample after the lock may raise the
  * tier, so this window only has to be long enough to catch a machine that
@@ -147,11 +195,17 @@ function downHoldMs(state: AdaptiveQualityState): number {
  * advancing afterwards and the one action still open to it is a downshift,
  * against the longer {@link POST_LOCK_DOWN_HOLD_MUL} hold. The caller keeps
  * sampling for the life of the page.
+ *
+ * `mainThreadBound` is the window's own verdict from
+ * {@link mainThreadOwnsWindow}, and it gates the DOWNSHIFT alone — the
+ * average, the stability clock and the lock all advance exactly as they would
+ * without it. Absent, the rule is the one that predates the gate.
  */
 export function advanceAdaptiveQuality(
   state: AdaptiveQualityState,
   frameMs: number,
   sampleDurationMs: number,
+  mainThreadBound = false,
 ): AdaptiveQualityState {
   if (!Number.isFinite(frameMs) || frameMs <= 0) return state;
   if (!Number.isFinite(sampleDurationMs) || sampleDurationMs <= 0) return state;
@@ -192,8 +246,16 @@ export function advanceAdaptiveQuality(
   }
 
   const slow = smoothedFrameMs > DOWN_FRAME_MS[state.quality];
+  // A window the main thread owned HOLDS the evidence clock rather than
+  // resetting or dropping it: those frames say nothing about what this tier
+  // costs the GPU (see {@link BUSY_DOWN_GATE_SHARE}), but they are also no
+  // reason to forget what the windows before them said — the next window that
+  // really is the renderer's finds the evidence where it left it, and a fast
+  // window still decays it at the double rate below whoever owned the frames.
+  // Holding it is also what makes the gate structural: evidence cannot reach
+  // the hold on a gated window, so no downshift can fire from one.
   const slowEvidenceMs = slow
-    ? state.slowEvidenceMs + duration
+    ? (mainThreadBound ? state.slowEvidenceMs : state.slowEvidenceMs + duration)
     : Math.max(0, state.slowEvidenceMs - duration * 2);
 
   // A completed hold outranks a completed stability window: at that moment the

@@ -69,8 +69,14 @@ export function createCellConstellationCameraMotion(): CellConstellationCameraMo
 
 /** A conservative CSS-pixel reading of one frame's camera change at the
  * anchor's depth: translation as a fraction of the anchor's distance plus the
- * rotation angle, both scaled by the focal length in pixels. */
-function poseDriftPx(
+ * rotation angle, both scaled by the focal length in pixels.
+ *
+ * Exported because it is the scene's one answer to "how far did the picture
+ * move" and two layers now settle on it: the leaders here, and the motion
+ * window that suspends Cell picking and the adaptive sampler
+ * (`ui-app/src/orbit-camera-drift.ts`, §11.3). The thresholds are each
+ * layer's own; the reading is not. */
+export function poseDriftPx(
   fromPosition: THREE.Vector3,
   fromQuaternion: THREE.Quaternion,
   position: THREE.Vector3,

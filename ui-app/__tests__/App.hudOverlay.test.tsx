@@ -259,6 +259,16 @@ describe('HudOverlay wiring', () => {
       /const endOrbitInteraction = useCallback\(\(\) => \{[^}]*orbitPickingSuspendedRef\.current = false/,
     );
     expect(APP_SOURCE).toContain('noteOrbitCameraChange(gesture);');
+    // …and what LIFTS it is the picture being still, not the controls giving
+    // up their 1e-3 tail: the sentinel measures the frame's projected drift
+    // at the orbit target and hands it to the settle (§11.3). A call with no
+    // drift takes the old latch rule, so the absence of the bare call is the
+    // pin that matters.
+    expect(sentinel).toContain('controlsRef={orbitControlsRef}');
+    expect(APP_SOURCE).toContain(
+      'orbitCameraDriftPx(driftRef.current, camera, target, size.height),',
+    );
+    expect(APP_SOURCE).not.toMatch(/settleOrbitCameraFrame\(\s*gesture\s*\)/);
   });
 
   it('keeps motion windows out of the adaptive-quality sample', () => {

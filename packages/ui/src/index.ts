@@ -324,6 +324,14 @@ export {
   type FrameBudgetSnapshot,
   type FrameBudgetWindowSnapshot,
 } from './nerve/frameBudget';
+// How far the picture moved in one frame, in CSS px at a named depth. The
+// leaders settle on it inside the package; the app's motion window settles on
+// it too, and the two must be reading the same thing (§11.3).
+export {
+  poseDriftPx,
+  CONSTELLATION_CAMERA_MOTION_PX,
+  CONSTELLATION_CAMERA_REST_PX,
+} from './components/hud/cellConstellationCameraMotion';
 // The last two readings this package used to put on `window` itself: the
 // adaptive controller's sample windows and the halo layer's live draw counts.
 // They are exported for the same reason every counter above is — the app's

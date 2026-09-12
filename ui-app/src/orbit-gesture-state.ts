@@ -20,6 +20,35 @@ export const ORBIT_POINTER_ACTION_SUPPRESS_MS = 180;
  */
 export const ORBIT_DRAG_MIN_TRAVEL_PX = CELL_CLICK_MAX_POINTER_DELTA_PX;
 
+/**
+ * Per-frame projected drift, in CSS px at the orbit target's depth, at or
+ * under which the camera counts as STILL — the threshold the motion window
+ * closes on.
+ *
+ * One pixel, where the leaders take two, because this window has more to lose
+ * by staying open than by closing early: what it costs is the hover
+ * affordance and the sampler's evidence, and what closing early risks is a
+ * hit index up to a pixel of camera stale — inside the picker's own 1.5 px
+ * drift envelope, which it re-validates against on the first probe it
+ * answers anyway. A pixel is also where the reading stops being a reading:
+ * `poseDriftPx` sums translation and rotation conservatively, so sub-pixel
+ * answers are noise about a picture nobody can see change.
+ */
+export const ORBIT_CAMERA_REST_DRIFT_PX = 1;
+/**
+ * Consecutive still frames before the window closes. Three, as everywhere
+ * else a camera in this scene is declared at rest, and enough that one
+ * unlucky frame (a dropped delta, a queued rAF) cannot pass for stillness.
+ *
+ * One threshold is enough here where the leaders needed two: a damped tail
+ * decays geometrically, so drift that has fallen under a pixel cannot climb
+ * back over one on its own, and rest once declared is not withdrawn by the
+ * tail. A hand that moves again re-opens the window through
+ * {@link orbitInMotion}'s `active` (it never closed for a held gesture) or
+ * through the next frame's drift, which is what a hand produces.
+ */
+export const ORBIT_CAMERA_SETTLE_FRAMES = 3;
+
 export interface OrbitGestureState {
   active: boolean;
   /** The pointer travelled past the click tolerance: this is a real drag. */
@@ -39,8 +68,13 @@ export interface OrbitGestureState {
    *  Latched by `change`, read and cleared once per frame. */
   cameraChangedSinceFrame: boolean;
   /** The camera moved during the frame that last settled — by the hand, or
-   *  by the damping tail OrbitControls runs after the hand lets go. */
+   *  by the damping tail OrbitControls runs after the hand lets go, and only
+   *  while that tail still moves the PICTURE
+   *  ({@link ORBIT_CAMERA_REST_DRIFT_PX}). */
   cameraMoving: boolean;
+  /** Consecutive settled frames whose drift stayed at or under the rest
+   *  threshold, while the controls kept reporting a change. */
+  restFrames: number;
 }
 
 export function createOrbitGestureState(): OrbitGestureState {
@@ -54,6 +88,7 @@ export function createOrbitGestureState(): OrbitGestureState {
     suppressPointerActionUntilMs: 0,
     cameraChangedSinceFrame: false,
     cameraMoving: false,
+    restFrames: 0,
   };
 }
 
@@ -147,12 +182,39 @@ export function noteOrbitCameraChange(state: OrbitGestureState): void {
   state.cameraChangedSinceFrame = true;
 }
 
-/** Once per frame, after OrbitControls has had its update: settle the latch
- *  into `cameraMoving` and return it. A frame that passes with no change is
- *  the camera at rest. */
-export function settleOrbitCameraFrame(state: OrbitGestureState): boolean {
-  state.cameraMoving = state.cameraChangedSinceFrame;
+/**
+ * Once per frame, after OrbitControls has had its update: settle the latch
+ * against the frame's projected drift and return the verdict. A frame that
+ * passes with no change at all is the camera at rest, as it always was; a
+ * frame that reports a change is motion until the drift has been at or under
+ * {@link ORBIT_CAMERA_REST_DRIFT_PX} for {@link ORBIT_CAMERA_SETTLE_FRAMES}
+ * frames running.
+ *
+ * `driftPx` is `orbitCameraDriftPx`'s reading. Its default is the absence of
+ * one — a Lab with no sentinel, a caller that has no camera to measure — and
+ * it lands on the latch rule this function had before the drift existed: the
+ * window then runs for the controls' whole tail.
+ */
+export function settleOrbitCameraFrame(
+  state: OrbitGestureState,
+  driftPx: number = Number.POSITIVE_INFINITY,
+): boolean {
+  const changed = state.cameraChangedSinceFrame;
   state.cameraChangedSinceFrame = false;
+  if (!changed) {
+    state.restFrames = 0;
+    state.cameraMoving = false;
+    return false;
+  }
+  // `!(drift <= rest)` rather than `drift > rest`: a NaN reading is not
+  // stillness.
+  if (!(driftPx <= ORBIT_CAMERA_REST_DRIFT_PX)) {
+    state.restFrames = 0;
+    state.cameraMoving = true;
+    return true;
+  }
+  state.restFrames += 1;
+  state.cameraMoving = state.restFrames < ORBIT_CAMERA_SETTLE_FRAMES;
   return state.cameraMoving;
 }
 
@@ -179,11 +241,13 @@ export function orbitCameraSuspendsPicking(state: OrbitGestureState): boolean {
  * rather than one settled frame after the first change. Route automation is
  * the third source and is OR'd in by the caller, as for picking.
  *
- * Bounded by construction: the tail decays geometrically (`dampingFactor`
- * 0.08, so the pending delta shrinks by 8% an update) and OrbitControls stops
- * reporting `change` once the camera moves less than 1e-3 units or radians
- * a frame — about 100–130 frames after a release of any strength, the last
- * ~30 of them sporadic. Only a hand that never lets go keeps it open.
+ * Bounded by construction, and no longer by the controls' own threshold: the
+ * tail decays geometrically (`dampingFactor` 0.08, so the pending delta
+ * shrinks by 8% an update) and the window closes three frames after the drift
+ * it produces falls under a pixel — frame 19 to 66 after a release of 0.02 to
+ * 1.0 radians, where `change` itself ran for 104 to 151
+ * (`__tests__/orbit-camera-drift.test.ts` plays the curve out). Only a hand
+ * that never lets go keeps it open.
  */
 export function orbitInMotion(state: OrbitGestureState): boolean {
   return state.active || state.cameraMoving;

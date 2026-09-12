@@ -27,6 +27,14 @@ export interface QualitySample {
   maxFrameMs: number;
   /** The window was dropped because its longest frame was not a frame. */
   stalled: boolean;
+  /** Main-thread busy summed over the window's frames — the R3F loop's own
+   * span, a lower bound on what the frames cost this thread. */
+  busyMs: number;
+  /** That busy was more than `BUSY_DOWN_GATE_SHARE` of the window's wall
+   * clock, so the window could not lower the tier however slow its frames
+   * were. The reading a live session needs to tell a machine whose GPU is the
+   * limit from one whose main thread is. */
+  mainThreadBound: boolean;
   /** The tier in force while the window was collected. */
   quality: QualityPreset;
   smoothedFrameMs: number;

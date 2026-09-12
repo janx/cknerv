@@ -19,6 +19,7 @@ import {
 } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
+import * as THREE from 'three';
 import {
   AdaptiveQualityController,
   beginBootPhase,
@@ -178,6 +179,10 @@ import {
   type OrbitGestureState,
 } from './orbit-gesture-state';
 import {
+  createOrbitCameraDrift,
+  orbitCameraDriftPx,
+} from './orbit-camera-drift';
+import {
   CELL_MEMORY_RECALL_MAX_PULSES,
   INITIAL_CELL_MEMORY_RECALL_STATE,
   cellMemoryRecallReducer,
@@ -274,6 +279,8 @@ function idlePeerSightingLookup(current: {
 }
 
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0];
+/** The same point as a vector, for the frames before the controls exist. */
+const DEFAULT_ORBIT_DRIFT_TARGET = new THREE.Vector3(0, CELLS_Y, 0);
 const STREAM_STALE_AFTER_MS = 15_000;
 
 /**
@@ -296,18 +303,29 @@ const STREAM_STALE_AFTER_MS = 15_000;
  */
 function CameraMotionSentinel({
   gestureRef,
+  controlsRef,
   automationActiveRef,
   pickingSuspendedRef,
   motionActiveRef,
 }: {
   gestureRef: { readonly current: OrbitGestureState };
+  controlsRef: { readonly current: ElementRef<typeof OrbitControls> | null };
   automationActiveRef: { readonly current: boolean };
   pickingSuspendedRef: { current: boolean };
   motionActiveRef: { current: boolean };
 }) {
-  useFrame(() => {
+  const driftRef = useRef(createOrbitCameraDrift());
+  useFrame(({ camera, size }) => {
     const gesture = gestureRef.current;
-    settleOrbitCameraFrame(gesture);
+    // The orbit target is where translation becomes pixels: it is the depth
+    // the reader is looking at, and the pivot the tail is decaying around.
+    // Its default is the stage centre, which is what a page that has not
+    // panned is orbiting.
+    const target = controlsRef.current?.target ?? DEFAULT_ORBIT_DRIFT_TARGET;
+    settleOrbitCameraFrame(
+      gesture,
+      orbitCameraDriftPx(driftRef.current, camera, target, size.height),
+    );
     const automation = automationActiveRef.current;
     pickingSuspendedRef.current = orbitCameraSuspendsPicking(gesture)
       || automation;
@@ -2718,6 +2736,7 @@ export default function App({
               the route camera's step and the controls' update above. */}
           <CameraMotionSentinel
             gestureRef={orbitGestureRef}
+            controlsRef={orbitControlsRef}
             automationActiveRef={cameraAutomationActiveRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
             motionActiveRef={cameraMotionActiveRef}

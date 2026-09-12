@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { addAfterEffect, addEffect, useFrame } from '@react-three/fiber';
 import { useControls } from 'leva';
 import {
   QUALITY_MODE_CONTROL,
@@ -14,11 +14,61 @@ import {
   ADAPTIVE_STALL_FRAME_MS,
   advanceAdaptiveQuality,
   createAdaptiveQualityState,
+  mainThreadOwnsWindow,
   restartAdaptiveQualityState,
 } from './adaptiveQuality';
 import { recordQualitySample } from './qualitySampleLog';
 
 const MAX_VALID_WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS * 4;
+
+/**
+ * What a frame costs THIS thread, accumulated over a sample window.
+ *
+ * The span runs from the FRAME'S OWN BEGIN to the end of R3F's loop:
+ * `addEffect` is handed the rAF timestamp — the moment the browser started
+ * this frame, which is before any task that delayed the callback — and
+ * `addAfterEffect` runs once the last root has rendered, `gl.render`
+ * included. So it holds whatever the thread was doing when the frame came
+ * due, every `useFrame` in the tree, and the draw submission. One clock read
+ * a frame and three numeric writes; no allocation at all, which is what
+ * chose it over the MessageChannel hop `probe.js` uses (a message object a
+ * frame, and its wait spills across frames: measured 1.20 where the duty
+ * cycle was 1.08).
+ *
+ * ⭐ MEASURED AGAINST THE ONLY INDEPENDENT READING THERE IS. Over 810 frames
+ * of a page under 24 busy loops this sums to 0.816 of the wall clock where
+ * CDP's own `TaskDuration` says 1.077; over 2,218 quiet frames, 0.425 where
+ * CDP says 0.441. It is the duty cycle, within a few percent, and it is
+ * still a lower bound (a React commit or a worker delivery that lands after
+ * the loop and before the next frame's begin is in neither reading). The
+ * error runs the safe way: `BUSY_DOWN_GATE_SHARE` can only WITHHOLD a
+ * downshift, so a window measured too low simply behaves as it did before
+ * the gate existed.
+ */
+interface FrameLoopBusy {
+  /** The rAF timestamp this frame began at, as the loop was handed it. */
+  frameStartedAtMs: number;
+  /** The last COMPLETED frame's span, unspent. The sampler runs inside the
+   * subscriber chain, so the newest span it can read is the previous frame's —
+   * the same one-frame lag the motion and post-block verdicts have, and
+   * absorbed by the same 750 ms window. Consumed when it is counted, so no
+   * span is charged twice and a frame the sampler did not see charges none. */
+  lastFrameMs: number;
+  /** Sum over the frames this window counted, against which the window's own
+   * wall time is compared. */
+  windowMs: number;
+}
+
+/** Drop what this window had gathered, the frame in hand included. Called
+ *  wherever the window is dropped, so a rejected window's busy can never be
+ *  charged to the next one — and every measured span is charged EXACTLY once,
+ *  which is what `lastFrameMs` being consumed rather than read means: a
+ *  sampler that missed a frame adds nothing for it instead of adding the
+ *  previous one twice. */
+function dropBusyWindow(busy: FrameLoopBusy): void {
+  busy.windowMs = 0;
+  busy.lastFrameMs = 0;
+}
 
 export interface AdaptiveQualityControllerProps {
   /** True while historical hydration/replay is in flight (cells backfill).
@@ -79,6 +129,35 @@ export default function AdaptiveQualityController({
   const lastFrameAt = useRef(0);
   const maxFrameMs = useRef(0);
   const hydrationSeen = useRef(false);
+  const busy = useRef<FrameLoopBusy>({
+    frameStartedAtMs: 0,
+    lastFrameMs: 0,
+    windowMs: 0,
+  });
+
+  // The bracket belongs to the LOOP, not to this component's place in the
+  // subscriber order: these two run outside every root's render, so the span
+  // does not depend on where the sampler was mounted. Installed once for the
+  // page's life, like the sampler itself. ⚠️ A negative priority on a
+  // `useFrame` would have measured the subscriber chain only — 0.33 of the
+  // wall clock where the duty cycle was 1.08, because most of a loaded
+  // frame's cost is the delay before the callback runs at all.
+  useEffect(() => {
+    const current = busy.current;
+    const stopBefore = addEffect((timestamp: number) => {
+      // The frame's own begin, not this callback's: a task that overran the
+      // vsync boundary delayed the whole frame, and the tier cannot help with
+      // it either.
+      current.frameStartedAtMs = timestamp;
+    });
+    const stopAfter = addAfterEffect(() => {
+      current.lastFrameMs = Math.max(0, performance.now() - current.frameStartedAtMs);
+    });
+    return () => {
+      stopBefore();
+      stopAfter();
+    };
+  }, []);
 
   // Changing the Leva mode is a deliberate user act, so auto -> manual -> auto
   // starts a fresh calibration exactly as reopening the page would. This is
@@ -92,6 +171,7 @@ export default function AdaptiveQualityController({
     frames.current = 0;
     lastAt.current = 0;
     maxFrameMs.current = 0;
+    dropBusyWindow(busy.current);
   }, [mode]);
 
   useFrame(() => {
@@ -110,6 +190,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     if (hydrationActiveRef?.current) {
@@ -117,6 +198,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     if (hydrationSeen.current) {
@@ -132,6 +214,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     if (motionActiveRef?.current) {
@@ -158,6 +241,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     if (recentBlockActiveRef?.current) {
@@ -175,6 +259,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
 
@@ -184,11 +269,14 @@ export default function AdaptiveQualityController({
       lastFrameAt.current = now;
       frames.current = 0;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     frames.current += 1;
     maxFrameMs.current = Math.max(maxFrameMs.current, now - lastFrameAt.current);
     lastFrameAt.current = now;
+    busy.current.windowMs += busy.current.lastFrameMs;
+    busy.current.lastFrameMs = 0;
     const elapsedMs = now - lastAt.current;
     if (elapsedMs < ADAPTIVE_SAMPLE_WINDOW_MS) return;
 
@@ -197,6 +285,7 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = now;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
 
@@ -225,6 +314,11 @@ export default function AdaptiveQualityController({
     // meant 25–49 ms.
     const stalled = maxFrameMs.current > ADAPTIVE_STALL_FRAME_MS;
     const averageFrameMs = elapsedMs / Math.max(1, frames.current);
+    // Whose slowness this window was. A tier step buys GPU time, so a window
+    // the main thread owned may not spend one — the rule and its measurement
+    // live in `adaptiveQuality.ts`.
+    const busyMs = busy.current.windowMs;
+    const mainThreadBound = mainThreadOwnsWindow(busyMs, elapsedMs);
     // The dev counter, on the `__pulseStats()` precedent: what the controller
     // was actually handed, so a live session can be read rather than guessed
     // at. It never affects a number the HUD prints. The ring is a module of
@@ -237,6 +331,8 @@ export default function AdaptiveQualityController({
       meanFrameMs: Number(averageFrameMs.toFixed(2)),
       maxFrameMs: Number(maxFrameMs.current.toFixed(1)),
       stalled,
+      busyMs: Number(busyMs.toFixed(1)),
+      mainThreadBound,
       quality: adaptiveState.current.quality,
       smoothedFrameMs: Number(adaptiveState.current.smoothedFrameMs.toFixed(2)),
       slowEvidenceMs: Math.round(adaptiveState.current.slowEvidenceMs),
@@ -246,16 +342,23 @@ export default function AdaptiveQualityController({
       frames.current = 0;
       lastAt.current = now;
       maxFrameMs.current = 0;
+      dropBusyWindow(busy.current);
       return;
     }
     const previous = adaptiveState.current;
-    const next = advanceAdaptiveQuality(previous, averageFrameMs, elapsedMs);
+    const next = advanceAdaptiveQuality(
+      previous,
+      averageFrameMs,
+      elapsedMs,
+      mainThreadBound,
+    );
     adaptiveState.current = next;
     if (next.quality !== previous.quality) setAdaptiveQuality(next.quality);
     if (next.locked !== previous.locked) setAdaptiveQualityLocked(next.locked);
     frames.current = 0;
     lastAt.current = now;
     maxFrameMs.current = 0;
+    dropBusyWindow(busy.current);
   });
 
   return null;

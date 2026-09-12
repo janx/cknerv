@@ -1784,18 +1784,20 @@ not an expensive topology rebuild.
 - Main `OrbitControls` owns background orbit gestures.
 - `CellPicker` owns Cell click resolution but suspends its hover probes while
   the camera is in motion — a drag, the damping tail OrbitControls runs after
-  a release (`change` keeps firing every frame after `end`, for ~1–1.8 s at
-  `dampingFactor 0.08`), or a route-camera flight. Design note: the hover
-  affordance (cursor, focus envelope) is therefore absent while the scene is
-  still moving after a fling and returns on the first pointer move after it
-  settles. Presses and clicks are never suspended: R3F takes a click's target
+  a release, or a route-camera flight. The window opens on the controls' own
+  `change` and closes on projected drift (§11.3), so the tail costs the picker
+  three still frames rather than the 1.7–2.5 s the event latch used to run
+  for. Design note: the hover affordance (cursor, focus envelope) is therefore
+  absent while the scene is still visibly moving after a fling and returns as
+  soon as the drift is spent. Presses and clicks are never suspended: R3F takes a click's target
   from the pointer-down raycast and reports a click that hit nothing as a
   miss, so a click on a Cell during motion still selects it and
   `onPointerMissed` behaves exactly as at rest.
 - Picker and adaptive-quality motion is detected in `App`: `changeOrbit-
   Interaction` latches "camera changed" (`noteOrbitCameraChange`),
-  `CameraMotionSentinel` settles the latch once per frame after the controls'
-  update (`settleOrbitCameraFrame`), and `ConsensusRouteCamera` publishes
+  `CameraMotionSentinel` settles the latch against the frame's projected drift
+  once per frame after the controls' update (`settleOrbitCameraFrame`), and
+  `ConsensusRouteCamera` publishes
   `automationActiveRef` while a transition, release hold, or queued
   transition is live. The picker consumes the OR of the three
   (`orbitPickingSuspendedRef`); the adaptive-quality sampler consumes the
@@ -1838,6 +1840,40 @@ and quality transitions must not change the selected record.
 Camera damping, pointer interaction, projected DOM anchors, and performance
 sampling use raw frame time so they remain responsive while semantic animation
 is paused. Scene-semantic transitions use simulation time.
+
+The motion window closes on the PICTURE, not on the controller's event tail.
+`OrbitControls` reports a `change` while its damped pose moves more than 1e-3
+world units or radians in an update, which at the default pose is 0.007 CSS
+pixels — so the latch alone kept the window open for 104–151 frames
+(1.7–2.5 s) after every release, the last half of them under a tenth of a
+pixel a frame, with Cell picking dead and the adaptive sampler blind for the
+whole of it. The latch still OPENS the window: one pixel of pointer travel is
+intent, and both consumers must yield to it on the frame it arrives. What
+CLOSES it is projected drift — `CameraMotionSentinel` measures each frame's
+pose change in CSS pixels at the orbit target's depth (`poseDriftPx`, the same
+reading the selected-Cell leaders settle on, §5.3) and closes the window after
+`ORBIT_CAMERA_SETTLE_FRAMES` (3) consecutive frames at or under
+`ORBIT_CAMERA_REST_DRIFT_PX` (1). Measured against the controls' own damping
+curve (`dampingFactor` 0.08, 1,158 px per radian at the default pose), a
+release of 0.02 / 0.1 / 0.3 / 1.0 radians closes at frame 19 / 38 / 51 / 66
+instead of 104 / 122 / 135 / 151 — 3.2x to 5.5x sooner, and a hand produces
+the weak end of that range, since a radian of pending orbit is a thousand
+pixels of pointer travel inside one frame. The reading is conservative where
+it could have been exact: an orbit moves the camera ON a sphere, so
+`poseDriftPx` counts its travel and the rotation that came with it, about
+twice the screen motion a reader sees, and the window therefore holds ~8
+frames longer than a pure pixel threshold would. That error keeps the window
+OPEN, which is the safe side of a rule that hands picking back.
+
+Two properties make one threshold enough here, where the leaders needed two.
+A damped tail decays geometrically, so drift that has fallen under a pixel
+cannot climb back over one on its own — rest, once declared, is not withdrawn
+by the tail. And a held gesture is a motion window for its whole life
+regardless of drift (`active`), so a hand resting mid-drag does not resume
+picking under itself. Correctness of the hit index is not this window's job in
+either case: the picker re-validates against its own drift envelope (1.5 px)
+on the first probe it answers, which is exactly the state closing early hands
+it.
 
 ## 12. Clock and Determinism
 
@@ -2033,13 +2069,55 @@ frame moves a 45-frame window's mean by 0.3 ms). A restart — the replay rule
 — would zero stability and evidence on every drag: a hand on the camera every
 few seconds could then never lock during calibration, and after the lock
 could shield a tier the machine cannot carry for as long as it kept moving.
-Motion windows are bounded by construction: the damping tail ends ~100–130
-frames after a release of any strength (`dampingFactor` 0.08 against
-OrbitControls' 1e-3 change threshold), and a route flight settles within
-~1.4 s plus a 0.32 s release hold and at most a 0.52 s queued entry delay.
-Only a hand that never lets go keeps the sampler waiting, which is that
-user's choice and not a fault to time out — the page simply keeps the tier it
-has.
+Motion windows are bounded by construction: the window closes three frames
+after the camera's projected drift falls to a pixel a frame — frame 19 to 66
+after a release, depending on its strength (§11.3), where the controls' own
+`change` latch ran for 104 to 151 — and a route flight settles within ~1.4 s
+plus a 0.32 s release hold and at most a 0.52 s queued entry delay. Only a
+hand that never lets go keeps the sampler waiting, which is that user's choice
+and not a fault to time out — the page simply keeps the tier it has.
+
+A fifth rule acts on the DECISION instead of on the window. A tier step lowers
+GPU cost and nothing else — raster density, DPR, ambient counts — so a window
+whose frames were long because the MAIN THREAD was busy is not evidence that
+this tier is too expensive: stepping down would leave the same main-thread
+cost on the next frame, and the page would have given up a tier and kept its
+frame time. The sampler therefore accumulates main-thread busy per frame
+beside the frame interval, and a window whose busy exceeds
+`BUSY_DOWN_GATE_SHARE` (60 %) of its own wall clock may not step the tier
+DOWN. It may still lock it, still carry its average into the exponential
+mean, and — were there an upward move in this controller — still take it: the
+gate is one-directional by construction. The evidence is HELD rather than
+dropped, which is what separates this rule from the four above: the
+slow-evidence clock does not run while the main thread owns the frames, so the
+first window that really is the renderer's spends the tier from where the
+evidence stood, and a fast window still decays it at the usual double rate.
+Measured 2026-09-12 with a 24-thread competitor beside the page (load 63–71):
+AUTO walked High → Med → Low inside 70 s of idle, on windows whose mean frame
+was 51 ms and whose main thread was busy for 80 % of the wall clock at the
+window scale (48 of 50 windows past the line) — the case the gate now
+refuses. Left quiet, the same page reads 41 % a window and the windows that
+do cross the line gate nothing, because a 16.7 ms window carries no slow
+evidence to hold: the rule bites only on a window that is BOTH slow and the
+main thread's, which is the safety property a real GPU limit needs.
+
+The busy reading runs from each frame's own begin to the end of the R3F loop:
+`addEffect` is handed the rAF timestamp — before any task that delayed the
+callback — and `addAfterEffect` runs when the last root has rendered,
+`gl.render` included. One clock read a frame, no allocation, and read by the
+sampler one frame late exactly as the motion verdict is. Measured against the
+only independent reading there is, it IS the duty cycle: over 810 frames under
+a 24-thread competitor it sums to 0.816 of the wall clock where CDP's
+`TaskDuration` says 1.077, and over 2,218 quiet frames 0.425 where CDP says
+0.441. Two cheaper shapes were measured and rejected — the subscriber chain
+alone (`useFrame` at a negative priority) read 0.33 against that same 1.08,
+because most of a loaded frame's cost is the delay before the callback runs at
+all; and a MessageChannel hop read 1.20, since its wait spills into the next
+frame, and it allocates a message an animation frame. What the chosen reading
+still misses is a React commit or a worker delivery that lands after the loop
+and before the next frame's begin, so it stays a LOWER BOUND — and the error
+runs the safe way, since the gate can only WITHHOLD a step: a window measured
+too low behaves exactly as it did before the gate existed.
 
 ## 14. Capacity and Resource Budgets
 
