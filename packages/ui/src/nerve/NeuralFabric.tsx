@@ -57,6 +57,7 @@ import {
   type FabricSlotRange,
 } from './fabricSlots';
 import { planFabricCohorts, type FabricCohortSlice } from './fabricCohorts';
+import type { FabricWholeReconcile } from './fabricLandingQueue';
 import {
   enableFabricLifecycleMaterial,
   setFabricTrunkThreshold,
@@ -322,6 +323,17 @@ export interface NeuralFabricHandles {
    *  NOT emit — the actual draw happens in `emitFabric` so that
    *  growth/decay can animate frame-by-frame. */
   setFabric(graph: PassiveSelection, cells: ReadonlyMap<number, Cell>, now: number): void;
+  /** The same reconcile in the three pieces the landing drain steps it in:
+   *  open the scratch, classify a slice of the new selection against the
+   *  persistent slots, then the one atomic pass that marks deaths and admits
+   *  births. `setFabric` is these three on one stack. */
+  beginSetFabric(
+    graph: PassiveSelection,
+    cells: ReadonlyMap<number, Cell>,
+    now: number,
+  ): FabricWholeReconcile;
+  stepSetFabric(reconcile: FabricWholeReconcile, edges: number): boolean;
+  commitSetFabric(reconcile: FabricWholeReconcile): void;
   /** Emit the fabric layer for the current frame. Walks the edge
    *  state map, applies growth/decay math, commits the buffer.
    *  Gated internally: returns immediately when nothing is dirty
@@ -1997,6 +2009,287 @@ export default function NeuralFabric({
       return slotted ? 'slotted' : 'unslotted';
     };
 
+    /**
+     * Open a whole reconcile.
+     *
+     * The two things that belong to the SELECTION rather than to the diff
+     * happen here — the width tier, and the flush of whatever a previous
+     * oversized diff left staggered — and everything after them is scratch
+     * over an immutable edge list, so the classifying walk can be cut
+     * anywhere. If the landing under it is superseded the scratch is dropped,
+     * not repaired: these two are the only marks it leaves, and both are what
+     * the reconcile replacing it would do first anyway.
+     */
+    const beginWholeReconcile = (
+      graph: PassiveSelection,
+      cells: ReadonlyMap<number, Cell>,
+      now: number,
+    ): FabricWholeReconcile => {
+      // The tier belongs to the selection, not to the diff: it lands even
+      // when nothing below moved an edge (a re-mount rehydration, or an
+      // identical selection whose arbor weights were re-derived).
+      applyTrunkTier(graph);
+      const states = edgeStatesRef.current;
+      const reconcile: FabricWholeReconcile = {
+        graph,
+        cells,
+        now,
+        scanned: 0,
+        liveKeys: new Set<string>(),
+        addCandidates: new Map<string, NeighborEdge>(),
+        stable: 0,
+        revived: 0,
+        flushAdmitted: 0,
+        overflowed: false,
+        slotOwnershipChanged: false,
+        // Boot guard for the stagger in the commit: a first population from
+        // an empty set applies in one pass instead of staggered cohorts.
+        wasPopulated: states.size > 0,
+      };
+      // A NEW authoritative graph supersedes any still-queued cohorts of
+      // the previous one, and the walk below must run against COMPLETE
+      // states. Flush first: deferred adds are admitted as fully-grown
+      // stable edges (their grow-in moment has passed — no animation
+      // reset, just one incremental snap write each); deferred kills are
+      // simply dropped, because every queued-kill edge is still alive in
+      // `states`, so the commit re-derives its fate against the NEW graph —
+      // it dies at `now` if still absent, or stays quietly stable if it
+      // returned (better than a kill+revive alpha pop).
+      const pendingFlush = pendingCohortsRef.current;
+      if (pendingFlush) {
+        pendingCohortsRef.current = null;
+        const grownBornAt = now - GROWTH_MS / 1000;
+        for (
+          let cohortIdx = pendingFlush.next;
+          cohortIdx < pendingFlush.cohorts.length;
+          cohortIdx += 1
+        ) {
+          const slice = pendingFlush.cohorts[cohortIdx];
+          for (let i = slice.addStart; i < slice.addEnd; i += 1) {
+            const { key, edge } = pendingFlush.adds[i];
+            // growEdges may have raced the key in; keep fresher state.
+            if (states.has(key)) continue;
+            const admitted = admitFabricEdge(
+              key,
+              edge,
+              pendingFlush.cells,
+              grownBornAt,
+            );
+            if (admitted === 'missing-cell') continue;
+            reconcile.flushAdmitted += 1;
+            if (admitted === 'unslotted') reconcile.overflowed = true;
+            else renderOrderRef.current.push(key);
+          }
+        }
+      }
+      return reconcile;
+    };
+
+    /**
+     * Pass 1, a slice at a time: walk the new edges, collecting fresh ones as
+     * ADD CANDIDATES (admitted in the commit) and reviving any that were
+     * dying. Surviving edges keep their slot untouched, so a per-block
+     * reconciliation rides the incremental path — no structural full walk, no
+     * slot reassignment.
+     *
+     * The two writes it does make are repairs and are made in place, not
+     * deferred: a revival clears a death the reap queue is already counting
+     * down (deferring it would let the edge be reaped out from under the
+     * commit), and a slot recovered after a capacity clip is a hole filled.
+     * Neither depends on the reconcile completing.
+     */
+    const stepWholeReconcile = (
+      reconcile: FabricWholeReconcile,
+      edges: number,
+    ): boolean => {
+      const states = edgeStatesRef.current;
+      const { graph, cells, now, liveKeys, addCandidates } = reconcile;
+      const end = Math.min(
+        graph.edges.length,
+        reconcile.scanned + Math.max(1, edges),
+      );
+      for (let i = reconcile.scanned; i < end; i += 1) {
+        const e = graph.edges[i];
+        const key = fabricEdgeKey(e.from, e.to);
+        liveKeys.add(key);
+        const existing = states.get(key);
+        if (existing) {
+          // Stable edge: leave alone. Revival of a dying edge:
+          // clear dyingAt and fast-forward bornAt to "growth done"
+          // so length stays at full. Alpha snaps from
+          // (1 - decayProgress) up to 1 — this is an upward pop on
+          // a previously-faded edge, much less jarring than the
+          // disappear/reappear it replaces. Revival is rare (only
+          // happens when a cell membership oscillates within
+          // DECAY_MS), so we don't bother smoothing it further.
+          const revived = existing.dyingAt !== null;
+          if (revived) {
+            existing.dyingAt = null;
+            existing.deathKind = null;
+            existing.deadEnd = null;
+            existing.bornAt = now - GROWTH_MS / 1000;
+            reconcile.revived += 1;
+          } else {
+            reconcile.stable += 1;
+          }
+          if (!slotByKeyRef.current.has(key)) {
+            reconcile.slotOwnershipChanged = true;
+            if (!recoverExistingFabricSlot(key, existing)) {
+              reconcile.overflowed = true;
+            }
+          } else if (revived) {
+            // One static-record rewrite snaps the slot back to stable.
+            writeLifecycleSlot(key, existing);
+          }
+          continue;
+        }
+        // A duplicate graph edge would have found the state just created
+        // by its first occurrence on the historical inline path — count
+        // it stable exactly as before.
+        if (addCandidates.has(key)) {
+          reconcile.stable += 1;
+          continue;
+        }
+        const a = cells.get(e.from);
+        const c = cells.get(e.to);
+        if (!a || !c) continue;
+        addCandidates.set(key, e);
+      }
+      reconcile.scanned = end;
+      return end >= graph.edges.length;
+    };
+
+    /**
+     * Pass 2 and the admissions, in one uninterruptible piece: this is the
+     * only pass that changes what the fabric draws, and half of a compaction
+     * is not a smaller compaction, it is a wrong fabric.
+     */
+    const commitWholeReconcile = (reconcile: FabricWholeReconcile): void => {
+      const {
+        graph, cells, now, liveKeys, addCandidates, wasPopulated,
+      } = reconcile;
+      const states = edgeStatesRef.current;
+      let statsAdded = 0;
+      let statsDying = 0;
+      // Pass 2: any state not in the new graph is a DYING CANDIDATE for
+      // the 'gc' fade — reconciliation, NOT a real chain cell death
+      // (those are driven per-edge via killEdges with kind 'death',
+      // which retracts + flashes). Idempotent: already-dying edges keep
+      // their original dyingAt/deathKind, so the clock doesn't reset on
+      // repeated setFabric calls during the same death window.
+      const dyingCandidates: { key: string; st: EdgeState }[] = [];
+      for (const [key, st] of states) {
+        if (liveKeys.has(key)) continue;
+        if (st.dyingAt === null) dyingCandidates.push({ key, st });
+      }
+      // Oversized churn (composition/reorg whole-graph replacement) is
+      // staggered: a threshold prefix applies now, the remainder queues
+      // as delayed cohorts the emitFabric pump admits. At or below the
+      // threshold `plan` is null and every candidate applies here,
+      // byte-identical to the historical path.
+      const plan = wasPopulated
+        ? planFabricCohorts(
+          addCandidates.size,
+          dyingCandidates.length,
+          now,
+          {
+            staggerThreshold: LIVE.cell.fabricStaggerThreshold,
+            cohortSize: LIVE.cell.fabricCohortSize,
+            cohortIntervalS: LIVE.cell.fabricCohortInterval,
+          },
+        )
+        : null;
+      const immediateAdds = plan ? plan.immediateAdds : addCandidates.size;
+      const immediateKills = plan
+        ? plan.immediateKills
+        : dyingCandidates.length;
+      let deferredAdds: PendingFabricAdd[] | null = null;
+      let addIndex = 0;
+      for (const [key, e] of addCandidates) {
+        if (addIndex < immediateAdds) {
+          const admitted = admitFabricEdge(key, e, cells, now);
+          if (admitted !== 'missing-cell') {
+            statsAdded += 1;
+            if (admitted === 'unslotted') reconcile.overflowed = true;
+            else renderOrderRef.current.push(key);
+          }
+        } else {
+          (deferredAdds ??= []).push({ key, edge: e });
+          statsAdded += 1;
+        }
+        addIndex += 1;
+      }
+      let deferredKills: string[] | null = null;
+      for (let i = 0; i < dyingCandidates.length; i += 1) {
+        const { key, st } = dyingCandidates[i];
+        if (i < immediateKills) {
+          st.dyingAt = now;
+          st.deathKind = 'gc';
+          statsDying += 1;
+          writeLifecycleSlot(key, st);
+          queueReap(key, st);
+        } else {
+          (deferredKills ??= []).push(key);
+          statsDying += 1;
+        }
+      }
+      // The boot record's nerve-growth deadline: a first population from an
+      // empty set is THE boot cohort — admitted in one pass just above, all
+      // bornAt=now, fully grown one GROWTH_MS later. Later builds are the
+      // organism living (block churn, a cold server's minutes of curated
+      // refill) and must not stretch the boot readout; the gate is inert
+      // once the line closes, and this report is scoped to keep it so.
+      if (!wasPopulated && statsAdded > 0) {
+        reportBootNerveGrowth(now + GROWTH_MS / 1000);
+      }
+      if (plan && (deferredAdds || deferredKills)) {
+        pendingCohortsRef.current = {
+          cells,
+          adds: deferredAdds ?? [],
+          kills: deferredKills ?? [],
+          cohorts: plan.cohorts,
+          next: 0,
+        };
+      }
+      fabricStats.observeDiff({
+        atSec: now,
+        kind: 'setFabric',
+        added: statsAdded,
+        revived: reconcile.revived,
+        dying: statsDying,
+        stable: reconcile.stable,
+        totalStates: states.size,
+      });
+      // Identical selection over no pending backlog: nothing moved, the
+      // settled buffer stays. (flushAdmitted is always 0 when no cohorts
+      // were queued, so the historical guard is unchanged there.)
+      if (
+        statsAdded === 0 && reconcile.revived === 0 && statsDying === 0
+        && reconcile.flushAdmitted === 0
+        && !reconcile.slotOwnershipChanged
+      ) return;
+      emitDirtyRef.current = true;
+      if (reconcile.overflowed) {
+        // The persistent slot space cannot absorb this diff. Re-establish
+        // the clip-priority order (current edges first, afterimages last)
+        // and let a compacting full walk reassign every slot. Deferred
+        // candidates have no state yet — keep them out of the rebuilt
+        // order (the pump pushes each key exactly once on admission;
+        // including them here would leave a stateless entry that turns
+        // into a permanent double-draw duplicate after admission).
+        const orderEdges = deferredAdds
+          ? graph.edges.filter(
+            (e) => states.has(fabricEdgeKey(e.from, e.to)),
+          )
+          : graph.edges;
+        const { order } = orderFabricStateKeys(orderEdges, states.keys());
+        renderOrderRef.current = order;
+        renderOrderTombstonesRef.current = 0;
+        passivePositionsDirtyRef.current = true;
+      }
+      enforceEdgeStateCeiling();
+    };
+
     const handles: NeuralFabricHandles = {
       setTrunkTier(graph) {
         applyTrunkTier(graph);
@@ -2039,228 +2332,26 @@ export default function NeuralFabric({
           * ROUTE_HOP_PULSE_WIDTH_SCALE
           * safeScale;
       },
+      beginSetFabric(graph, cells, now) {
+        return beginWholeReconcile(graph, cells, now);
+      },
+      stepSetFabric(reconcile, edges) {
+        return stepWholeReconcile(reconcile, edges);
+      },
+      commitSetFabric(reconcile) {
+        commitWholeReconcile(reconcile);
+      },
       setFabric(graph, cells, now) {
-        // The tier belongs to the selection, not to the diff: it lands even
-        // when nothing below moved an edge (a re-mount rehydration, or an
-        // identical selection whose arbor weights were re-derived).
-        applyTrunkTier(graph);
-        const states = edgeStatesRef.current;
-        // Boot guard for the stagger below: a first population from an
-        // empty set applies in one pass instead of staggered cohorts.
-        const wasPopulated = states.size > 0;
-        let overflowed = false;
-        let existingSlotOwnershipChanged = false;
-        // A NEW authoritative graph supersedes any still-queued cohorts of
-        // the previous one, and the diff below must run against COMPLETE
-        // states. Flush first: deferred adds are admitted as fully-grown
-        // stable edges (their grow-in moment has passed — no animation
-        // reset, just one incremental snap write each); deferred kills are
-        // simply dropped, because every queued-kill edge is still alive in
-        // `states`, so pass 2 re-derives its fate against the NEW graph —
-        // it dies at `now` if still absent, or stays quietly stable if it
-        // returned (better than a kill+revive alpha pop).
-        let flushAdmitted = 0;
-        const pendingFlush = pendingCohortsRef.current;
-        if (pendingFlush) {
-          pendingCohortsRef.current = null;
-          const grownBornAt = now - GROWTH_MS / 1000;
-          for (
-            let cohortIdx = pendingFlush.next;
-            cohortIdx < pendingFlush.cohorts.length;
-            cohortIdx += 1
-          ) {
-            const slice = pendingFlush.cohorts[cohortIdx];
-            for (let i = slice.addStart; i < slice.addEnd; i += 1) {
-              const { key, edge } = pendingFlush.adds[i];
-              // growEdges may have raced the key in; keep fresher state.
-              if (states.has(key)) continue;
-              const admitted = admitFabricEdge(
-                key,
-                edge,
-                pendingFlush.cells,
-                grownBornAt,
-              );
-              if (admitted === 'missing-cell') continue;
-              flushAdmitted += 1;
-              if (admitted === 'unslotted') overflowed = true;
-              else renderOrderRef.current.push(key);
-            }
-          }
+        // The whole thing on one stack — the rehydration a remount does, the
+        // labs, and every test that hands the layer a graph. The drain takes
+        // the three pieces apart so the classifying walk can be cut by a
+        // frame's budget; nothing else has a frame to be cut by.
+        const reconcile = beginWholeReconcile(graph, cells, now);
+        while (!stepWholeReconcile(reconcile, graph.edges.length)) {
+          // One pass over the whole list; the loop is the contract, not a
+          // prediction about how the scan chooses to divide it.
         }
-        const liveKeys = new Set<string>();
-        let statsAdded = 0;
-        let statsRevived = 0;
-        let statsStable = 0;
-        let statsDying = 0;
-        // Two-pass diff over PERSISTENT slots. Pass 1: walk new edges,
-        // collecting fresh ones as ADD CANDIDATES (admitted below — all of
-        // them synchronously on the historical path, or a threshold prefix
-        // now + the rest in delayed cohorts), and revive any that were
-        // dying. Surviving edges keep their slot untouched, so a per-block
-        // reconciliation rides the incremental path — no structural full
-        // walk, no slot reassignment.
-        const addCandidates = new Map<string, NeighborEdge>();
-        for (const e of graph.edges) {
-          const key = fabricEdgeKey(e.from, e.to);
-          liveKeys.add(key);
-          const existing = states.get(key);
-          if (existing) {
-            // Stable edge: leave alone. Revival of a dying edge:
-            // clear dyingAt and fast-forward bornAt to "growth done"
-            // so length stays at full. Alpha snaps from
-            // (1 - decayProgress) up to 1 — this is an upward pop on
-            // a previously-faded edge, much less jarring than the
-            // disappear/reappear it replaces. Revival is rare (only
-            // happens when a cell membership oscillates within
-            // DECAY_MS), so we don't bother smoothing it further.
-            const revived = existing.dyingAt !== null;
-            if (revived) {
-              existing.dyingAt = null;
-              existing.deathKind = null;
-              existing.deadEnd = null;
-              existing.bornAt = now - GROWTH_MS / 1000;
-              statsRevived += 1;
-            } else {
-              statsStable += 1;
-            }
-            if (!slotByKeyRef.current.has(key)) {
-              existingSlotOwnershipChanged = true;
-              if (!recoverExistingFabricSlot(key, existing)) overflowed = true;
-            } else if (revived) {
-              // One static-record rewrite snaps the slot back to stable.
-              writeLifecycleSlot(key, existing);
-            }
-            continue;
-          }
-          // A duplicate graph edge would have found the state just created
-          // by its first occurrence on the historical inline path — count
-          // it stable exactly as before.
-          if (addCandidates.has(key)) {
-            statsStable += 1;
-            continue;
-          }
-          const a = cells.get(e.from);
-          const c = cells.get(e.to);
-          if (!a || !c) continue;
-          addCandidates.set(key, e);
-        }
-        // Pass 2: any state not in the new graph is a DYING CANDIDATE for
-        // the 'gc' fade — reconciliation, NOT a real chain cell death
-        // (those are driven per-edge via killEdges with kind 'death',
-        // which retracts + flashes). Idempotent: already-dying edges keep
-        // their original dyingAt/deathKind, so the clock doesn't reset on
-        // repeated setFabric calls during the same death window.
-        const dyingCandidates: { key: string; st: EdgeState }[] = [];
-        for (const [key, st] of states) {
-          if (liveKeys.has(key)) continue;
-          if (st.dyingAt === null) dyingCandidates.push({ key, st });
-        }
-        // Oversized churn (composition/reorg whole-graph replacement) is
-        // staggered: a threshold prefix applies now, the remainder queues
-        // as delayed cohorts the emitFabric pump admits. At or below the
-        // threshold `plan` is null and every candidate applies here,
-        // byte-identical to the historical path.
-        const plan = wasPopulated
-          ? planFabricCohorts(
-            addCandidates.size,
-            dyingCandidates.length,
-            now,
-            {
-              staggerThreshold: LIVE.cell.fabricStaggerThreshold,
-              cohortSize: LIVE.cell.fabricCohortSize,
-              cohortIntervalS: LIVE.cell.fabricCohortInterval,
-            },
-          )
-          : null;
-        const immediateAdds = plan ? plan.immediateAdds : addCandidates.size;
-        const immediateKills = plan
-          ? plan.immediateKills
-          : dyingCandidates.length;
-        let deferredAdds: PendingFabricAdd[] | null = null;
-        let addIndex = 0;
-        for (const [key, e] of addCandidates) {
-          if (addIndex < immediateAdds) {
-            const admitted = admitFabricEdge(key, e, cells, now);
-            if (admitted !== 'missing-cell') {
-              statsAdded += 1;
-              if (admitted === 'unslotted') overflowed = true;
-              else renderOrderRef.current.push(key);
-            }
-          } else {
-            (deferredAdds ??= []).push({ key, edge: e });
-            statsAdded += 1;
-          }
-          addIndex += 1;
-        }
-        let deferredKills: string[] | null = null;
-        for (let i = 0; i < dyingCandidates.length; i += 1) {
-          const { key, st } = dyingCandidates[i];
-          if (i < immediateKills) {
-            st.dyingAt = now;
-            st.deathKind = 'gc';
-            statsDying += 1;
-            writeLifecycleSlot(key, st);
-            queueReap(key, st);
-          } else {
-            (deferredKills ??= []).push(key);
-            statsDying += 1;
-          }
-        }
-        // The boot record's nerve-growth deadline: a first population from an
-        // empty set is THE boot cohort — admitted in one pass just above, all
-        // bornAt=now, fully grown one GROWTH_MS later. Later builds are the
-        // organism living (block churn, a cold server's minutes of curated
-        // refill) and must not stretch the boot readout; the gate is inert
-        // once the line closes, and this report is scoped to keep it so.
-        if (!wasPopulated && statsAdded > 0) {
-          reportBootNerveGrowth(now + GROWTH_MS / 1000);
-        }
-        if (plan && (deferredAdds || deferredKills)) {
-          pendingCohortsRef.current = {
-            cells,
-            adds: deferredAdds ?? [],
-            kills: deferredKills ?? [],
-            cohorts: plan.cohorts,
-            next: 0,
-          };
-        }
-        fabricStats.observeDiff({
-          atSec: now,
-          kind: 'setFabric',
-          added: statsAdded,
-          revived: statsRevived,
-          dying: statsDying,
-          stable: statsStable,
-          totalStates: states.size,
-        });
-        // Identical selection over no pending backlog: nothing moved, the
-        // settled buffer stays. (flushAdmitted is always 0 when no cohorts
-        // were queued, so the historical guard is unchanged there.)
-        if (
-          statsAdded === 0 && statsRevived === 0 && statsDying === 0
-          && flushAdmitted === 0
-          && !existingSlotOwnershipChanged
-        ) return;
-        emitDirtyRef.current = true;
-        if (overflowed) {
-          // The persistent slot space cannot absorb this diff. Re-establish
-          // the clip-priority order (current edges first, afterimages last)
-          // and let a compacting full walk reassign every slot. Deferred
-          // candidates have no state yet — keep them out of the rebuilt
-          // order (the pump pushes each key exactly once on admission;
-          // including them here would leave a stateless entry that turns
-          // into a permanent double-draw duplicate after admission).
-          const orderEdges = deferredAdds
-            ? graph.edges.filter(
-              (e) => states.has(fabricEdgeKey(e.from, e.to)),
-            )
-            : graph.edges;
-          const { order } = orderFabricStateKeys(orderEdges, states.keys());
-          renderOrderRef.current = order;
-          renderOrderTombstonesRef.current = 0;
-          passivePositionsDirtyRef.current = true;
-        }
-        enforceEdgeStateCeiling();
+        commitWholeReconcile(reconcile);
       },
       growEdges(edges, cells, bornAtByKey, dirByKey) {
         // `now` is read from the shared sim clock so callers don't have

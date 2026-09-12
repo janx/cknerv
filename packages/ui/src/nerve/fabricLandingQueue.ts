@@ -32,6 +32,7 @@
 import type { Cell } from '@cknerv/types';
 import type { NeighborEdge, PassiveSelection } from '../geometry/neighborGraph';
 import type { DeathKind } from './fabricEdgeRender';
+import { FRAME_HEAVY_BUDGET_MS } from './frameBudget';
 import {
   planSelectionDeltaUpdate,
   selectionStrayEdgeKeys,
@@ -62,6 +63,13 @@ export const FABRIC_LANDING_GROW_CHUNK = 256;
  *  confirmed), so the reconcile prunes strays rather than re-admitting. */
 export const FABRIC_LANDING_RECONCILE_EVERY = 16;
 
+/** Edges of a whole reconcile's classifying scan per step. A scanned edge is
+ *  a key built, a Set insert and one map lookup — a fraction of a grow's
+ *  cost — so the quantum is twice {@link FABRIC_LANDING_GROW_CHUNK} and a
+ *  12,000-Cell stage's 8,000 edges become sixteen steps the budget is read
+ *  between, instead of one 4–5 ms walk no frame could interrupt. */
+export const FABRIC_RECONCILE_SCAN_CHUNK = 512;
+
 const NO_EDGES: readonly NeighborEdge[] = [];
 
 /** Wall-time budget for one drain: the frame-fraction of the last frame
@@ -77,6 +85,73 @@ export function fabricLandingBudgetMs(lastFrameIntervalMs: number): number {
     FABRIC_LANDING_BUDGET_MS,
     frameMs * FABRIC_LANDING_BUDGET_FRAME_FRACTION,
   );
+}
+
+/**
+ * One whole reconcile in progress, declared here because the DRAIN owns its
+ * lifetime: the drain opens it, carries it across frames and drops it when the
+ * landing under it is superseded. Only the fabric reads the fields — the queue
+ * reads `scanned` and the selection's length, and nothing else.
+ *
+ * Everything in it is scratch over an immutable input. The scan classifies
+ * `graph.edges` against the persistent slots and writes its findings HERE; the
+ * commit is the only pass that decides a death or admits a birth. So an
+ * abandoned scratch costs the fabric nothing but the repairs the scan made in
+ * passing (a revival, a slot recovered after a capacity clip), which are
+ * repairs either way and which the reconcile replacing it would make again.
+ */
+export interface FabricWholeReconcile {
+  /** The authoritative selection being applied — immutable, so the scan may
+   *  be cut anywhere in it. */
+  readonly graph: PassiveSelection;
+  /** The staged map of the build that published the selection. */
+  readonly cells: ReadonlyMap<number, Cell>;
+  /** Sim seconds the reconcile OPENED at. Every state it writes carries this
+   *  clock, so a reconcile spread over frames still lands one moment. */
+  readonly now: number;
+  /** Edges of `graph.edges` classified so far. */
+  scanned: number;
+  /** Keys the new selection holds — the commit's membership test. */
+  readonly liveKeys: Set<string>;
+  /** Fresh edges in first-seen order: the commit's admission list. */
+  readonly addCandidates: Map<string, NeighborEdge>;
+  /** Existing edges the scan left untouched, and dying ones it brought back. */
+  stable: number;
+  revived: number;
+  /** Edges admitted by the flush of a previous reconcile's staggered
+   *  remainder, which the opening does before anything is classified. */
+  flushAdmitted: number;
+  /** The slot space could not absorb an admission or a recovery: the commit
+   *  ends in a compacting full walk. */
+  overflowed: boolean;
+  /** An existing edge was found without a slot, so the drawn order moved. */
+  slotOwnershipChanged: boolean;
+  /** Whether the fabric held any state when the reconcile opened: a first
+   *  population is THE boot cohort and is never staggered. */
+  readonly wasPopulated: boolean;
+}
+
+/**
+ * What to promise the frame's heavy-work ledger before draining.
+ *
+ * Every item in this queue but one is a chunked walk whose last cost predicts
+ * its next, and that is what the drain has always asked with. A WHOLE
+ * reconcile is a different animal: its atomic pass walks every state the
+ * fabric holds and admits everything the selection added, and the last grow
+ * chunk's three milliseconds predict nothing about it — which is how a 25 ms
+ * frame came to be admitted on a 3 ms promise. Asking for a whole frame's
+ * heavy budget instead is the honest estimate: the reconcile lands on a frame
+ * nothing else has claimed, or, after three frames held, on one it shares —
+ * which is what the starvation escape is for.
+ */
+export function fabricLandingEstimateMs(
+  queue: FabricLandingQueue,
+  lastDrainMs: number,
+): number {
+  const last = Number.isFinite(lastDrainMs) && lastDrainMs > 0 ? lastDrainMs : 0;
+  return queue.items[0]?.delta === null
+    ? Math.max(last, FRAME_HEAVY_BUDGET_MS)
+    : last;
 }
 
 /** The fabric handles a drain addresses — a structural subset of
@@ -95,11 +170,19 @@ export interface FabricLandingHandles {
     kind: DeathKind,
     deadEndByKey?: Map<string, 'from' | 'to'>,
   ): void;
-  setFabric(
+  /** Open a whole reconcile: flush any staggered remainder, publish the
+   *  selection's width tier, and hand back the scratch the scan fills. */
+  beginSetFabric(
     graph: PassiveSelection,
     cells: ReadonlyMap<number, Cell>,
     now: number,
-  ): void;
+  ): FabricWholeReconcile;
+  /** Classify at most `edges` more of the new selection against the persistent
+   *  slots. True once the scan has reached the end of the selection. */
+  stepSetFabric(reconcile: FabricWholeReconcile, edges: number): boolean;
+  /** Mark what the selection dropped and admit what it added — one pass, and
+   *  the only one that changes what the fabric draws. */
+  commitSetFabric(reconcile: FabricWholeReconcile): void;
   collectLiveEdgeKeys(): string[];
 }
 
@@ -125,9 +208,11 @@ export interface FabricLandingItem {
 
 /** Where the head item stands.
  *  - `open` — nothing applied yet (kills, or the whole reconcile, come next)
+ *  - `scan` — a whole reconcile's classifying walk, at `reconcile.scanned`
+ *  - `commit` — that walk is done and its one atomic pass is next
  *  - `grow` — kills done, grows in progress at `growCursor`
  *  - `prune` — grows done, only the periodic reconcile is left */
-export type FabricLandingPhase = 'open' | 'grow' | 'prune';
+export type FabricLandingPhase = 'open' | 'scan' | 'commit' | 'grow' | 'prune';
 
 export interface FabricLandingQueue {
   /** FIFO. The head is the item being drained. */
@@ -135,6 +220,10 @@ export interface FabricLandingQueue {
   phase: FabricLandingPhase;
   /** Index into the head item's `delta.added` reached so far. */
   growCursor: number;
+  /** The whole reconcile in flight, or null. Scratch over an immutable
+   *  selection, so it survives frames and is dropped, not repaired, when the
+   *  landing under it is superseded. */
+  reconcile: FabricWholeReconcile | null;
   /** Consecutive delta items APPLIED since the last full reconcile or prune.
    *  It counts applications, not landings, so a queue emptied by a remount
    *  cannot leave the count ahead of the work. */
@@ -151,6 +240,7 @@ export function createFabricLandingQueue(): FabricLandingQueue {
     items: [],
     phase: 'open',
     growCursor: 0,
+    reconcile: null,
     deltaStreak: 0,
     landedVersion: -1,
     enqueuedVersion: -1,
@@ -179,6 +269,7 @@ export function resetFabricLandingQueue(queue: FabricLandingQueue): void {
   queue.items.length = 0;
   queue.phase = 'open';
   queue.growCursor = 0;
+  queue.reconcile = null;
   queue.deltaStreak = 0;
   queue.landedVersion = Math.max(queue.landedVersion, queue.enqueuedVersion);
 }
@@ -193,6 +284,9 @@ export interface FabricLandingDrainOptions {
   readonly nowMs: () => number;
   /** Edges per grow chunk. Defaults to {@link FABRIC_LANDING_GROW_CHUNK}. */
   readonly growChunk?: number;
+  /** Edges per reconcile scan step. Defaults to
+   *  {@link FABRIC_RECONCILE_SCAN_CHUNK}. */
+  readonly scanChunk?: number;
 }
 
 export interface FabricLandingDrainReport {
@@ -225,6 +319,7 @@ export function drainFabricLandingQueue(
 ): FabricLandingDrainReport {
   const { handles, budgetMs, nowSec, nowMs } = options;
   const growChunk = Math.max(1, options.growChunk ?? FABRIC_LANDING_GROW_CHUNK);
+  const scanChunk = Math.max(1, options.scanChunk ?? FABRIC_RECONCILE_SCAN_CHUNK);
   const startedAtMs = nowMs();
   let grown = 0;
   let killed = 0;
@@ -244,13 +339,16 @@ export function drainFabricLandingQueue(
     if (queue.phase === 'open') {
       if (item.delta === null) {
         if (spent()) break;
-        // The compaction, applied whole: half of it is not a smaller
-        // compaction, it is a wrong fabric.
-        handles.setFabric(item.passiveGraph, item.cells, nowSec);
-        queue.deltaStreak = 0;
-        reconciled += 1;
+        // The compaction opens: the staggered remainder of whatever came
+        // before is flushed and the selection's width tier published, both
+        // facts about the WHOLE selection and neither of them a diff.
+        queue.reconcile = handles.beginSetFabric(
+          item.passiveGraph,
+          item.cells,
+          nowSec,
+        );
+        queue.phase = 'scan';
         steps += 1;
-        completeHead(queue, item);
         continue;
       }
       if (item.delta.removed.length > 0) {
@@ -270,6 +368,41 @@ export function drainFabricLandingQueue(
       queue.phase = 'grow';
       queue.growCursor = 0;
       queue.deltaStreak += 1;
+      continue;
+    }
+
+    if (queue.phase === 'scan') {
+      if (spent()) break;
+      const reconcile = queue.reconcile;
+      // Only a landing that superseded this one nulls the scratch, and that
+      // empties the queue with it; this is the defensive half of the pair.
+      if (reconcile === null) {
+        queue.phase = 'open';
+        continue;
+      }
+      // A scan over an immutable edge list, cut wherever the budget falls: it
+      // writes its findings into the scratch and never into the fabric, so the
+      // cut costs nothing but the scratch if the landing is superseded.
+      if (handles.stepSetFabric(reconcile, scanChunk)) queue.phase = 'commit';
+      steps += 1;
+      continue;
+    }
+
+    if (queue.phase === 'commit') {
+      if (spent()) break;
+      const reconcile = queue.reconcile;
+      if (reconcile === null) {
+        queue.phase = 'open';
+        continue;
+      }
+      // One pass, uninterrupted: half of a compaction is not a smaller
+      // compaction, it is a wrong fabric.
+      handles.commitSetFabric(reconcile);
+      queue.reconcile = null;
+      queue.deltaStreak = 0;
+      reconciled += 1;
+      steps += 1;
+      completeHead(queue, item);
       continue;
     }
 

@@ -2,41 +2,69 @@
 // order and budget: the queue exists to spend a 48 ms task a few milliseconds
 // at a time, and it is only correct if the fabric sees the same calls in the
 // same order it used to see them inside that one task.
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import type { NeighborEdge } from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
 import {
   FABRIC_LANDING_BUDGET_MS,
   FABRIC_LANDING_RECONCILE_EVERY,
+  FABRIC_RECONCILE_SCAN_CHUNK,
   createFabricLandingQueue,
   drainFabricLandingQueue,
   enqueueFabricLanding,
   fabricLandingBudgetMs,
+  fabricLandingEstimateMs,
   resetFabricLandingQueue,
   type FabricLandingHandles,
+  type FabricWholeReconcile,
 } from '../../src/nerve/fabricLandingQueue';
+import {
+  FRAME_BUDGET_BRIDGE_STEP,
+  FRAME_BUDGET_FABRIC_DRAIN,
+  FRAME_BUDGET_PLAN_SLICE,
+  FRAME_HEAVY_BUDGET_MS,
+  beginFrameBudget,
+  frameBudgetRemainingMs,
+  mayStartFrameWork,
+  resetFrameBudget,
+  snapshotFrameBudget,
+  spendFrameBudget,
+} from '../../src/nerve/frameBudget';
 
 /** One handle call, as the fabric saw it. */
 type Call =
   | { kind: 'kill'; keys: string[]; dyingAt: number }
   | { kind: 'grow'; edges: NeighborEdge[]; bornAt: number[]; dirs: (1 | -1)[] }
   | { kind: 'setFabric'; edges: number; now: number }
+  | { kind: 'begin'; edges: number; now: number }
+  | { kind: 'scan'; from: number; to: number }
+  | { kind: 'commit'; scanned: number }
   | { kind: 'collect' };
 
 /** A recording fabric with an injectable per-call wall cost, so a budget can
- *  be spent without a real clock. */
+ *  be spent without a real clock. The whole reconcile is recorded in the three
+ *  pieces the drain now drives it in — open the scratch, classify a slice of
+ *  the new selection, commit — each with its own charge, so a test can price
+ *  the real split (see `fabricWholeReconcile.test.tsx`) without a fabric. */
 function makeHandles(options: {
   costPerEdgeMs?: number;
   costPerKillMs?: number;
-  costPerReconcileMs?: number;
+  costPerBeginMs?: number;
+  costPerScannedEdgeMs?: number;
+  costPerCommitMs?: number;
   liveKeys?: string[];
 } = {}) {
   const calls: Call[] = [];
+  const stepMs: number[] = [];
   let clockMs = 0;
+  const charge = (ms: number): void => {
+    clockMs += ms;
+    stepMs.push(ms);
+  };
   const handles: FabricLandingHandles = {
     growEdges(edges, _cells, bornAtByKey, dirByKey) {
-      clockMs += (options.costPerEdgeMs ?? 0) * edges.length;
+      charge((options.costPerEdgeMs ?? 0) * edges.length);
       calls.push({
         kind: 'grow',
         edges: [...edges],
@@ -45,19 +73,45 @@ function makeHandles(options: {
       });
     },
     killEdges(keys, dyingAt) {
-      clockMs += (options.costPerKillMs ?? 0) * keys.length;
+      charge((options.costPerKillMs ?? 0) * keys.length);
       calls.push({ kind: 'kill', keys: [...keys], dyingAt });
     },
-    setFabric(graph, _cells, now) {
-      clockMs += options.costPerReconcileMs ?? 0;
-      calls.push({ kind: 'setFabric', edges: graph.edges.length, now });
+    beginSetFabric(graph, cells, now) {
+      charge(options.costPerBeginMs ?? 0);
+      calls.push({ kind: 'begin', edges: graph.edges.length, now });
+      return {
+        graph,
+        cells,
+        now,
+        scanned: 0,
+        liveKeys: new Set<string>(),
+        addCandidates: new Map<string, NeighborEdge>(),
+        stable: 0,
+        revived: 0,
+        flushAdmitted: 0,
+        overflowed: false,
+        slotOwnershipChanged: false,
+        wasPopulated: true,
+      };
+    },
+    stepSetFabric(reconcile, edges) {
+      const from = reconcile.scanned;
+      const to = Math.min(reconcile.graph.edges.length, from + Math.max(1, edges));
+      charge((options.costPerScannedEdgeMs ?? 0) * (to - from));
+      calls.push({ kind: 'scan', from, to });
+      reconcile.scanned = to;
+      return to >= reconcile.graph.edges.length;
+    },
+    commitSetFabric(reconcile) {
+      charge(options.costPerCommitMs ?? 0);
+      calls.push({ kind: 'commit', scanned: reconcile.scanned });
     },
     collectLiveEdgeKeys() {
       calls.push({ kind: 'collect' });
       return options.liveKeys ?? [];
     },
   };
-  return { handles, calls, nowMs: () => clockMs };
+  return { handles, calls, stepMs, nowMs: () => clockMs };
 }
 
 function edge(from: number, to: number): NeighborEdge {
@@ -77,6 +131,19 @@ function item(
     cells: NO_CELLS,
     passiveGraph: { edges: selection },
     delta: { added, removed },
+  };
+}
+
+/** A whole reconcile: the item shape a supersession, a worker fallback, a
+ *  remount or the boot enqueues — `delta === null`, the selection entire. */
+function reconcileItem(version: number, edges: number) {
+  return {
+    version,
+    cells: NO_CELLS,
+    passiveGraph: {
+      edges: Array.from({ length: edges }, (_, i) => edge(i * 2, i * 2 + 1)),
+    },
+    delta: null,
   };
 }
 
@@ -190,26 +257,23 @@ describe('the fabric landing queue', () => {
     expect(h.calls[1]).toMatchObject({ bornAt: [9], dirs: [1] });
   });
 
-  it('applies a reconcile item whole, and it clears the delta streak', () => {
+  it('applies a reconcile in three pieces, and it clears the delta streak', () => {
     const queue = createFabricLandingQueue();
     const h = makeHandles();
     queue.deltaStreak = 9;
-    enqueueFabricLanding(queue, {
-      version: 4,
-      cells: NO_CELLS,
-      passiveGraph: { edges: [edge(1, 2), edge(3, 4)] },
-      delta: null,
-    });
-    const report = drainFabricLandingQueue(queue, {
-      handles: h.handles,
-      budgetMs: 0,
-      nowSec: 12,
-      nowMs: h.nowMs,
-    });
+    enqueueFabricLanding(queue, reconcileItem(4, 2));
+    const report = drainAll(queue, h);
     expect(report.reconciled).toBe(1);
-    expect(h.calls).toEqual([{ kind: 'setFabric', edges: 2, now: 12 }]);
+    // Open the scratch, classify the selection against the persistent slots,
+    // then the one pass that decides deaths and admits births.
+    expect(h.calls).toEqual([
+      { kind: 'begin', edges: 2, now: 100 },
+      { kind: 'scan', from: 0, to: 2 },
+      { kind: 'commit', scanned: 2 },
+    ]);
     expect(queue.deltaStreak).toBe(0);
     expect(queue.landedVersion).toBe(4);
+    expect(queue.reconcile).toBeNull();
   });
 
   it('prunes the strays after the grows, on the sixteenth delta applied', () => {
@@ -302,5 +366,196 @@ describe('the fabric landing queue', () => {
     const report = drainAll(queue, h);
     expect(report).toMatchObject({ steps: 0, pending: 0, landedVersion: -1 });
     expect(h.calls).toHaveLength(0);
+  });
+});
+
+// The 12K stage's own numbers, measured through the REAL fabric over the
+// bench's 12,000-Cell stage (`__tests__/helpers/fabricStageChain`, five
+// chained whole reconciles): the tier and the cohort flush that open the
+// scratch 0.7–2.9 ms, the classifying scan 4.3–7.7 ms over 8,000 edges, and
+// the atomic pass that marks deaths and admits births 2.3–3.7 ms. The three
+// medians are below. They are the shape of the grain, not a promise about any
+// particular machine — what the cases assert is that the shape fits in a
+// frame. (The BOOT reconcile is the exception by design: a first population
+// from an empty set admits every edge in one cohort, 51 ms of the 64 there.)
+const STAGE_EDGES = 8_000;
+const STAGE_BEGIN_MS = 2.2;
+const STAGE_SCAN_MS_PER_EDGE = 6.4 / STAGE_EDGES;
+const STAGE_COMMIT_MS = 3.7;
+
+function stageHandles() {
+  return makeHandles({
+    costPerBeginMs: STAGE_BEGIN_MS,
+    costPerScannedEdgeMs: STAGE_SCAN_MS_PER_EDGE,
+    costPerCommitMs: STAGE_COMMIT_MS,
+  });
+}
+
+describe('the whole reconcile, sliced', () => {
+  it('classifies the selection a bounded slice at a time', () => {
+    const queue = createFabricLandingQueue();
+    const h = stageHandles();
+    enqueueFabricLanding(queue, reconcileItem(1, STAGE_EDGES));
+    let steps = 0;
+    let scanningFrames = 0;
+    // Frames, as the owner drives them: each drain gets a quarter of a 60 Hz
+    // interval and resumes exactly where the last one stopped.
+    for (let frame = 0; frame < 40 && queue.items.length > 0; frame += 1) {
+      const before = h.calls.filter((c) => c.kind === 'scan').length;
+      steps += drainFabricLandingQueue(queue, {
+        handles: h.handles,
+        budgetMs: fabricLandingBudgetMs(16.7),
+        nowSec: 100,
+        nowMs: h.nowMs,
+      }).steps;
+      if (h.calls.filter((c) => c.kind === 'scan').length > before) {
+        scanningFrames += 1;
+      }
+    }
+    expect(queue.items).toHaveLength(0);
+    expect(steps).toBeGreaterThanOrEqual(3);
+    // The budget is read BETWEEN slices, so the scan spans frames: a drain
+    // that slices internally and returns only when the whole selection is
+    // classified has sliced nothing a frame can feel.
+    expect(scanningFrames).toBeGreaterThanOrEqual(2);
+    // No slice of the scan is a grain a frame has to swallow: the budget is
+    // read between slices, so the largest one is a chunk's worth of work.
+    const scans = h.calls.filter((c) => c.kind === 'scan');
+    expect(scans.length).toBeGreaterThanOrEqual(3);
+    for (const scan of scans) {
+      expect(scan.to - scan.from).toBeLessThanOrEqual(FABRIC_RECONCILE_SCAN_CHUNK);
+    }
+    // Every edge classified exactly once, in order, and one atomic commit at
+    // the end of them.
+    expect(scans[0].from).toBe(0);
+    expect(scans[scans.length - 1].to).toBe(STAGE_EDGES);
+    for (let i = 1; i < scans.length; i += 1) {
+      expect(scans[i].from).toBe(scans[i - 1].to);
+    }
+    expect(h.calls.filter((c) => c.kind === 'commit')).toHaveLength(1);
+    expect(h.calls[h.calls.length - 1]).toMatchObject({ kind: 'commit' });
+    // …and no step on the stage's own costs is a frame of its own.
+    expect(Math.max(...h.stepMs)).toBeLessThanOrEqual(4);
+  });
+
+  it('spends one frame at a time on it, and resumes on the next', () => {
+    const queue = createFabricLandingQueue();
+    const h = stageHandles();
+    enqueueFabricLanding(queue, reconcileItem(1, STAGE_EDGES));
+    const budgetMs = fabricLandingBudgetMs(16.7);
+    const perFrame: number[] = [];
+    for (let frame = 0; frame < 40 && queue.items.length > 0; frame += 1) {
+      const before = h.nowMs();
+      drainFabricLandingQueue(queue, {
+        handles: h.handles,
+        budgetMs,
+        nowSec: 100,
+        nowMs: h.nowMs,
+      });
+      perFrame.push(h.nowMs() - before);
+    }
+    expect(perFrame.length).toBeGreaterThanOrEqual(2);
+    // A frame overruns its budget by at most the one step it was inside.
+    for (const spent of perFrame) {
+      expect(spent).toBeLessThanOrEqual(budgetMs + STAGE_COMMIT_MS);
+    }
+    expect(queue.landedVersion).toBe(1);
+  });
+
+  it('discards the scratch when the landing under it is superseded', () => {
+    const queue = createFabricLandingQueue();
+    const h = stageHandles();
+    enqueueFabricLanding(queue, reconcileItem(7, STAGE_EDGES));
+    drainFabricLandingQueue(queue, {
+      handles: h.handles,
+      budgetMs: fabricLandingBudgetMs(16.7),
+      nowSec: 100,
+      nowMs: h.nowMs,
+    });
+    expect(queue.reconcile).not.toBeNull();
+    expect(h.calls.some((c) => c.kind === 'commit')).toBe(false);
+    // The remount rehydrated the fabric from the newest published selection,
+    // so the half-classified scratch describes a fabric that no longer exists.
+    resetFabricLandingQueue(queue);
+    expect(queue.reconcile).toBeNull();
+    expect(queue.phase).toBe('open');
+    expect(queue.landedVersion).toBe(7);
+    const after = h.calls.length;
+    drainAll(queue, h);
+    expect(h.calls).toHaveLength(after);
+  });
+
+  it('asks the frame for a whole heavy budget while a reconcile is at the head', () => {
+    const queue = createFabricLandingQueue();
+    // Nothing pending: there is nothing to ask for.
+    expect(fabricLandingEstimateMs(queue, 2.5)).toBe(2.5);
+    enqueueFabricLanding(queue, item(1, [edge(1, 2)], []));
+    // A delta item is a chunked walk whose last cost predicts its next.
+    expect(fabricLandingEstimateMs(queue, 2.5)).toBe(2.5);
+    const whole = createFabricLandingQueue();
+    enqueueFabricLanding(whole, reconcileItem(1, STAGE_EDGES));
+    expect(fabricLandingEstimateMs(whole, 2.5)).toBe(FRAME_HEAVY_BUDGET_MS);
+    // A drain that measured more than a frame keeps its own measurement.
+    expect(fabricLandingEstimateMs(whole, 40)).toBe(40);
+    expect(fabricLandingEstimateMs(whole, Number.NaN)).toBe(FRAME_HEAVY_BUDGET_MS);
+  });
+});
+
+describe('the whole reconcile against the frame ledger', () => {
+  beforeEach(() => resetFrameBudget());
+
+  /** The owner's frame, in the order its consumers ask in: the drain on the
+   *  raw priority −1 callback, then the bridge step from the child layer, then
+   *  the live-plan slice last. Lane L2's simulation, driven by the REAL queue
+   *  instead of a list of step costs. */
+  function runFrames(queue: ReturnType<typeof createFabricLandingQueue>, h: ReturnType<typeof makeHandles>) {
+    const heavyMs: number[] = [];
+    let drainLast = 3;
+    for (let frame = 1; frame <= 600; frame += 1) {
+      beginFrameBudget(frame);
+      if (
+        queue.items.length > 0
+        && mayStartFrameWork(
+          FRAME_BUDGET_FABRIC_DRAIN,
+          fabricLandingEstimateMs(queue, drainLast),
+        )
+      ) {
+        const startedAt = h.nowMs();
+        drainFabricLandingQueue(queue, {
+          handles: h.handles,
+          budgetMs: Math.min(
+            fabricLandingBudgetMs(16.7),
+            frameBudgetRemainingMs(FRAME_BUDGET_FABRIC_DRAIN),
+          ),
+          nowSec: 100,
+          nowMs: h.nowMs,
+        });
+        drainLast = h.nowMs() - startedAt;
+        spendFrameBudget(FRAME_BUDGET_FABRIC_DRAIN, drainLast);
+      }
+      if (mayStartFrameWork(FRAME_BUDGET_BRIDGE_STEP, 2.1)) {
+        spendFrameBudget(FRAME_BUDGET_BRIDGE_STEP, 2.1);
+      }
+      if (mayStartFrameWork(FRAME_BUDGET_PLAN_SLICE, 2)) {
+        spendFrameBudget(FRAME_BUDGET_PLAN_SLICE, 2);
+      }
+      heavyMs.push(snapshotFrameBudget().totalSpentMs);
+      if (queue.items.length === 0) break;
+    }
+    return { heavyMs, window: snapshotFrameBudget().window };
+  }
+
+  it('never carries a frame past the heavy budget, and never lies about its cost', () => {
+    const queue = createFabricLandingQueue();
+    const h = stageHandles();
+    enqueueFabricLanding(queue, reconcileItem(1, STAGE_EDGES));
+    const { heavyMs, window } = runFrames(queue, h);
+    expect(queue.items).toHaveLength(0);
+    expect(heavyMs.filter((ms) => ms > FRAME_HEAVY_BUDGET_MS)).toEqual([]);
+    // The drain asked for a whole frame and spent less: the ledger records no
+    // overshoot, which is the difference between a bounded grain and a
+    // 25 ms one admitted on a 3 ms promise.
+    expect(window.estimateOvershootMs).toBe(0);
+    expect(window.forcedByStarvation).toBe(0);
   });
 });

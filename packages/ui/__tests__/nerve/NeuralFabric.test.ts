@@ -460,18 +460,32 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
   });
 
   it('flushes pending cohorts before diffing a new authoritative graph', () => {
-    const setFabricBody = SRC.slice(
-      SRC.indexOf('setFabric(graph, cells, now) {'),
-      SRC.indexOf('growEdges(edges, cells, bornAtByKey, dirByKey) {'),
+    // A whole reconcile is three pieces now — the drain steps the classifying
+    // walk under a frame's budget — so "the flush comes before pass 1" is a
+    // fact about WHICH piece each lives in: the flush is in the one that
+    // opens, the walk in the one that is stepped, and the opening always runs
+    // first. The diff therefore still runs against complete states.
+    const openBody = SRC.slice(
+      SRC.indexOf('const beginWholeReconcile = ('),
+      SRC.indexOf('const stepWholeReconcile = ('),
     );
-    // The flush (queue cleared, remainder admitted fully-grown) must come
-    // before pass 1 so the diff always runs against complete states.
-    const flushAt = setFabricBody.indexOf('pendingCohortsRef.current = null');
-    const passOneAt = setFabricBody.indexOf('for (const e of graph.edges)');
-    expect(flushAt).toBeGreaterThan(-1);
-    expect(passOneAt).toBeGreaterThan(flushAt);
+    const walkBody = SRC.slice(
+      SRC.indexOf('const stepWholeReconcile = ('),
+      SRC.indexOf('const commitWholeReconcile = ('),
+    );
+    expect(openBody).toContain('pendingCohortsRef.current = null');
+    expect(walkBody).toContain('for (let i = reconcile.scanned; i < end; i += 1)');
+    expect(openBody.indexOf('pendingCohortsRef.current = null'))
+      .toBeGreaterThan(-1);
     // Flushed adds join fully grown — no animation restart on flush.
-    expect(setFabricBody).toContain('const grownBornAt = now - GROWTH_MS / 1000');
+    expect(openBody).toContain('const grownBornAt = now - GROWTH_MS / 1000');
+    // …and the one-shot entry point runs the three in that order.
+    expect(SRC).toContain(
+      'const reconcile = beginWholeReconcile(graph, cells, now);',
+    );
+    expect(SRC).toContain(
+      'while (!stepWholeReconcile(reconcile, graph.edges.length)) {',
+    );
   });
 
   it('pumps due cohorts at the emitFabric entry, ahead of the dirty gate', () => {

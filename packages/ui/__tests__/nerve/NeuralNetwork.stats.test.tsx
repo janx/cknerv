@@ -355,6 +355,22 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).toContain('    )) {\n      invalidate();\n      return;\n    }');
   });
 
+  it('asks the ledger honestly for a whole reconcile, which is not a chunk', () => {
+    // Every other item in the queue is a chunked walk whose last cost predicts
+    // its next; the compaction's atomic pass is a different animal, and asking
+    // for it on the last grow chunk's 3 ms is how a 25 ms frame got admitted.
+    expect(NETWORK_SOURCE).toContain(
+      'mayStartFrameWork(\n        FRAME_BUDGET_FABRIC_DRAIN,\n'
+      + '        fabricLandingEstimateMs(landingQueue, fabricDrainCostMsRef.current),',
+    );
+    expect(NETWORK_SOURCE).not.toContain(
+      'FRAME_BUDGET_FABRIC_DRAIN,\n        fabricDrainCostMsRef.current,',
+    );
+    // The rule lives with the item shape it reads, not in the frame callback.
+    expect(LANDING_QUEUE_SOURCE).toContain('export function fabricLandingEstimateMs(');
+    expect(LANDING_QUEUE_SOURCE).toContain('FRAME_HEAVY_BUDGET_MS');
+  });
+
   // T4: the landing was one task doing two halves — the graph swap and the
   // fabric's grow/kill for the selection that swap published — and a task
   // cannot yield to itself. The split's correctness is entirely a matter of

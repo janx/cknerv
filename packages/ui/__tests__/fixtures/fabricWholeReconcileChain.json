@@ -1,0 +1,84 @@
+{
+  "note": "the fabric the ONE-SHOT setFabric left over the 12,000-Cell bench stage (__tests__/helpers/fabricStageChain), block 0 cold then five chained landings applied whole. Generated from the code as it stood before T11 sliced the classifying scan; never regenerate it to make a test green.",
+  "stageDigest": "3480adceb0bb25a8",
+  "perApply": [
+    {
+      "block": 0,
+      "edges": 8000,
+      "cells": 12000,
+      "added": 8000,
+      "revived": 0,
+      "dying": 0,
+      "stable": 0,
+      "totalStates": 8000,
+      "writes": 8000,
+      "digest": "fdcf8c6e9fcd13e0"
+    },
+    {
+      "block": 1,
+      "edges": 8000,
+      "cells": 12040,
+      "added": 97,
+      "revived": 0,
+      "dying": 97,
+      "stable": 7903,
+      "totalStates": 8097,
+      "writes": 194,
+      "digest": "e10176cc7cd5e592"
+    },
+    {
+      "block": 2,
+      "edges": 8000,
+      "cells": 12040,
+      "added": 108,
+      "revived": 0,
+      "dying": 108,
+      "stable": 7892,
+      "totalStates": 8205,
+      "writes": 216,
+      "digest": "10cd3b13d31a0521"
+    },
+    {
+      "block": 3,
+      "edges": 8000,
+      "cells": 12040,
+      "added": 87,
+      "revived": 0,
+      "dying": 87,
+      "stable": 7913,
+      "totalStates": 8292,
+      "writes": 174,
+      "digest": "2f05ea3824775efa"
+    },
+    {
+      "block": 4,
+      "edges": 8000,
+      "cells": 12040,
+      "added": 107,
+      "revived": 0,
+      "dying": 107,
+      "stable": 7893,
+      "totalStates": 8399,
+      "writes": 214,
+      "digest": "b73c9c4f1fef59f1"
+    },
+    {
+      "block": 5,
+      "edges": 8000,
+      "cells": 12040,
+      "added": 103,
+      "revived": 0,
+      "dying": 103,
+      "stable": 7897,
+      "totalStates": 8502,
+      "writes": 206,
+      "digest": "a6fbf75c012ae622"
+    }
+  ],
+  "writes": 9004,
+  "streamDigest": "a6fbf75c012ae622",
+  "arraysDigest": "5541aaf5d92c21a3",
+  "trunkTierEdges": 993,
+  "trunkTierThreshold": 0.10329207690950619,
+  "weightedSelectionEdges": 3986
+}

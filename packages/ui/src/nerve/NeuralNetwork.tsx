@@ -134,6 +134,7 @@ import {
   drainFabricLandingQueue,
   enqueueFabricLanding,
   fabricLandingBudgetMs,
+  fabricLandingEstimateMs,
   resetFabricLandingQueue,
 } from './fabricLandingQueue';
 import CellBridgeNerves from './CellBridgeNerves';
@@ -1597,7 +1598,7 @@ function NeuralNetwork({
       && handles
       && mayStartFrameWork(
         FRAME_BUDGET_FABRIC_DRAIN,
-        fabricDrainCostMsRef.current,
+        fabricLandingEstimateMs(landingQueue, fabricDrainCostMsRef.current),
       )
     ) {
       const drainStartedAtMs = blockFrameNowMs();
