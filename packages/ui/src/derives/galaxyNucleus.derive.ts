@@ -1,4 +1,5 @@
 import type { Cell } from '@cknerv/types';
+import type { BufferItemSpan } from '../geometry/populatedBufferAttribute';
 import { deriveCellVisual, rotateAccentHue } from './cellVisual.derive';
 import {
   CONSENSUS_BRAID_PALETTE,
@@ -94,14 +95,18 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
   const detailWeights: number[] = [];
   const knots: GalaxyConsensusKnot[] = [];
 
+  // ⚠️ Six scalars, not two spreads. A braid is built once per Cell but a hover
+  // sweep meets Cells it has never derived at a steady rate, and `push(...p)`
+  // allocates an argument array per call — two per segment, ~560 segments a
+  // braid. The numbers are identical; only the garbage is gone.
   const addSegment = (
     from: MorphologyPoint3,
     to: MorphologyPoint3,
     color: readonly [number, number, number],
     detailWeight: number,
   ) => {
-    segments.push(...from, ...to);
-    colors.push(...color, ...color);
+    segments.push(from[0], from[1], from[2], to[0], to[1], to[2]);
+    colors.push(color[0], color[1], color[2], color[0], color[1], color[2]);
     detailWeights.push(detailWeight);
   };
 
@@ -126,6 +131,7 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
     Math.floor((CELL_MORPHOLOGY_MAX_SEGMENTS - auxiliarySegmentCount) / pathCount),
   ));
 
+  const pathColor: [number, number, number] = [0, 0, 0];
   const addPath = (
     points: readonly MorphologyPoint3[],
     strand: number,
@@ -138,12 +144,13 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
       const next = consensusBraidPathPoint(points, t1);
       const spectral = 0.5 + 0.5 * Math.sin(t0 * Math.PI * 2 * 1.4 + strand * 1.7);
       const contributor = consensusBraidContributorColor(strand, spectral);
-      const color: readonly [number, number, number] = [
-        lerp(contributor[0], visual.accent[0], 0.025),
-        lerp(contributor[1], visual.accent[1], 0.025),
-        lerp(contributor[2], visual.accent[2], 0.025),
-      ];
-      addSegment(point, next, color, detailWeight);
+      // One tuple for the whole derivation: `addSegment` copies what it is
+      // handed before this loop comes round again, and every path segment
+      // wants its own accent blend.
+      pathColor[0] = lerp(contributor[0], visual.accent[0], 0.025);
+      pathColor[1] = lerp(contributor[1], visual.accent[1], 0.025);
+      pathColor[2] = lerp(contributor[2], visual.accent[2], 0.025);
+      addSegment(point, next, pathColor, detailWeight);
     }
   };
 
@@ -405,4 +412,197 @@ export function writeGalaxyConsensusBraidBuffers(
   cursor.lineVertices = lineVertices;
   cursor.nodes = nodes;
   return cursor;
+}
+
+/** One near-LOD entry as the buffers see it: a Cell, its cached braid, and the
+ *  four numbers that decide what gets stored for it. */
+export interface GalaxyNucleusEntry {
+  readonly cell: Cell;
+  /** Null until the frame's pre-pass has resolved the cache; an entry with no
+   *  braid writes nothing rather than guessing one. */
+  readonly braid: GalaxyConsensusBraid | null;
+  readonly detail: number;
+  readonly scale: number;
+  readonly userFocus: number;
+  readonly recall: GalaxyNucleusRecallResponse | null;
+}
+
+/** What one entry left in the buffers, and the inputs it left it for. */
+export interface GalaxyNucleusWrittenEntry {
+  cell: Cell | null;
+  braid: GalaxyConsensusBraid | null;
+  detail: number;
+  scale: number;
+  userFocus: number;
+  deathAtMs: number | null;
+  recalled: boolean;
+  /** In vertices / nodes, not components. */
+  lineStart: number;
+  lineEnd: number;
+  nodeStart: number;
+  nodeEnd: number;
+}
+
+export interface GalaxyNucleusWritePlan {
+  /** Pooled, one per entry the last refresh wrote, in the order it wrote them. */
+  readonly entries: GalaxyNucleusWrittenEntry[];
+  /** How many of `entries` the last refresh actually used. */
+  count: number;
+  readonly lineSpans: BufferItemSpan[];
+  lineSpanCount: number;
+  readonly nodeSpans: BufferItemSpan[];
+  nodeSpanCount: number;
+  /** The prefix was written from zero — the caller uploads all of it and the
+   *  spans are empty, because a span list as long as the prefix is a slower
+   *  way to say the same thing. */
+  whole: boolean;
+  /** Entries rewritten this refresh. */
+  rewritten: number;
+}
+
+function blankWrittenEntry(): GalaxyNucleusWrittenEntry {
+  return {
+    cell: null,
+    braid: null,
+    detail: Number.NaN,
+    scale: Number.NaN,
+    userFocus: Number.NaN,
+    deathAtMs: null,
+    recalled: false,
+    lineStart: 0,
+    lineEnd: 0,
+    nodeStart: 0,
+    nodeEnd: 0,
+  };
+}
+
+export function createGalaxyNucleusWritePlan(
+  capacity: number,
+): GalaxyNucleusWritePlan {
+  const slots = Math.max(0, Math.floor(capacity));
+  const entries: GalaxyNucleusWrittenEntry[] = [];
+  const lineSpans: BufferItemSpan[] = [];
+  const nodeSpans: BufferItemSpan[] = [];
+  for (let index = 0; index < slots; index += 1) {
+    entries.push(blankWrittenEntry());
+    lineSpans.push({ start: 0, count: 0 });
+    nodeSpans.push({ start: 0, count: 0 });
+  }
+  return {
+    entries,
+    count: 0,
+    lineSpans,
+    lineSpanCount: 0,
+    nodeSpans,
+    nodeSpanCount: 0,
+    whole: true,
+    rewritten: 0,
+  };
+}
+
+function spanAt(spans: BufferItemSpan[], index: number): BufferItemSpan {
+  while (spans.length <= index) spans.push({ start: 0, count: 0 });
+  return spans[index];
+}
+
+/**
+ * Append the near entries to the fixed-capacity buffers, rewriting only the
+ * ones whose inputs moved, and report the spans that changed.
+ *
+ * ⭐ WHY A SLICE IS SAFE AT ALL. An entry's span is a function of its braid and
+ * of the capacity left when its turn comes: `writeGalaxyConsensusBraidBuffers`
+ * walks `braid.segments` and `braid.knots` to their end or to the cap, and
+ * `detail`, `scale`, focus and recall only change the VALUES it stores. So
+ * while the entries and their order hold, every entry owns the same bytes on
+ * every frame. When the membership or the order moves — a hover re-sorts the
+ * list, because the sort key is focus — the spans move with them and the whole
+ * prefix is written again. The per-entry start is re-checked as it is reached,
+ * so a span that did move is found rather than trusted.
+ *
+ * ⚠️ An entry under recall is rewritten by rule. Its read head advances every
+ * frame the recall is held, so a signature over it would be a signature that
+ * never matches, and testing one costs more than writing the entry.
+ */
+export function writeGalaxyNucleusEntries(
+  entries: readonly GalaxyNucleusEntry[],
+  buffers: GalaxyNucleusBuffers,
+  cursor: GalaxyNucleusCursor,
+  plan: GalaxyNucleusWritePlan,
+): GalaxyNucleusWritePlan {
+  cursor.lineVertices = 0;
+  cursor.nodes = 0;
+  plan.lineSpanCount = 0;
+  plan.nodeSpanCount = 0;
+  plan.rewritten = 0;
+
+  let held = plan.count === entries.length;
+  for (let index = 0; held && index < entries.length; index += 1) {
+    const record = plan.entries[index];
+    // Object identity, not `cell.id`: the braid is cached against the record,
+    // so the same id republished as a new object is a different braid and a
+    // different span.
+    if (record.cell !== entries[index].cell) held = false;
+    else if (record.braid !== entries[index].braid) held = false;
+  }
+  plan.whole = !held;
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const record = index < plan.entries.length
+      ? plan.entries[index]
+      : plan.entries[plan.entries.push(blankWrittenEntry()) - 1];
+    const lineStart = cursor.lineVertices;
+    const nodeStart = cursor.nodes;
+    if (
+      held
+      && record.lineStart === lineStart
+      && record.nodeStart === nodeStart
+      && record.detail === entry.detail
+      && record.scale === entry.scale
+      && record.userFocus === entry.userFocus
+      && record.deathAtMs === entry.cell.death_at_ms
+      && !record.recalled
+      && entry.recall === null
+    ) {
+      cursor.lineVertices = record.lineEnd;
+      cursor.nodes = record.nodeEnd;
+      continue;
+    }
+    if (entry.braid !== null) {
+      writeGalaxyConsensusBraidBuffers(
+        entry.cell,
+        entry.braid,
+        entry.detail,
+        entry.scale,
+        buffers,
+        cursor,
+        entry.recall,
+        entry.userFocus,
+      );
+    }
+    record.cell = entry.cell;
+    record.braid = entry.braid;
+    record.detail = entry.detail;
+    record.scale = entry.scale;
+    record.userFocus = entry.userFocus;
+    record.deathAtMs = entry.cell.death_at_ms;
+    record.recalled = entry.recall !== null;
+    record.lineStart = lineStart;
+    record.lineEnd = cursor.lineVertices;
+    record.nodeStart = nodeStart;
+    record.nodeEnd = cursor.nodes;
+    plan.rewritten += 1;
+    if (!plan.whole) {
+      const lineSpan = spanAt(plan.lineSpans, plan.lineSpanCount);
+      lineSpan.start = lineStart;
+      lineSpan.count = cursor.lineVertices - lineStart;
+      plan.lineSpanCount += 1;
+      const nodeSpan = spanAt(plan.nodeSpans, plan.nodeSpanCount);
+      nodeSpan.start = nodeStart;
+      nodeSpan.count = cursor.nodes - nodeStart;
+      plan.nodeSpanCount += 1;
+    }
+  }
+  plan.count = entries.length;
+  return plan;
 }

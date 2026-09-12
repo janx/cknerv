@@ -13,8 +13,9 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
 import {
+  createGalaxyNucleusWritePlan,
   deriveGalaxyConsensusBraid,
-  writeGalaxyConsensusBraidBuffers,
+  writeGalaxyNucleusEntries,
   type GalaxyConsensusBraid,
   type GalaxyNucleusBuffers,
   type GalaxyNucleusCursor,
@@ -58,7 +59,10 @@ import {
   type ScalarAttributeSlotWrite,
   type ScalarThresholdEpoch,
 } from '../geometry/sparseScalarAttribute';
-import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
+import {
+  markPopulatedBufferItemSpans,
+  markPopulatedBufferUpdate,
+} from '../geometry/populatedBufferAttribute';
 
 const NEAR_DIST = 2.5;
 const FAR_DIST = 9.5;
@@ -275,6 +279,11 @@ export default function CellNucleus({
     userFocus: number;
     recall: ConsensusMemoryCellResponse | null;
     dist: number;
+    /** Resolved from the WeakMap in the write pre-pass, not in the LOD walk:
+     *  the walk admits more candidates than the cap keeps, and a braid derived
+     *  for an entry the sort then drops is work nobody sees. */
+    braid: GalaxyConsensusBraid | null;
+    scale: number;
   }[]>([]);
   const recallResponses = useRef<Map<number, ConsensusMemoryCellResponse>>(
     new Map(),
@@ -285,6 +294,10 @@ export default function CellNucleus({
   const recallSlots = useRef<number[]>([]);
   const recallStateSlots = useRef<number[]>([]);
   const cursor = useRef<GalaxyNucleusCursor>({ lineVertices: 0, nodes: 0 });
+  // What the last refresh left in the buffers, entry by entry, so the next one
+  // can rewrite only what moved. Pooled to the buffer capacity, not to the
+  // tier's cap: the tier can rise without the plan allocating.
+  const writePlan = useRef(createGalaxyNucleusWritePlan(MAX_NEAR_CAPACITY));
   const committedDrawCounts = useRef({ lineSegments: 0, nodes: 0 });
   const lodElapsedS = useRef(Number.POSITIVE_INFINITY);
   const lastCellsList = useRef<Cell[] | null>(null);
@@ -523,6 +536,8 @@ export default function CellNucleus({
             userFocus,
             recall,
             dist,
+            braid: null,
+            scale: 0,
           });
         }
       }
@@ -588,6 +603,8 @@ export default function CellNucleus({
             userFocus,
             recall,
             dist,
+            braid: null,
+            scale: 0,
           });
         }
       }
@@ -681,31 +698,23 @@ export default function CellNucleus({
     if (!refreshLod && !focusNeedsWrite && !recallNeedsWrite) return;
 
     const writeCursor = cursor.current;
-    writeCursor.lineVertices = 0;
-    writeCursor.nodes = 0;
+    const plan = writePlan.current;
     for (const entry of near.current) {
       let braid = cache.current.get(entry.cell);
       if (!braid) {
         braid = deriveGalaxyConsensusBraid(entry.cell);
         cache.current.set(entry.cell, braid);
       }
-      writeGalaxyConsensusBraidBuffers(
-        entry.cell,
-        braid,
-        entry.detail,
-        consensusBraidRenderScale(
-          entry.dist,
-          state.size.height,
-          state.camera.projectionMatrix.elements[5],
-          entry.focus,
-          braid.presenceScale,
-        ),
-        buffers,
-        writeCursor,
-        entry.recall,
-        entry.userFocus,
+      entry.braid = braid;
+      entry.scale = consensusBraidRenderScale(
+        entry.dist,
+        state.size.height,
+        state.camera.projectionMatrix.elements[5],
+        entry.focus,
+        braid.presenceScale,
       );
     }
+    writeGalaxyNucleusEntries(near.current, buffers, writeCursor, plan);
 
     const lineFloatCount = writeCursor.lineVertices * 3;
     const lineSegmentCount = writeCursor.lineVertices / 2;
@@ -722,8 +731,25 @@ export default function CellNucleus({
     const colorAttribute = lineGeometry.getAttribute(
       'instanceColorStart',
     ) as THREE.InterleavedBufferAttribute;
-    markPopulatedBufferUpdate(positionAttribute.data, lineFloatCount);
-    markPopulatedBufferUpdate(colorAttribute.data, lineFloatCount);
+    if (plan.whole) {
+      markPopulatedBufferUpdate(positionAttribute.data, lineFloatCount);
+      markPopulatedBufferUpdate(colorAttribute.data, lineFloatCount);
+    } else {
+      // Vertex spans, and the interleaved buffer LineSegmentsGeometry wraps is
+      // the very array the writer filled, so its item stride is a vertex's 3.
+      markPopulatedBufferItemSpans(
+        positionAttribute.data,
+        plan.lineSpans,
+        plan.lineSpanCount,
+        3,
+      );
+      markPopulatedBufferItemSpans(
+        colorAttribute.data,
+        plan.lineSpans,
+        plan.lineSpanCount,
+        3,
+      );
+    }
 
     if (writeCursor.nodes !== committed.nodes) {
       nodeGeometry.setDrawRange(0, writeCursor.nodes);
@@ -744,13 +770,25 @@ export default function CellNucleus({
     const nodeResolveAttribute = nodeGeometry.getAttribute(
       'aResolve',
     ) as THREE.BufferAttribute;
-    markPopulatedBufferUpdate(
-      nodePositionAttribute,
-      writeCursor.nodes * nodePositionAttribute.itemSize,
-    );
-    markPopulatedBufferUpdate(nodeSizeAttribute, writeCursor.nodes);
-    markPopulatedBufferUpdate(nodeAlphaAttribute, writeCursor.nodes);
-    markPopulatedBufferUpdate(nodeResolveAttribute, writeCursor.nodes);
+    if (plan.whole) {
+      markPopulatedBufferUpdate(
+        nodePositionAttribute,
+        writeCursor.nodes * nodePositionAttribute.itemSize,
+      );
+      markPopulatedBufferUpdate(nodeSizeAttribute, writeCursor.nodes);
+      markPopulatedBufferUpdate(nodeAlphaAttribute, writeCursor.nodes);
+      markPopulatedBufferUpdate(nodeResolveAttribute, writeCursor.nodes);
+    } else {
+      markPopulatedBufferItemSpans(
+        nodePositionAttribute,
+        plan.nodeSpans,
+        plan.nodeSpanCount,
+        nodePositionAttribute.itemSize,
+      );
+      markPopulatedBufferItemSpans(nodeSizeAttribute, plan.nodeSpans, plan.nodeSpanCount, 1);
+      markPopulatedBufferItemSpans(nodeAlphaAttribute, plan.nodeSpans, plan.nodeSpanCount, 1);
+      markPopulatedBufferItemSpans(nodeResolveAttribute, plan.nodeSpans, plan.nodeSpanCount, 1);
+    }
   });
 
   return (
