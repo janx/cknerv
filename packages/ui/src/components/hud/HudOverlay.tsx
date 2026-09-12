@@ -478,7 +478,14 @@ function HudOverlay({ chain, peers, localNode, hostedName, cellsStats, stageScri
       composedAtMs: stageComposedAtMs,
     }));
     sample();
-    // The settle resolve needs time to pass, not props to change.
+    // The settle resolve needs time to pass, not props to change — but only
+    // once there is something to sample. The watch cannot leave `idle`
+    // without a count, and a number that has not arrived is not evidence of
+    // anything, so a page that never gets a model — a Lab, a HUD harness, a
+    // snapshot that failed — was asking once a second for its whole life to
+    // be told nothing again. The first count moves `stagedLive`, which this
+    // effect is keyed on, so the second starts where it means something.
+    if (stagedLive === null) return undefined;
     const id = setInterval(sample, 1_000);
     return () => clearInterval(id);
   }, [

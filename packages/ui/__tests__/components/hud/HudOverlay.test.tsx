@@ -32,6 +32,25 @@ import type {
   Peer,
 } from '@cknerv/types';
 
+// How often the watch was asked. The decision itself is the real one — this
+// counts the asking, which is what a 1 Hz interval does whether or not there
+// is anything to observe.
+const stageSamples = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../../../src/boot/stageCompose', async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import('../../../src/boot/stageCompose')
+  >();
+  return {
+    ...original,
+    sampleStageCompose: (
+      ...args: Parameters<typeof original.sampleStageCompose>
+    ) => {
+      stageSamples.count += 1;
+      return original.sampleStageCompose(...args);
+    },
+  };
+});
+
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
   default: ({ cell, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onIdentityProofRead }: {
@@ -1478,6 +1497,36 @@ describe('HudOverlay — the stage composing chapter', () => {
       {...extra}
     />,
   );
+
+  it('asks nothing of a stage that has not arrived', () => {
+    // The watch cannot leave `idle` without a count — a number that has not
+    // come is not evidence of anything — so a page that never gets a model
+    // (a Lab, a HUD harness, a snapshot that failed) was asking once a second
+    // for its whole life to be told nothing again.
+    vi.useFakeTimers();
+    stageSamples.count = 0;
+    settled();
+    const before = stageSamples.count;
+    expect(before, 'the mount takes its own sample').toBeGreaterThan(0);
+
+    act(() => { vi.advanceTimersByTime(5_000); });
+
+    expect(stageSamples.count, 'the sampler ticked with nothing to sample')
+      .toBe(before);
+  });
+
+  it('keeps asking while a stage is still filling', () => {
+    // The other side of the same rule: the settle resolve needs time to pass,
+    // not props to change, so a watch that is watching keeps its second.
+    vi.useFakeTimers();
+    stageSamples.count = 0;
+    settled({ cellPopulation: populationModel(9_298, 12_000) });
+    const before = stageSamples.count;
+
+    act(() => { vi.advanceTimersByTime(5_000); });
+
+    expect(stageSamples.count).toBe(before + 5);
+  });
 
   it('discloses a still-filling stage once the record has stood down', () => {
     const { container } = settled({
