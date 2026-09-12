@@ -66,7 +66,9 @@ import {
 import {
   createCellSlotState,
   syncCellSlots,
+  type CellSlotIncrementalUpdate,
 } from '../geometry/cellSlotAssignment';
+import { cellCombinedSlotHint } from '../geometry/cellCombinedSlotHint';
 import {
   ScreenSpaceHitIndex,
   type ScreenSpaceRadiusPad,
@@ -1909,11 +1911,21 @@ function CellGalaxy({
      * other segment has to ask whether the overlay already draws an id. */
     ids: Set<number> | null;
     combined: Cell[];
+    /** The three segments `combined` was built from, in its own order. The
+     * slot hint is a statement about a MOVE, and a move needs both ends: the
+     * journal names the staged half, and these are what the other two are
+     * diffed against (`cellCombinedSlotHint`). */
+    combinedStaged: readonly Cell[];
+    combinedOverlay: readonly Cell[];
+    combinedHolds: readonly Cell[];
   }>({
     selectedCellId: null,
     entries: EMPTY_OVERLAY_ENTRIES,
     ids: null,
     combined: [],
+    combinedStaged: EMPTY_OVERLAY_ENTRIES,
+    combinedOverlay: EMPTY_OVERLAY_ENTRIES,
+    combinedHolds: EMPTY_OVERLAY_ENTRIES,
   });
   /** Stage enter/exit stamps plus the deferred-free queue that keeps a
    * departing cell drawable for the length of its fade. */
@@ -2404,8 +2416,7 @@ function CellGalaxy({
     // to conclude exactly that. Reaping is frame-driven and is the one thing
     // that re-syncs the slots with no journal patch behind it.
     const membershipNeedsSync = stagedChanged || overlayChanged || holdsChanged;
-    const previousCombined = overlayState.combined;
-    let stagedSlotHint = false;
+    let slotHint: CellSlotIncrementalUpdate | undefined;
     if (membershipNeedsSync) {
       const staged = renderSet.cells;
       const overlayEntries = overlayState.entries;
@@ -2413,30 +2424,34 @@ function CellGalaxy({
         lifecycle,
         INSTANCE_CAPACITY - staged.length - overlayEntries.length,
       );
+      // The hint is built for the WHOLE drawn list, not for the staged half:
+      // a departure becomes a hold appended after the staged prefix, so a
+      // journal about the prefix described a different array than the one
+      // being synced and every block with an exit fell to the whole-list
+      // walk — twice, counting the reap frame (T1 read canonical 24 /
+      // incremental 1 over thirteen mainnet blocks).
+      slotHint = cellCombinedSlotHint({
+        previousCombined: overlayState.combined,
+        previousStaged: overlayState.combinedStaged,
+        previousOverlay: overlayState.combinedOverlay,
+        previousHolds: overlayState.combinedHolds,
+        staged,
+        overlay: overlayEntries,
+        holds: holdCells,
+        journal: renderUpdate,
+      });
       overlayState.combined = overlayEntries.length === 0
         && holdCells.length === 0
         ? staged
         : staged.concat(overlayEntries, holdCells);
-      stagedSlotHint = renderUpdate !== null
-        && previousCombined === renderUpdate.previousCells
-        && overlayState.combined === renderUpdate.cells;
+      overlayState.combinedStaged = staged;
+      overlayState.combinedOverlay = overlayEntries;
+      overlayState.combinedHolds = holdCells;
     }
     // Stable-slot indirection: each cell keeps its GPU slot while visible
     // (staged, overlay, or fading out), so uploads collapse to O(churn).
     const slotSync = membershipNeedsSync
-      ? syncCellSlots(
-        cellSlotStateRef.current,
-        overlayState.combined,
-        stagedSlotHint && renderUpdate !== null
-          ? {
-            previousCells: renderUpdate.previousCells,
-            removedIds: renderUpdate.exited,
-            upserts: renderUpdate.ranges.flatMap((range) => (
-              renderUpdate.cells.slice(range.start, range.start + range.count)
-            )),
-          }
-          : undefined,
-      )
+      ? syncCellSlots(cellSlotStateRef.current, overlayState.combined, slotHint)
       : null;
     const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
     const count = cellsList.length;

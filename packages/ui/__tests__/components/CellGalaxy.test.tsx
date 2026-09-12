@@ -1034,6 +1034,20 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).toContain(
       'INSTANCE_CAPACITY - staged.length - overlayEntries.length',
     );
+    // …and the slot hint is a statement about the WHOLE drawn list, not about
+    // the staged half of it: the journal goes in beside the other two
+    // segments and their previous selves, so a block with an exit takes the
+    // journal path instead of the whole-list walk.
+    expect(source).toContain('slotHint = cellCombinedSlotHint({');
+    expect(source).toContain('previousCombined: overlayState.combined,');
+    expect(source).toContain('previousStaged: overlayState.combinedStaged,');
+    expect(source).toContain('holds: holdCells,');
+    expect(source).toContain('journal: renderUpdate,');
+    expect(source).toContain('overlayState.combinedHolds = holdCells;');
+    expect(source).toContain(
+      'syncCellSlots(cellSlotStateRef.current, overlayState.combined, slotHint)',
+    );
+    expect(source).not.toContain('overlayState.combined === renderUpdate.cells');
     // Stamping reads the membership diff the render set now publishes, and
     // runs on overlay movement too — a selection can land on a fading cell.
     expect(source).toContain('entered: renderUpdate?.entered');
