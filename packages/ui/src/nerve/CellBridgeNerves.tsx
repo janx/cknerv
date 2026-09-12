@@ -108,6 +108,7 @@ import {
   BRIDGE_STEP_ESTIMATE_MS,
   bridgeInputVersionMatches,
   bridgeRunDecision,
+  bridgeStepAfterSync,
   nextBridgeStep,
   type BridgeBuildStep,
   type PendingBridgeBuild,
@@ -321,6 +322,11 @@ interface RunningBridgeBuild {
   syncJob: BridgeHostSyncJob | null;
   selectionJob: BridgeSelectionJob | null;
   reconcileJob: BridgeReconcileJob | null;
+  /** The sequence a newer arm replaced, until this one's sync has answered:
+   *  what it had chosen is what this build wants when nothing moved. Dropped
+   *  the moment the answer is in, so an abandoned selection is not held past
+   *  the one frame it can be inherited on. */
+  superseded: RunningBridgeBuild | null;
   spentMs: number;
   stepMaxMs: number;
 }
@@ -515,6 +521,7 @@ export default function CellBridgeNerves({
     const stepStartedAtMs = blockFrameNowMs();
     let finished = false;
     let repeatStep = false;
+    let resumedStep: BridgeBuildStep | null = null;
     try {
       if (step === 'sync') {
         const registry = registryRef.current;
@@ -553,6 +560,32 @@ export default function CellBridgeNerves({
             );
           }
           finished = true;
+        }
+        if (syncProgress.done && !finished) {
+          // ⭐ What a newer arm inherits. The restart at this step is kept —
+          // only the sync knows whether the two builds' hosts differ — but
+          // when it answers that none of them moved, the sequence this arm
+          // replaced was working towards this build's own answer, and
+          // re-selecting is re-deriving a part-built result. A burst that
+          // lands builds closer together than the pipeline used to leave the
+          // layer on the hosts of a build several landings old until it
+          // ended (L2-5). See `bridgeStepAfterSync` for why `moved === false`
+          // makes a part-run scan over the churned registry safe.
+          const superseded = running.superseded;
+          resumedStep = bridgeStepAfterSync(
+            running.syncJob.moved,
+            superseded?.step ?? null,
+            superseded !== null && superseded.pending.anchorIndex === anchorIndex,
+          );
+          if (superseded !== null && resumedStep !== 'select') {
+            running.selection = superseded.selection;
+            running.selectionJob = superseded.selectionJob;
+            running.reconcileJob = superseded.reconcileJob;
+          }
+          // Whatever it held is either this sequence's now or discarded; a
+          // build that gets no further than its own sync hands the next arm
+          // nothing, which is what `bridgeStepAfterSync` reads as null.
+          running.superseded = null;
         }
       } else if (step === 'select') {
         // ⚠️ The span is the SELECTION alone now — the reconcile is a step of
@@ -631,7 +664,9 @@ export default function CellBridgeNerves({
       if (elapsedMs > running.stepMaxMs) running.stepMaxMs = elapsedMs;
       // A step is spent whether it returned or threw — a sequence that retried
       // a step which had already failed would fail on every frame from here on.
-      const next = finished ? null : (repeatStep ? step : nextBridgeStep(step));
+      const next = finished
+        ? null
+        : (repeatStep ? step : (resumedStep ?? nextBridgeStep(step)));
       if (next === null) {
         if (runningRef.current === running) runningRef.current = null;
         blockFrameStats.observeBridge(running.spentMs, running.stepMaxMs);
@@ -694,6 +729,7 @@ export default function CellBridgeNerves({
         syncJob: null,
         selectionJob: null,
         reconcileJob: null,
+        superseded: abandoned,
         spentMs: abandoned?.spentMs ?? 0,
         stepMaxMs: abandoned?.stepMaxMs ?? 0,
       };

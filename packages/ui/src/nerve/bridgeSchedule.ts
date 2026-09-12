@@ -127,3 +127,38 @@ export function nextBridgeStep(step: BridgeBuildStep): BridgeBuildStep | null {
   if (step === 'select') return 'reconcile';
   return null;
 }
+
+/**
+ * Where a newer arm's sequence goes on from, once its own sync has answered.
+ *
+ * A newer arm restarts at `sync` and always will: hosts of two builds may not
+ * be mixed inside one selection, and only the sync knows whether they differ.
+ * But when that sync reports that nothing the selection READS has moved, the
+ * sequence this arm replaced was working towards the answer this one wants,
+ * and re-selecting for it is re-deriving a result that is already part-built.
+ * A backfill burst lands builds closer together than the pipeline (10–36
+ * slices warm, 39 cold), so a restart at `select` each time is what keeps the
+ * layer showing the hosts of a build several landings old until the burst
+ * ends (lane L2-5).
+ *
+ * ⭐ Why `moved === false` is enough to inherit a part-run selection, even
+ * though the registry it reads has been rewritten under it. The word is exact
+ * about the SET of `(id, degree)` over living Cells with every degree past
+ * the host ceiling collapsed onto one rung, so `false` means: every host the
+ * selection can choose is still there, at the degree it was at. A record that
+ * arrived, left, or changed degree without moving the word did so ABOVE the
+ * ceiling, and the scan skips those whenever it reaches them. The anchor
+ * index has to be the same object for the same reason the caller's own skip
+ * requires it — the plans are built against it.
+ */
+export function bridgeStepAfterSync(
+  hostsMoved: boolean,
+  supersededStep: BridgeBuildStep | null,
+  supersededAnchorHolds: boolean,
+): BridgeBuildStep {
+  if (hostsMoved) return 'select';
+  // A sequence still in its own sync has nothing chosen to inherit.
+  if (supersededStep === null || supersededStep === 'sync') return 'select';
+  if (!supersededAnchorHolds) return 'select';
+  return supersededStep;
+}

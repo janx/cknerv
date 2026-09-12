@@ -13,6 +13,7 @@ import {
   BRIDGE_STEP_ESTIMATE_MS,
   bridgeRunDecision,
   bridgeInputVersionMatches,
+  bridgeStepAfterSync,
   nextBridgeStep,
   type BridgeBuildStep,
   type PendingBridgeBuild,
@@ -130,5 +131,32 @@ describe('the bridge build as three steps', () => {
       select: 2,
       reconcile: 2,
     });
+  });
+});
+
+describe('what a newer arm inherits from the sequence it replaced', () => {
+  it('re-selects whenever the sync says a host moved', () => {
+    // The one thing the arm has always guaranteed: a selection over one
+    // build's hosts is never reconciled onto another build's strokes.
+    for (const step of ['select', 'reconcile'] as const) {
+      expect(bridgeStepAfterSync(true, step, true)).toBe('select');
+    }
+  });
+
+  it('takes the replaced sequence\'s place when its own sync moved nothing', () => {
+    expect(bridgeStepAfterSync(false, 'select', true)).toBe('select');
+    expect(bridgeStepAfterSync(false, 'reconcile', true)).toBe('reconcile');
+  });
+
+  it('re-selects for a sequence that was still in its own sync', () => {
+    // Nothing was chosen yet, so there is nothing to inherit.
+    expect(bridgeStepAfterSync(false, 'sync', true)).toBe('select');
+    expect(bridgeStepAfterSync(false, null, true)).toBe('select');
+  });
+
+  it('re-selects when the anchor index the plans were built against is gone', () => {
+    // A re-anchor arms a build of its own, and every plan is keyed on the
+    // index it was planned in.
+    expect(bridgeStepAfterSync(false, 'reconcile', false)).toBe('select');
   });
 });

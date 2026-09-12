@@ -194,6 +194,38 @@ describe('the bridge layer stays inside its own budget', () => {
     // A newer arm restarts the sequence rather than resuming it, so a
     // selection and the reconcile that lands it are always the same build's.
     expect(bridgeFrame).toContain("step: 'sync',");
+    // …and it carries the sequence it replaced, which the body's sync step
+    // either inherits or drops once it knows whether anything moved.
+    expect(bridgeFrame).toContain('superseded: abandoned,');
+  });
+
+  it('inherits a superseded selection when its own sync moved nothing', () => {
+    // L2-5: a burst lands builds closer together than the pipeline, and a
+    // restart at `select` each time left the layer on the hosts of a build
+    // several landings old until the burst ended. The restart at `sync` is
+    // kept — only the sync knows whether two builds' hosts differ — and its
+    // answer decides what the newer arm does with the abandoned work.
+    const body = LAYER_CODE.slice(
+      LAYER_CODE.indexOf('const runBridgeBuild ='),
+      LAYER_CODE.lastIndexOf('useEffect('),
+    );
+    expect(body).toContain('bridgeStepAfterSync(');
+    expect(body).toContain('running.syncJob.moved,');
+    // Inherited whole: the chosen bridges, the part-run selector, and the
+    // reconcile that was landing them.
+    for (const inherited of [
+      'running.selection = superseded.selection;',
+      'running.selectionJob = superseded.selectionJob;',
+      'running.reconcileJob = superseded.reconcileJob;',
+    ]) expect(body).toContain(inherited);
+    // Behind the skip, never in front of it: a build whose selection the
+    // layer already holds does no work at all, inherited or not.
+    expect(body.indexOf('finished = true;'))
+      .toBeLessThan(body.indexOf('bridgeStepAfterSync('));
+    // And the step the rule names is the step the sequence goes on from.
+    expect(body).toContain('resumedStep ?? nextBridgeStep(step)');
+    // Held for exactly the one frame it can be inherited on.
+    expect(body).toContain('running.superseded = null;');
   });
 
   it('gives a birth a parked hole before it grows the prefix', () => {

@@ -239,6 +239,25 @@ describe('bridge selection', () => {
 
     expect(reversed.bridges).toEqual(forward.bridges);
     expect(viaMap.bridges).toEqual(forward.bridges);
+
+    // …and with the two caches the layer keeps ACROSS builds, which is where
+    // an order could still hide: both are bounded, and a bounded cache
+    // evicts in the order it was written. D-3's A/B rests on this — the
+    // registry's own iteration order changed when its records became
+    // persistent, and the selection may not notice.
+    const planCache = new Map<number, BridgeHostPlan>();
+    const coverageCache = new Map<number, number>();
+    selectBridgeEdges(cells, index, { planCache, coverageCache });
+    const warm = selectBridgeEdges(cells, index, { planCache, coverageCache });
+    const warmReversed = selectBridgeEdges(
+      [...cells].reverse(), index, { planCache, coverageCache },
+    );
+    const warmViaMap = selectBridgeEdges(
+      shuffled.values(), index, { planCache, coverageCache },
+    );
+    expect(warm.bridges).toEqual(forward.bridges);
+    expect(warmReversed.bridges).toEqual(forward.bridges);
+    expect(warmViaMap.bridges).toEqual(forward.bridges);
   });
 
   it('honours the per-host ladder and the global budget', () => {
@@ -643,6 +662,45 @@ describe('bridge host registry', () => {
     // And the block after that, with nothing moved, is not a selection at all
     // — the caller's skip — which the registry says in one word.
     expect(syncBridgeHosts(registry, churned.map, churned.edges)).toBe(false);
+  });
+
+  it('lets a part-run selection finish over a registry a quiet build churned', () => {
+    // T10's premise. A newer arm restarts at `sync`, and when that sync says
+    // no host the selection READS has moved, the sequence it replaced keeps
+    // its part-run selection instead of starting over. The registry is one
+    // Map for the life of the layer, so that scan goes on reading the
+    // registry the new build just rewrote — and this is the case that says
+    // the churn a `false` permits is invisible to it: an arrival, a
+    // departure and a degree change, all above the host ceiling.
+    const registry = createBridgeHostRegistry();
+    const candidates = stagedCells(300, () => 0);
+    const excluded = stagedCells(300, () => 4, 301);
+    const leaving = stagedCells(10, () => 4, 701);
+    const first = stage([...candidates, ...excluded, ...leaving]);
+    expect(syncBridgeHosts(registry, first.map, first.edges)).toBe(true);
+
+    const job = createBridgeSelectionJob(registry.hosts.values(), index, {});
+    // Cut inside the candidate run, so the scan resumes over the live Map.
+    stepBridgeSelectionJob(job, 150);
+    expect(job.phase).toBe('scan');
+
+    const arriving = stagedCells(10, () => 4, 801);
+    const quiet = stage([
+      ...candidates,
+      ...excluded.map((cell) => (cell.id === 305 ? { ...cell, degree: 6 } : cell)),
+      ...arriving,
+    ]);
+    expect(syncBridgeHosts(registry, quiet.map, quiet.edges)).toBe(false);
+    // …and the registry really did move under the suspended scan.
+    expect(registry.hosts.has(701)).toBe(false);
+    expect(registry.hosts.has(801)).toBe(true);
+    expect(registry.hosts.get(305)!.degree).toBe(6);
+
+    while (!stepBridgeSelectionJob(job, 64).done) {}
+    expect(job.result!.bridges).toEqual(
+      selectBridgeEdges(registry.hosts.values(), index, {}).bridges,
+    );
+    expect(job.result!.bridges.length).toBeGreaterThan(0);
   });
 });
 
