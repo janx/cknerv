@@ -39,6 +39,23 @@ CKNERV_SKIP_UI_BUILD=1 cargo clippy --workspace --all-targets
 The normative Canvas visual, quality, performance, and acceptance contract is
 documented in [Canvas Design and Rendering Architecture](canvas-rendering.md).
 
+To rebuild the production SPA and check the complete recursive static JS
+closure that executes before bootstrap requests, run:
+
+```bash
+pnpm bootstrap:check
+```
+
+Vite emits its manifest plus `.vite/bootstrap-static-graph.json`; the checker
+locates the real entry through both, walks every static import once, and reports
+the commit, Node/pnpm/Vite versions, files, modules, raw bytes, and per-file
+standard-gzip total. It fails above 25,000 gzip bytes or if the static closure
+contains Three, R3F, drei, leva, or ReactDOM implementation modules. These are
+artifact sizes, not browser timing. The embedded CLI currently serves SPA
+assets as identity bytes; a same-machine hosted reverse proxy may compress
+them, so network measurements must record the actual response encoding and
+must not treat the checker gzip total as transferred bytes.
+
 The dashboard's optional SoundCloud Jukebox — the floating `SND·06` chip in
 the bottom-right corner — is documented in [Jukebox](jukebox.md).
 
@@ -114,6 +131,7 @@ cargo test --all
 
 pnpm test
 pnpm typecheck
+pnpm bootstrap:check
 
 cargo build --release -p cknerv-cli
 ```

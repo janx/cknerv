@@ -1,4 +1,4 @@
-import type { BootRequestSnapshot, BootSequenceSnapshot } from '@cknerv/ui';
+import type { BootRequestSnapshot, BootSequenceSnapshot } from '@cknerv/ui/boot';
 
 export const BOOT_SLOW_MS = 8_000;
 export const BOOT_RELOAD_MS = 30_000;
@@ -61,15 +61,19 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
   if (sequence.viewPresented) {
     return { state: 'presented', heading: '', detail: '', showReload: false, ...meshes };
   }
+  const failedModule = (sequence.modules ?? []).find((module) => module.state === 'failed');
   const failedPhase = sequence.phases.find((phase) => phase.state === 'failed');
   const finalRequestFailure = chain?.state === 'failed'
     ? chain
     : cells?.state === 'failed' && cells.transport === 'cells-json' ? cells : null;
-  if (finalRequestFailure || failedPhase) {
+  if (finalRequestFailure || failedModule || failedPhase) {
     return {
       state: 'failed',
       heading: 'UNABLE TO LOAD CKNERV',
-      detail: finalRequestFailure?.detail ?? failedPhase?.detail ?? 'Unknown startup error',
+      detail: finalRequestFailure?.detail
+        ?? failedModule?.detail
+        ?? failedPhase?.detail
+        ?? 'Unknown startup error',
       showReload: true,
       ...meshes,
     };
@@ -102,7 +106,26 @@ export function bootPresentation(sequence: BootSequenceSnapshot, nowMs: number):
     };
   }
   if (chain?.state === 'done' && cells?.state === 'done') {
-    const waitingMs = nowMs - (sequence.viewPreparingAtMs ?? nowMs);
+    const loadingModules = (sequence.modules ?? []).filter((module) => module.state === 'loading');
+    if (loadingModules.length > 0) {
+      const startedAtMs = Math.min(...loadingModules.map((module) => module.startedAtMs));
+      const waitingMs = nowMs - startedAtMs;
+      return {
+        state: waitingMs >= BOOT_SLOW_MS ? 'waiting' : 'view',
+        heading: waitingMs >= BOOT_SLOW_MS
+          ? 'STILL PREPARING THE VIEW'
+          : 'PREPARING THE VIEW',
+        detail: waitingMs >= BOOT_SLOW_MS ? 'APPLICATION MODULES ARE STILL LOADING' : '',
+        showReload: waitingMs >= BOOT_RELOAD_MS,
+        ...meshes,
+      };
+    }
+    // If data won the race, the module start is the stable clock until the
+    // mount handoff records `viewPreparingAtMs`. It never resets on repaint.
+    const waitingSince = sequence.viewPreparingAtMs
+      ?? sequence.moduleStartedAtMs
+      ?? nowMs;
+    const waitingMs = nowMs - waitingSince;
     return {
       state: 'view',
       heading: 'PREPARING THE VIEW',

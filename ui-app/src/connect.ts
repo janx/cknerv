@@ -20,14 +20,16 @@ import {
   beginBootRequest,
   completeBootRequest,
   completeBootPhase,
-  deriveNodeStreamHealth,
   failBootPhase,
   failBootRequest,
-  nodeStreamHealthLifecycleChanged,
   reportBootRequestProgress,
   reportBootRequestResponse,
+} from '@cknerv/ui/boot';
+import {
+  deriveNodeStreamHealth,
+  nodeStreamHealthLifecycleChanged,
   type NodeStreamHealth,
-} from '@cknerv/ui';
+} from '@cknerv/ui/stream-health';
 
 const API_BASE = '';
 
@@ -89,9 +91,10 @@ function parseContentLength(resp: Response): number | null {
 /** Read a snapshot body to bytes, reporting the byte count as it arrives.
  *
  * This is the only continuous measure in the boot sequence and it is exact:
- * the snapshot routes send a real `content-length` and no `content-encoding`,
- * so received/total is the true share of the download rather than an eased
- * guess. An environment without a streaming body still resolves — it just
+ * an identity response can supply a trustworthy `content-length`. Browsers
+ * expose decoded bytes for a compressed response while its length describes
+ * encoded bytes, so that case deliberately stays indeterminate. An environment
+ * without a streaming body still resolves — it just
  * reports once, at the end, which is the pre-existing behaviour plus a tick. */
 async function readSnapshotBody(
   resp: Response,

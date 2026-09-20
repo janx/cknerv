@@ -1143,6 +1143,7 @@ fn cap_declared_message(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::projection_registry::{ProjectionRuntimeTestExt, SnapshotEnvelope};
+    use cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_HEADER_BYTES;
 
     /// The block this projection cannot survive.
     const LANDMINE_BLOCK: u64 = 66;
@@ -1169,6 +1170,12 @@ mod tests {
 
         fn snapshot(&self) -> u64 {
             self.state
+        }
+
+        fn snapshot_bin(&self) -> Option<Vec<u8>> {
+            let mut bytes = vec![0; CELLS_COLUMNAR_HEADER_BYTES + 8];
+            bytes[CELLS_COLUMNAR_HEADER_BYTES..].copy_from_slice(&self.state.to_le_bytes());
+            Some(bytes)
         }
 
         fn save(&self) -> serde_json::Value {
@@ -1242,6 +1249,7 @@ mod tests {
         state.apply_mutation(block(1));
         let (good_revision, good_bytes) = landmine.snapshot_envelope(SnapshotEnvelope::Bare);
         assert_eq!(good_revision, 1);
+        let good_binary = landmine.snapshot_bin().expect("last-good binary");
 
         // The landmine block. `apply_mutation` must RETURN.
         assert_eq!(state.apply_mutation(block(LANDMINE_BLOCK)), 2);
@@ -1261,6 +1269,13 @@ mod tests {
         assert_eq!(
             landmine.snapshot_envelope(SnapshotEnvelope::Bare),
             (good_revision, good_bytes)
+        );
+        assert_eq!(
+            landmine
+                .snapshot_bin()
+                .expect("cached binary survives quarantine"),
+            good_binary,
+            "quarantine must serve the last successful binary generation"
         );
         // An envelope the cache does not hold has to go through the
         // projection's own lock — the one the panic poisoned. It answers
@@ -1302,6 +1317,30 @@ mod tests {
         assert!(quarantined["quarantine_reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("deliberate test panic")));
+    }
+
+    #[test]
+    fn quarantine_without_a_binary_cache_never_publishes_half_applied_bytes() {
+        let state = ServerState::new();
+        let applies = Arc::new(AtomicU64::new(0));
+        state
+            .projections
+            .write()
+            .unwrap()
+            .register(LandmineProjection { applies, state: 0 });
+        let landmine = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("landmine")
+            .unwrap();
+
+        state.apply_mutation(block(LANDMINE_BLOCK));
+        assert!(landmine.quarantine_reason().is_some());
+        assert!(
+            landmine.snapshot_bin().is_none(),
+            "poisoned half-applied state must not become a binary/gzip generation"
+        );
     }
 
     /// The entities stream snapshots this ring on every connect, exactly

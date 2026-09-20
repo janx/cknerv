@@ -1,4 +1,4 @@
-import { failBootPhase, getBootSequence, subscribeBootSequence, type BootPhaseId } from '@cknerv/ui';
+import { failBootPhase, getBootSequence, subscribeBootSequence, type BootPhaseId } from '@cknerv/ui/boot';
 import { bootPresentation } from './boot-presentation';
 
 export const BOOT_SHELL_ID = 'cknerv-startup';
@@ -39,7 +39,10 @@ export function installBootShellReadout(now: () => number = () => performance.no
     const requests = (state.requests ?? []).map((request) => (
       `${request.kind.toUpperCase()} #${request.attempt} ${request.transport.toUpperCase()} ${request.state.toUpperCase()}`
     ));
-    return [...phases, ...requests].join(' · ');
+    const modules = (state.modules ?? []).map((module) => (
+      `${module.id.toUpperCase()} ${module.state.toUpperCase()}`
+    ));
+    return [...phases, ...requests, ...modules].join(' · ');
   };
   const destroy = (): void => {
     if (destroyed) return;

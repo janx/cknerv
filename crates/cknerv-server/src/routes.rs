@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -29,6 +29,7 @@ use crate::state::ServerState;
 /// honest because an outpoint's bytes cannot change — see
 /// [`crate::cell_data`].
 const CELL_DATA_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+const SNAPSHOT_COMPRESSION_IN_FLIGHT: usize = 2;
 
 /// Upstream exceptions can contain private endpoints or credentials. Keep
 /// them in the operator's log; every detail route shares this public reply.
@@ -53,6 +54,7 @@ pub struct RouterState {
     pub shutdown_rx: watch::Receiver<bool>,
     pub enrichment_source: Option<Arc<dyn EnrichmentSource>>,
     pub cell_data: Option<Arc<CellDataGate>>,
+    pub snapshot_compression: Arc<Semaphore>,
 }
 
 /// A configured [`CellDataReader`] plus the only thing bounding it.
@@ -119,6 +121,7 @@ pub fn build_router(
         shutdown_rx,
         enrichment_source,
         cell_data,
+        snapshot_compression: Arc::new(Semaphore::new(SNAPSHOT_COMPRESSION_IN_FLIGHT)),
     })
 }
 
@@ -168,6 +171,7 @@ async fn projection_snapshot(
 /// projections look identical to the client's fallback probe.
 async fn projection_snapshot_bin(
     Path(name): Path<String>,
+    headers: HeaderMap,
     State(s): State<RouterState>,
 ) -> impl IntoResponse {
     let runner = match past_poison(s.state.projections.read()).lookup(&name) {
@@ -176,21 +180,152 @@ async fn projection_snapshot_bin(
             return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();
         }
     };
-    let Some((revision, bytes)) = runner.snapshot_bin() else {
+    let Some(snapshot) = runner.snapshot_bin_shared() else {
         return (
             StatusCode::NOT_FOUND,
             format!("projection {name} has no columnar snapshot"),
         )
             .into_response();
     };
-    (
-        [
-            ("content-type", "application/octet-stream".to_string()),
-            ("x-snapshot-revision", revision.to_string()),
-        ],
-        bytes,
-    )
-        .into_response()
+    let representation = match negotiate_snapshot_encoding(&headers) {
+        SnapshotEncoding::Identity => (snapshot.raw(), None),
+        SnapshotEncoding::Gzip => match snapshot.gzip(s.snapshot_compression.clone()).await {
+            Ok(bytes) => (bytes, Some("gzip")),
+            Err(error) => {
+                tracing::error!(projection = %name, revision = snapshot.revision(), %error,
+                    "binary snapshot compression failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "binary snapshot compression failed",
+                )
+                    .into_response();
+            }
+        },
+        SnapshotEncoding::NotAcceptable => {
+            return (
+                StatusCode::NOT_ACCEPTABLE,
+                "neither gzip nor identity is acceptable",
+            )
+                .into_response();
+        }
+    };
+    let (bytes, content_encoding) = representation;
+    let content_length = bytes.len();
+    let mut response = bytes.into_response();
+    let response_headers = response.headers_mut();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response_headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&content_length.to_string())
+            .expect("a byte length is a valid header"),
+    );
+    response_headers.insert(
+        "x-snapshot-revision",
+        HeaderValue::from_str(&snapshot.revision().to_string())
+            .expect("a revision is a valid header"),
+    );
+    if let Some(encoding) = content_encoding {
+        response_headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
+    }
+    response
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotEncoding {
+    Identity,
+    Gzip,
+    NotAcceptable,
+}
+
+/// Select between the two representations this route can produce.
+///
+/// Repeated tokens take their lowest quality and a malformed occurrence is
+/// quality zero. This conservative rule prevents a later wildcard or duplicate
+/// from undoing an explicit exclusion. Ties prefer gzip because it is the
+/// smaller representation; an explicit higher identity quality wins.
+fn negotiate_snapshot_encoding(headers: &HeaderMap) -> SnapshotEncoding {
+    let values: Vec<_> = headers.get_all(header::ACCEPT_ENCODING).iter().collect();
+    if values.is_empty() || values.iter().all(|value| value.as_bytes().is_empty()) {
+        return SnapshotEncoding::Identity;
+    }
+
+    let mut gzip: Option<u16> = None;
+    let mut identity: Option<u16> = None;
+    let mut wildcard: Option<u16> = None;
+    for value in values {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        for item in value.split(',') {
+            let mut parts = item.trim().split(';');
+            let token = parts.next().unwrap_or_default().trim().to_ascii_lowercase();
+            if token.is_empty() {
+                continue;
+            }
+            let mut quality = 1_000;
+            let mut malformed = false;
+            let mut saw_quality = false;
+            for parameter in parts {
+                let Some((name, raw)) = parameter.trim().split_once('=') else {
+                    malformed = true;
+                    continue;
+                };
+                if !name.trim().eq_ignore_ascii_case("q") {
+                    malformed = true;
+                    continue;
+                }
+                if saw_quality {
+                    malformed = true;
+                    continue;
+                }
+                saw_quality = true;
+                match parse_quality(raw.trim()) {
+                    Some(parsed) => quality = parsed,
+                    None => malformed = true,
+                }
+            }
+            if malformed {
+                quality = 0;
+            }
+            let target = match token.as_str() {
+                "gzip" => &mut gzip,
+                "identity" => &mut identity,
+                "*" => &mut wildcard,
+                _ => continue,
+            };
+            *target = Some(target.map_or(quality, |current| current.min(quality)));
+        }
+    }
+
+    let gzip = gzip.or(wildcard).unwrap_or(0);
+    let identity_explicit = identity;
+    let identity = identity_explicit.unwrap_or_else(|| if wildcard == Some(0) { 0 } else { 1_000 });
+    if gzip == 0 && identity == 0 {
+        SnapshotEncoding::NotAcceptable
+    } else if gzip > 0 && identity_explicit.is_none_or(|quality| gzip >= quality) {
+        SnapshotEncoding::Gzip
+    } else {
+        SnapshotEncoding::Identity
+    }
+}
+
+fn parse_quality(value: &str) -> Option<u16> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    match whole {
+        "0" => {
+            let padded = format!("{fraction:0<3}");
+            padded.parse().ok()
+        }
+        "1" if fraction.bytes().all(|byte| byte == b'0') => Some(1_000),
+        _ => None,
+    }
 }
 
 async fn projection_stream(
@@ -493,4 +628,204 @@ fn is_out_point_tx_hash(tx_hash: &str) -> bool {
         return false;
     };
     body.len() == 64 && body.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::http::Request;
+    use cknerv_core::{CellGalaxy, Mutation, SemanticsProjection};
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    use tower::ServiceExt;
+
+    fn encoding(value: Option<&str>) -> SnapshotEncoding {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = value {
+            headers.insert(
+                header::ACCEPT_ENCODING,
+                HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        negotiate_snapshot_encoding(&headers)
+    }
+
+    #[test]
+    fn binary_snapshot_encoding_negotiates_quality_and_exclusions() {
+        use SnapshotEncoding::{Gzip, Identity, NotAcceptable};
+
+        for value in ["gzip", "br, gzip, deflate", "GZip", "gzip;q=0.5", "*;q=1"] {
+            assert_eq!(encoding(Some(value)), Gzip, "{value}");
+        }
+        for value in [
+            "gzip;q=0",
+            "gzip;q=0.00",
+            "gzip;q=0.000",
+            "gzip;q=0, *;q=1",
+            "identity;q=1, gzip;q=0.5",
+        ] {
+            assert_eq!(encoding(Some(value)), Identity, "{value}");
+        }
+        assert_eq!(encoding(Some("identity;q=0, gzip;q=1")), Gzip);
+        assert_eq!(encoding(Some("identity;q=0, gzip;q=0")), NotAcceptable);
+        assert_eq!(encoding(Some("*;q=0")), NotAcceptable);
+        assert_eq!(encoding(None), Identity);
+        assert_eq!(encoding(Some("")), Identity);
+    }
+
+    #[test]
+    fn malformed_and_repeated_qualities_are_conservative() {
+        use SnapshotEncoding::Identity;
+
+        for value in [
+            "gzip;q=bogus",
+            "gzip;q=1.001",
+            "gzip;q=0.1234",
+            "gzip;q=1;level=9",
+            "gzip;q=1, gzip;q=0",
+            "gzip;q=0;q=1",
+            "gzip;q=0, *;q=1",
+        ] {
+            assert_eq!(encoding(Some(value)), Identity, "{value}");
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.append(header::ACCEPT_ENCODING, HeaderValue::from_static("br"));
+        headers.append(header::ACCEPT_ENCODING, HeaderValue::from_static("GZIP"));
+        assert_eq!(
+            negotiate_snapshot_encoding(&headers),
+            SnapshotEncoding::Gzip
+        );
+    }
+
+    #[tokio::test]
+    async fn binary_route_gzip_is_byte_exact_and_keeps_raw_ws_representation() {
+        let state = Arc::new(ServerState::new());
+        state
+            .projections
+            .write()
+            .unwrap()
+            .register(CellGalaxy::new());
+        state.apply_mutation(Mutation::ChainReorganized { from_block: 1 });
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let router = build_router(
+            state.clone(),
+            shutdown_rx,
+            None,
+            None,
+            BrowserAccessPolicy::PublicReadOnly,
+        );
+
+        let raw_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projections/cells/snapshot.bin")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(raw_response.status(), StatusCode::OK);
+        assert_eq!(raw_response.headers()[header::VARY], "Accept-Encoding");
+        assert!(raw_response
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .is_none());
+        let revision = raw_response.headers()["x-snapshot-revision"]
+            .to_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let raw = to_bytes(raw_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        let gzip_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projections/cells/snapshot.bin")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gzip_response.status(), StatusCode::OK);
+        assert_eq!(gzip_response.headers()[header::CONTENT_ENCODING], "gzip");
+        assert_eq!(
+            gzip_response.headers()["x-snapshot-revision"],
+            revision.to_string()
+        );
+        let declared = gzip_response.headers()[header::CONTENT_LENGTH]
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let gzip = to_bytes(gzip_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(declared, gzip.len());
+        let mut decoded = Vec::new();
+        GzDecoder::new(&gzip[..]).read_to_end(&mut decoded).unwrap();
+        assert_eq!(decoded, raw);
+        let offset = cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET;
+        assert_eq!(
+            u64::from_le_bytes(raw[offset..offset + 8].try_into().unwrap()),
+            revision
+        );
+
+        // HTTP negotiation never changes the runtime method consumed by the
+        // WebSocket `bin=1` snapshot path.
+        let runtime = state.projections.read().unwrap().lookup("cells").unwrap();
+        assert_eq!(runtime.snapshot_bin().unwrap(), (revision, raw));
+    }
+
+    #[tokio::test]
+    async fn binary_route_preserves_404_and_returns_406_only_for_a_real_binary_projection() {
+        let state = Arc::new(ServerState::new());
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register(CellGalaxy::new());
+            projections.register_enrichment(SemanticsProjection::default());
+        }
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let router = build_router(
+            state,
+            shutdown_rx,
+            None,
+            None,
+            BrowserAccessPolicy::PublicReadOnly,
+        );
+        for path in [
+            "/api/projections/missing/snapshot.bin",
+            "/api/projections/semantics/snapshot.bin",
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::ACCEPT_ENCODING, "*;q=0")
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projections/cells/snapshot.bin")
+                    .header(header::ACCEPT_ENCODING, "*;q=0")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+    }
 }

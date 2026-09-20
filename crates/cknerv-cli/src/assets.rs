@@ -26,6 +26,9 @@ use crate::config::ResolvedGalaxyConfig;
 // It stays as a standing guarantee: flipping sourcemaps on for a local debug
 // session must never quietly add megabytes of `.map` to the shipped binary.
 #[exclude = "*.map"]
+// Build-observation metadata can contain local absolute module paths. It is an
+// input to `pnpm bootstrap:check`, never a public SPA asset.
+#[exclude = ".vite/**"]
 struct Assets;
 
 pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");

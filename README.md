@@ -84,6 +84,9 @@ never submits transactions.
 - [`docs/plans/2026-09-11-rendering-performance.md`](docs/plans/2026-09-11-rendering-performance.md):
   the rendering performance optimization plan, implementation stages, and
   verification targets.
+- [`docs/plans/2026-09-19-bootstrap-performance.md`](docs/plans/2026-09-19-bootstrap-performance.md):
+  the bootstrap snapshot compression and startup bundle splitting plan,
+  including concurrency boundaries and startup acceptance checks.
 - [`docs/ckbadger.md`](docs/ckbadger.md): the optional enrichment source — its
   setup, trust boundary, capabilities, and limits.
 - [`docs/jukebox.md`](docs/jukebox.md): the dashboard's optional SoundCloud

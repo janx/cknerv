@@ -147,10 +147,22 @@ topology-worker state while preserving a single shared data contract.
 
 ### 4.1 Bootstrap and stream recovery
 
-`ui-app/src/main.tsx` resolves review and quality query state, then fetches the
-chain snapshot and Cell projection snapshot in parallel before mounting the
-application. The Cell bootstrap prefers the compact binary snapshot endpoint
-and falls back to JSON if binary loading or decoding fails.
+The static entry resolves review and quality query state and starts the chain
+and Cell snapshot requests before loading the selected App/Review Lab,
+`react-dom/client`, and diagnostic hook chunks in parallel. It mounts only
+after both data responses and every required module are ready. The Cell
+bootstrap prefers the gzip-negotiated columnar endpoint and falls back to JSON
+if binary loading or decoding fails. Because browser fetch readers expose
+decoded bytes while `Content-Length` can describe encoded bytes, compressed
+progress stays byte-counted and indeterminate rather than showing a false
+percentage.
+
+Module loading has its own boot-record states and clock. A chunk failure is
+shown by the static error surface with `RELOAD`; when data is complete but a
+module is still loading, the shell keeps preparing and exposes `RELOAD` after
+30 seconds from the original module start. The Pulse diagnostics install even
+when data loading fails. The optional CellField hook installs before the first
+App render and therefore before the initial cache ingest on `?dev=1`.
 
 The static startup layer is outside `#root` and remains over the mounted App
 until the current Canvas's scene/camera/renderer tuple reaches the scene's

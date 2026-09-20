@@ -40,7 +40,7 @@ diagnostic summary; underlying exception details stay in server logs.
 | `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes, peers }` |
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the staged set, not the whole retained galaxy |
-| `GET` | `/api/projections/cells/snapshot.bin` | Columnar little-endian snapshot (~9x smaller); revision patched into the header and mirrored in `x-snapshot-revision` |
+| `GET` | `/api/projections/cells/snapshot.bin` | Columnar little-endian snapshot; negotiates identity/gzip, with revision patched into the decoded header and mirrored in `x-snapshot-revision` |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/cells/:tx_hash/:output_index/data` | One Cell's complete output data read from the node; canonical, so it answers in every mode; immutable-cached, `413` over 2 MiB |
 | `GET` | `/api/projections/semantics/snapshot` | Optional indexed-enrichment snapshot; present even when disabled |
@@ -51,6 +51,23 @@ diagnostic summary; underlying exception details stay in server logs.
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
+
+The binary route selects between raw (`identity`) and gzip using
+`Accept-Encoding`, including multiple header lines, case-insensitive tokens,
+wildcards, and `q` values. A positive gzip quality is selected unless an
+explicit `identity` token has a higher quality; explicit exclusions override a
+wildcard. Missing or empty headers retain the raw response. If both gzip and
+identity are excluded, the route returns `406`. Malformed parameters and
+duplicate encodings are handled conservatively: the lowest quality wins and a
+malformed item has quality zero. Unknown projections and projections without a
+columnar form still return `404`, which is what lets the browser fall back to
+the JSON route.
+
+Both successful representations carry `Vary: Accept-Encoding`,
+`Content-Type: application/octet-stream`, `Content-Length` for the bytes sent,
+and `x-snapshot-revision`. Only the compressed form carries
+`Content-Encoding: gzip`. Decompressing it yields exactly the raw columnar
+buffer. WebSocket `?bin=1` snapshots remain raw columnar frames.
 
 A cells snapshot carries the rows the display plane has staged, not every
 retained Cell — on mainnet the retained set runs about four times the stage,

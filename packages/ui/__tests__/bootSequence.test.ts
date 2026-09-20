@@ -2,11 +2,14 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   beginBootPhase,
+  beginBootModule,
   beginBootRequest,
   completeBootPhase,
+  completeBootModule,
   completeBootRequest,
   completeBootSeeding,
   failBootPhase,
+  failBootModule,
   getBootSequence,
   reportBootRequestProgress,
   reportBootRequestResponse,
@@ -134,6 +137,36 @@ describe('boot sequence — phase transitions', () => {
     beginBootPhase('decode');
     expect(getBootSequence()).toBe(settled);
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('boot sequence — asynchronously loaded modules', () => {
+  it('records start, readiness and failure independently from data phases', () => {
+    beginBootModule('view', 10);
+    beginBootModule('react-dom', 11);
+    completeBootModule('view', 20);
+    failBootModule('react-dom', 21, 'chunk unavailable');
+    expect(getBootSequence().modules).toEqual([
+      { id: 'view', state: 'ready', startedAtMs: 10, settledAtMs: 20 },
+      {
+        id: 'react-dom',
+        state: 'failed',
+        startedAtMs: 11,
+        settledAtMs: 21,
+        detail: 'chunk unavailable',
+      },
+    ]);
+    expect(phase('snapshot')?.state).toBe('pending');
+  });
+
+  it('keeps the first terminal result and timestamps monotonic', () => {
+    beginBootModule('cell-field', 20);
+    beginBootModule('cell-field', 30);
+    completeBootModule('cell-field', 5);
+    failBootModule('cell-field', 40, 'late failure');
+    expect(getBootSequence().modules).toEqual([
+      { id: 'cell-field', state: 'ready', startedAtMs: 20, settledAtMs: 20 },
+    ]);
   });
 });
 

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
+    "bootstrap:check": "tsc -b && vite build && node ../scripts/check-bootstrap-bundle.mjs",
     "dev": "vite",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
