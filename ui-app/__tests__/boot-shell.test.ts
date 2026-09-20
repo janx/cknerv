@@ -3,9 +3,11 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   beginBootPhase,
+  beginBootModule,
   beginBootRequest,
   completeBootPhase,
   completeBootRequest,
+  failBootModule,
   failBootPhase,
   getBootSequence,
   markBootViewPreparing,
@@ -209,6 +211,30 @@ describe('observed presentation', () => {
     completeBootRequest('chain', chain, 5);
     markBootViewPreparing(6);
     expect(bootPresentation(getBootSequence(), 6).heading).toBe('PREPARING THE VIEW');
+  });
+
+  it('uses the module start clock after snapshots finish and exposes reload at 30 seconds', () => {
+    const chain = beginBootRequest('chain', 'chain-json', 0);
+    const cells = beginBootRequest('cells', 'cells-binary', 0);
+    completeBootRequest('chain', chain, 2);
+    completeBootRequest('cells', cells, 2);
+    beginBootModule('view', 3);
+    expect(bootPresentation(getBootSequence(), 30_002).showReload).toBe(false);
+    expect(bootPresentation(getBootSequence(), 30_003)).toMatchObject({
+      state: 'waiting',
+      heading: 'STILL PREPARING THE VIEW',
+      showReload: true,
+    });
+  });
+
+  it('attributes a chunk failure to its module and makes reload available immediately', () => {
+    beginBootModule('react-dom', 1);
+    failBootModule('react-dom', 2, 'react-dom chunk unavailable');
+    expect(bootPresentation(getBootSequence(), 2)).toMatchObject({
+      state: 'failed',
+      detail: 'react-dom chunk unavailable',
+      showReload: true,
+    });
   });
 
   it('keeps the two request meshes independent and leaves the center open until presentation', () => {

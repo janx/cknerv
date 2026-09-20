@@ -7,7 +7,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./helix": "./src/helix.ts"
+    "./helix": "./src/helix.ts",
+    "./boot": "./src/boot.ts",
+    "./quality": "./src/quality.ts",
+    "./stream-health": "./src/stream-health.ts"
   },
   "scripts": {
     "benchmark:rendering": "../../node_modules/.pnpm/node_modules/.bin/esbuild benchmarks/rendering/cpu.ts --bundle --platform=node --format=esm --loader:.woff2=empty --outfile=/tmp/cknerv-rendering-cpu.mjs && node --expose-gc /tmp/cknerv-rendering-cpu.mjs",

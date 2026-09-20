@@ -106,6 +106,36 @@ reservoir this procedure hydrates (50,000 Cells) is larger than the
 (The projection name in the route path is literally `cells` — it is
 `CellGalaxy::name()`.)
 
+Verify both HTTP representations against one settled revision. Disable any
+client auto-decompression when recording encoded bytes:
+
+```bash
+curl -sS -H 'Accept-Encoding: identity' -D /tmp/cknerv-raw.headers \
+  -o /tmp/cknerv-cells.raw \
+  http://localhost:17001/api/projections/cells/snapshot.bin
+curl -sS --raw -H 'Accept-Encoding: gzip' -D /tmp/cknerv-gzip.headers \
+  -o /tmp/cknerv-cells.gz \
+  http://localhost:17001/api/projections/cells/snapshot.bin
+gzip -dc /tmp/cknerv-cells.gz | cmp - /tmp/cknerv-cells.raw
+grep -i '^vary:.*accept-encoding' /tmp/cknerv-raw.headers
+grep -i '^content-encoding: gzip' /tmp/cknerv-gzip.headers
+test "$(grep -i '^x-snapshot-revision:' /tmp/cknerv-raw.headers | tr -d '\r')" = \
+     "$(grep -i '^x-snapshot-revision:' /tmp/cknerv-gzip.headers | tr -d '\r')"
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Accept-Encoding: identity;q=0, gzip;q=0' \
+  http://localhost:17001/api/projections/cells/snapshot.bin)" = 406
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  http://localhost:17001/api/projections/semantics/snapshot.bin)" = 404
+```
+
+In DevTools, confirm the two bootstrap requests start while the App and
+ReactDOM chunks are still loading. Throttle or block one chunk: the static
+shell must remain visible, name the module failure, and keep `RELOAD`
+available. With a delayed App and an advancing chain, the mounted streams must
+resume from the snapshot's own revision; a gap beyond ring coverage must take
+the normal full-resync path. On `?dev=1`, the first Cell cache ingest must be
+present in `window.__cellFieldStats()`; the ordinary page must expose no hook.
+
 The corresponding required WebSocket routes are:
 
 - `/api/entities/chain/stream?since=<revision>`

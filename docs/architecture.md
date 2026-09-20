@@ -566,6 +566,10 @@ state slices:
   global revision come from the same point.
 - A projection snapshot reads projection state and projection revision under
   its own read lock, so the pair cannot drift.
+- A canonical projection commits its new revision and retires its snapshot
+  generation before releasing that same write lock. Cache publication checks
+  the current revision while holding the cache lock, so a slow serializer from
+  an older generation cannot replace the current bytes.
 - Ordinary enrichment reads canonical context and validates its anchor again
   at application time.
 - Galaxy composition takes one coordination write guard to revalidate and
@@ -631,7 +635,14 @@ Projection runtimes cache serialized output by revision. A JSON envelope is
 built directly around the serializable projection snapshot instead of first
 building and then re-encoding a generic `serde_json::Value`. CellGalaxy also
 caches columnar bytes; the server patches the matching revision into the
-binary header.
+binary header. Raw bytes and their lazily built gzip form belong to one shared
+generation. Only an HTTP request that selects gzip starts compression;
+concurrent requests share the same detached build and later requests reuse its
+`Bytes`. Compression runs on Tokio's blocking pool behind a two-per-server
+semaphore, outside projection/cache locks. Retiring a generation drops the
+runner's reference while in-flight users may finish safely; an old completion
+cannot attach itself to the new generation. The WebSocket binary path always
+reads the raw member.
 
 ## 8. HTTP and WebSocket Protocol
 
@@ -647,7 +658,7 @@ the reorg, rebuild, and replay behavior a consumer has to handle.
 | `GET /api/entities/chain/snapshot` | JSON | `{revision, chain, chain_nodes, peers}` |
 | `GET /api/entities/chain/stream?since=N` | WebSocket | Entity snapshot/delta/replay/heartbeat |
 | `GET /api/projections/:name/snapshot` | JSON | `{revision, snapshot}`; built-ins include `cells` and `semantics` |
-| `GET /api/projections/:name/snapshot.bin` | Bytes | Columnar snapshot when supported, otherwise 404 |
+| `GET /api/projections/:name/snapshot.bin` | Bytes | Identity/gzip columnar snapshot when supported; 406 when neither representation is acceptable, otherwise 404 when absent |
 | `GET /api/projections/:name/stream?since=N` | WebSocket | Projection stream |
 | `GET /api/projections/:name/stream?since=N&bin=1` | WebSocket | Resync snapshot may be binary |
 | `GET /api/cells/:tx_hash/:output_index/data` | Bytes | One Cell's complete output data from the node; present in every mode; immutable-cached |

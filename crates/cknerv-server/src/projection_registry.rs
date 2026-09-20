@@ -19,13 +19,16 @@
 //! internal `RwLock`), record the deltas, then release before broadcasting,
 //! so we never hold a sync lock across an `.await`.
 
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LockResult, Mutex, OnceLock, PoisonError, RwLock};
 
 use axum::body::Bytes;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde_json::value::RawValue;
 use serde_json::Value;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch, Semaphore};
 
 use cknerv_core::{EnrichmentEvent, EnrichmentProjection, Projection, RevisionedMutation, Ring};
 
@@ -196,39 +199,184 @@ struct SnapshotCache {
     revision: Option<u64>,
     bare: Option<Bytes>,
     frame: Option<Bytes>,
-    bin: Option<Bytes>,
+    bin: Option<Arc<BinarySnapshot>>,
 }
 
 impl SnapshotCache {
-    fn slot(&mut self, envelope: Option<SnapshotEnvelope>) -> &mut Option<Bytes> {
+    fn json_slot(&mut self, envelope: SnapshotEnvelope) -> &mut Option<Bytes> {
         match envelope {
-            Some(SnapshotEnvelope::Bare) => &mut self.bare,
-            Some(SnapshotEnvelope::Frame) => &mut self.frame,
-            None => &mut self.bin,
+            SnapshotEnvelope::Bare => &mut self.bare,
+            SnapshotEnvelope::Frame => &mut self.frame,
         }
     }
 
-    fn get(&mut self, envelope: Option<SnapshotEnvelope>, revision: u64) -> Option<Bytes> {
+    fn get_json(&mut self, envelope: SnapshotEnvelope, revision: u64) -> Option<Bytes> {
         if self.revision != Some(revision) {
             return None;
         }
-        self.slot(envelope).clone()
+        self.json_slot(envelope).clone()
     }
 
-    fn put(&mut self, envelope: Option<SnapshotEnvelope>, revision: u64, bytes: Bytes) {
+    fn get_bin(&self, revision: u64) -> Option<Arc<BinarySnapshot>> {
+        (self.revision == Some(revision))
+            .then(|| self.bin.clone())
+            .flatten()
+    }
+
+    fn prepare_revision(&mut self, revision: u64) {
         if self.revision != Some(revision) {
             *self = Self {
                 revision: Some(revision),
                 ..Default::default()
             };
         }
-        *self.slot(envelope) = Some(bytes);
     }
 
     fn clear(&mut self) {
         if self.revision.is_some() {
             *self = Self::default();
         }
+    }
+}
+
+type GzipResult = Result<Bytes, Arc<str>>;
+
+enum GzipState {
+    Empty,
+    Pending(watch::Receiver<Option<GzipResult>>),
+    Ready(GzipResult),
+}
+
+/// Raw and compressed representations of one immutable binary snapshot.
+///
+/// The detached builder owns the work once it starts. Dropping the request
+/// that happened to start it therefore cannot cancel the compression, release
+/// its permit early, or strand other waiters. A runner cache keeps only the
+/// current generation; an older generation remains alive exactly as long as
+/// its in-flight request/build references do.
+pub struct BinarySnapshot {
+    revision: u64,
+    raw: Bytes,
+    gzip: Mutex<GzipState>,
+    gzip_builds: AtomicU64,
+    #[cfg(test)]
+    gzip_probe: Mutex<Option<Arc<GzipTestProbe>>>,
+}
+
+#[cfg(test)]
+struct GzipTestProbe {
+    started: tokio::sync::mpsc::UnboundedSender<()>,
+    release: Arc<(Mutex<bool>, std::sync::Condvar)>,
+    active: std::sync::atomic::AtomicUsize,
+    max_active: std::sync::atomic::AtomicUsize,
+    fail: bool,
+}
+
+impl BinarySnapshot {
+    fn new(revision: u64, raw: Bytes) -> Self {
+        Self {
+            revision,
+            raw,
+            gzip: Mutex::new(GzipState::Empty),
+            gzip_builds: AtomicU64::new(0),
+            #[cfg(test)]
+            gzip_probe: Mutex::new(None),
+        }
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub fn raw(&self) -> Bytes {
+        self.raw.clone()
+    }
+
+    pub async fn gzip(self: &Arc<Self>, permits: Arc<Semaphore>) -> GzipResult {
+        let mut receiver = {
+            let mut state = past_poison(self.gzip.lock());
+            match &*state {
+                GzipState::Ready(result) => return result.clone(),
+                GzipState::Pending(receiver) => receiver.clone(),
+                GzipState::Empty => {
+                    let (sender, receiver) = watch::channel(None);
+                    *state = GzipState::Pending(receiver.clone());
+                    let snapshot = self.clone();
+                    tokio::spawn(async move {
+                        let result = match permits.acquire_owned().await {
+                            Ok(permit) => {
+                                let raw = snapshot.raw.clone();
+                                snapshot.gzip_builds.fetch_add(1, Ordering::Relaxed);
+                                #[cfg(test)]
+                                let probe = past_poison(snapshot.gzip_probe.lock()).clone();
+                                match tokio::task::spawn_blocking(move || {
+                                    // Keep the permit in the blocking closure: aborting
+                                    // an async waiter cannot admit a third CPU task.
+                                    let _permit = permit;
+                                    #[cfg(test)]
+                                    if let Some(probe) = &probe {
+                                        let active =
+                                            probe.active.fetch_add(1, Ordering::SeqCst) + 1;
+                                        probe.max_active.fetch_max(active, Ordering::SeqCst);
+                                        let _ = probe.started.send(());
+                                        let (lock, wake) = &*probe.release;
+                                        let mut released = past_poison(lock.lock());
+                                        while !*released {
+                                            released = past_poison(wake.wait(released));
+                                        }
+                                        probe.active.fetch_sub(1, Ordering::SeqCst);
+                                        if probe.fail {
+                                            return Err(Arc::<str>::from("injected gzip failure"));
+                                        }
+                                    }
+                                    let mut encoder =
+                                        GzEncoder::new(Vec::new(), Compression::fast());
+                                    encoder
+                                        .write_all(&raw)
+                                        .and_then(|_| encoder.finish())
+                                        .map(Bytes::from)
+                                        .map_err(|error| Arc::<str>::from(error.to_string()))
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => Err(Arc::<str>::from(format!(
+                                        "snapshot gzip task failed: {error}"
+                                    ))),
+                                }
+                            }
+                            Err(error) => Err(Arc::<str>::from(format!(
+                                "snapshot gzip limiter closed: {error}"
+                            ))),
+                        };
+                        *past_poison(snapshot.gzip.lock()) = GzipState::Ready(result.clone());
+                        let _ = sender.send(Some(result));
+                    });
+                    receiver
+                }
+            }
+        };
+
+        loop {
+            if let Some(result) = receiver.borrow().clone() {
+                return result;
+            }
+            if receiver.changed().await.is_err() {
+                return Err(Arc::<str>::from(
+                    "snapshot gzip builder ended without a result",
+                ));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn install_gzip_probe(&self, probe: Arc<GzipTestProbe>) {
+        *past_poison(self.gzip_probe.lock()) = Some(probe);
+    }
+
+    #[cfg(test)]
+    fn gzip_build_count(&self) -> u64 {
+        self.gzip_builds.load(Ordering::Relaxed)
     }
 }
 
@@ -261,6 +409,13 @@ pub trait ProjectionRuntime: Send + Sync {
     /// Columnar (binary) snapshot with the revision patched into its header
     /// slot; `None` for projections without a binary form.
     fn snapshot_bin(&self) -> Option<(u64, Bytes)> {
+        self.snapshot_bin_shared()
+            .map(|snapshot| (snapshot.revision(), snapshot.raw()))
+    }
+    /// The shared binary generation used by HTTP representation negotiation.
+    /// WS callers continue through [`Self::snapshot_bin`] and always receive
+    /// the raw columnar bytes.
+    fn snapshot_bin_shared(&self) -> Option<Arc<BinarySnapshot>> {
         None
     }
     /// Snapshot the delta ring (oldest → newest).
@@ -319,6 +474,8 @@ pub struct ProjectionRunner<P: Projection> {
     ring: Ring<SharedDelta>,
     snapshots: Mutex<SnapshotCache>,
     quarantine: Quarantine,
+    #[cfg(test)]
+    commit_pause: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
 }
 
 impl<P: Projection> ProjectionRunner<P> {
@@ -334,6 +491,8 @@ impl<P: Projection> ProjectionRunner<P> {
             ring: Ring::with_capacity(PROJECTION_DELTA_RING_CAP),
             snapshots: Mutex::new(SnapshotCache::default()),
             quarantine: Quarantine::default(),
+            #[cfg(test)]
+            commit_pause: Mutex::new(None),
         }
     }
 
@@ -345,14 +504,42 @@ impl<P: Projection> ProjectionRunner<P> {
     /// apply that panicked never reached the revision store or the cache
     /// clear below it, so both still describe the last state that applied
     /// cleanly, and every later caller is served those same bytes.
-    fn cached(&self, envelope: Option<SnapshotEnvelope>) -> Option<(u64, Bytes)> {
-        let revision = self.revision.load(Ordering::Relaxed);
-        let hit = past_poison(self.snapshots.lock()).get(envelope, revision)?;
+    fn cached_json(&self, envelope: SnapshotEnvelope) -> Option<(u64, Bytes)> {
+        let revision = self.revision.load(Ordering::Acquire);
+        let hit = past_poison(self.snapshots.lock()).get_json(envelope, revision)?;
         Some((revision, hit))
     }
 
-    fn remember(&self, envelope: Option<SnapshotEnvelope>, revision: u64, bytes: &Bytes) {
-        past_poison(self.snapshots.lock()).put(envelope, revision, bytes.clone());
+    fn cached_bin(&self) -> Option<Arc<BinarySnapshot>> {
+        let revision = self.revision.load(Ordering::Acquire);
+        past_poison(self.snapshots.lock()).get_bin(revision)
+    }
+
+    fn remember_json(&self, envelope: SnapshotEnvelope, revision: u64, bytes: Bytes) -> Bytes {
+        let mut cache = past_poison(self.snapshots.lock());
+        if self.revision.load(Ordering::Acquire) != revision {
+            return bytes;
+        }
+        cache.prepare_revision(revision);
+        let slot = cache.json_slot(envelope);
+        if let Some(current) = slot {
+            return current.clone();
+        }
+        *slot = Some(bytes.clone());
+        bytes
+    }
+
+    fn remember_bin(&self, candidate: Arc<BinarySnapshot>) -> Arc<BinarySnapshot> {
+        let mut cache = past_poison(self.snapshots.lock());
+        if self.revision.load(Ordering::Acquire) != candidate.revision {
+            return candidate;
+        }
+        cache.prepare_revision(candidate.revision);
+        if let Some(current) = &cache.bin {
+            return current.clone();
+        }
+        cache.bin = Some(candidate.clone());
+        candidate
     }
 }
 
@@ -362,7 +549,7 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
     }
 
     fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, Bytes) {
-        if let Some(hit) = self.cached(Some(envelope)) {
+        if let Some(hit) = self.cached_json(envelope) {
             return hit;
         }
         // The read lock covers TAKING the snapshot, never WRITING it out.
@@ -373,29 +560,41 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         // pair a client resumes from stays consistent.
         let (revision, snap) = {
             let p = past_poison(self.inner.read());
-            (self.revision.load(Ordering::Relaxed), p.snapshot())
+            (self.revision.load(Ordering::Acquire), p.snapshot())
         };
         let bytes = Bytes::from(serialize_envelope(envelope, revision, &snap).into_bytes());
-        self.remember(Some(envelope), revision, &bytes);
+        let bytes = self.remember_json(envelope, revision, bytes);
         (revision, bytes)
     }
 
-    fn snapshot_bin(&self) -> Option<(u64, Bytes)> {
-        if let Some(hit) = self.cached(None) {
+    fn snapshot_bin_shared(&self) -> Option<Arc<BinarySnapshot>> {
+        if let Some(hit) = self.cached_bin() {
             return Some(hit);
+        }
+        // JSON historically exposes a half-applied frozen state when no last
+        // good cache exists. Binary snapshots feed a compressed cache that can
+        // outlive the request, so never construct one from poisoned or already
+        // quarantined state. A last-good binary hit returned above remains
+        // readable after quarantine.
+        if self.quarantine.reason().is_some() || self.inner.is_poisoned() {
+            return None;
         }
         // Read the revision under the SAME projection read-lock as the
         // snapshot so the patched header cannot drift from the rows.
-        let (revision, mut bytes) = {
-            let p = past_poison(self.inner.read());
-            (self.revision.load(Ordering::Relaxed), p.snapshot_bin()?)
+        let snapshot = {
+            let p = self.inner.read().ok()?;
+            let revision = self.revision.load(Ordering::Acquire);
+            let mut bytes = p.snapshot_bin()?;
+            bytes[cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET
+                ..cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET + 8]
+                .copy_from_slice(&revision.to_le_bytes());
+            // Publish/converge the lightweight generation handle before the
+            // read lock is released. Mutation commit cannot retire revision R
+            // between capture and publication, so every concurrent R builder
+            // converges on one gzip single-flight object.
+            self.remember_bin(Arc::new(BinarySnapshot::new(revision, Bytes::from(bytes))))
         };
-        bytes[cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET
-            ..cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET + 8]
-            .copy_from_slice(&revision.to_le_bytes());
-        let bytes = Bytes::from(bytes);
-        self.remember(None, revision, &bytes);
-        Some((revision, bytes))
+        Some(snapshot)
     }
 
     fn delta_ring_snapshot(&self) -> Vec<SharedDelta> {
@@ -459,19 +658,29 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         // wedge the reducer task. (Same discipline as simulator.)
         let deltas = {
             let mut p = past_poison(self.inner.write());
-            p.apply_mutation(&rm.mutation)
+            let deltas = p.apply_mutation(&rm.mutation);
+            #[cfg(test)]
+            if let Some((entered, release)) = past_poison(self.commit_pause.lock()).clone() {
+                entered.wait();
+                release.wait();
+            }
+            // State, cursor publication and cache retirement are one commit
+            // while the projection write lock is held. A reader can observe
+            // the complete old generation or the complete new one, never new
+            // rows carrying the old revision.
+            self.revision.store(rm.revision, Ordering::Release);
+            past_poison(self.snapshots.lock()).clear();
+            deltas
         };
         // Always advance our revision to match the EntityStore's. Even
         // if no deltas were emitted, the revision moves forward so a
         // client at `since=N-1` knows we processed mutation N. Cached
         // snapshots die with the revision they described — holding one no
         // client can be served is pure resident memory.
-        self.revision.store(rm.revision, Ordering::Relaxed);
-        past_poison(self.snapshots.lock()).clear();
         for d in deltas {
-            // Serialized HERE, inside the same lock scope the revision
-            // store and the cache clear share, so a snapshot taken after
-            // this point already contains what the delta describes.
+            // Serialize after the state/revision commit and before fan-out.
+            // Snapshot readers already see the complete committed generation;
+            // the ring/broadcast ordering remains unchanged.
             let value = delta_to_wire(&d);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
             let entry: SharedDelta = Arc::new(DeltaEntry {
@@ -786,6 +995,195 @@ mod tests {
         }
     }
 
+    fn gzip_probe(fail: bool) -> (Arc<GzipTestProbe>, tokio::sync::mpsc::UnboundedReceiver<()>) {
+        let (started, receiver) = tokio::sync::mpsc::unbounded_channel();
+        (
+            Arc::new(GzipTestProbe {
+                started,
+                release: Arc::new((Mutex::new(false), std::sync::Condvar::new())),
+                active: std::sync::atomic::AtomicUsize::new(0),
+                max_active: std::sync::atomic::AtomicUsize::new(0),
+                fail,
+            }),
+            receiver,
+        )
+    }
+
+    fn release_gzip_probe(probe: &GzipTestProbe) {
+        let (lock, wake) = &*probe.release;
+        *past_poison(lock.lock()) = true;
+        wake.notify_all();
+    }
+
+    struct GzipProbeRelease(Arc<GzipTestProbe>);
+
+    impl Drop for GzipProbeRelease {
+        fn drop(&mut self) {
+            release_gzip_probe(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn gzip_is_single_flight_survives_a_cancelled_starter_and_hits_hot_without_a_permit() {
+        let snapshot = Arc::new(BinarySnapshot::new(7, Bytes::from(vec![b'x'; 64 * 1024])));
+        let (probe, mut started) = gzip_probe(false);
+        let _release_on_drop = GzipProbeRelease(probe.clone());
+        snapshot.install_gzip_probe(probe.clone());
+        let permits = Arc::new(Semaphore::new(1));
+
+        let first_snapshot = snapshot.clone();
+        let first_permits = permits.clone();
+        let first = tokio::spawn(async move { first_snapshot.gzip(first_permits).await });
+        started.recv().await.expect("the blocking build started");
+        first.abort();
+
+        let second_snapshot = snapshot.clone();
+        let second_permits = permits.clone();
+        let second = tokio::spawn(async move { second_snapshot.gzip(second_permits).await });
+        release_gzip_probe(&probe);
+        let compressed = second.await.unwrap().expect("the shared build completed");
+        assert!(!compressed.is_empty());
+        assert_eq!(snapshot.gzip_build_count(), 1);
+
+        let held = permits.acquire().await.unwrap();
+        let hot = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            snapshot.gzip(permits.clone()),
+        )
+        .await
+        .expect("a hot hit must not wait for the exhausted limiter")
+        .unwrap();
+        drop(held);
+        assert_eq!(hot, compressed);
+        assert_eq!(snapshot.gzip_build_count(), 1, "a hot hit recompressed");
+    }
+
+    #[tokio::test]
+    async fn gzip_builds_obey_the_service_limit_and_failures_wake_every_waiter() {
+        let permits = Arc::new(Semaphore::new(2));
+        let (probe, mut started) = gzip_probe(false);
+        let _release_on_drop = GzipProbeRelease(probe.clone());
+        let queued = Arc::new(tokio::sync::Barrier::new(4));
+        let snapshots: Vec<_> = (0..3)
+            .map(|revision| {
+                let snapshot = Arc::new(BinarySnapshot::new(
+                    revision,
+                    Bytes::from(vec![revision as u8; 32 * 1024]),
+                ));
+                snapshot.install_gzip_probe(probe.clone());
+                snapshot
+            })
+            .collect();
+        let tasks: Vec<_> = snapshots
+            .iter()
+            .map(|snapshot| {
+                let snapshot = Arc::clone(snapshot);
+                let permits = permits.clone();
+                let queued = queued.clone();
+                tokio::spawn(async move {
+                    queued.wait().await;
+                    snapshot.gzip(permits).await
+                })
+            })
+            .collect();
+        // All three request futures have reached the same start gate, so a
+        // missing third `started` signal below means the semaphore held it,
+        // not that Tokio had not scheduled the request yet.
+        queued.wait().await;
+        started.recv().await.unwrap();
+        started.recv().await.unwrap();
+        let third_started_while_saturated =
+            tokio::time::timeout(std::time::Duration::from_millis(100), started.recv())
+                .await
+                .is_ok();
+        release_gzip_probe(&probe);
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        assert!(
+            !third_started_while_saturated,
+            "a third blocking task passed the limit"
+        );
+        assert_eq!(probe.max_active.load(Ordering::SeqCst), 2);
+
+        let failed = Arc::new(BinarySnapshot::new(9, Bytes::from_static(b"failure")));
+        let (failure_probe, mut failure_started) = gzip_probe(true);
+        let _failure_release_on_drop = GzipProbeRelease(failure_probe.clone());
+        failed.install_gzip_probe(failure_probe.clone());
+        let waiter_a = {
+            let failed = failed.clone();
+            let permits = permits.clone();
+            tokio::spawn(async move { failed.gzip(permits).await })
+        };
+        let waiter_b = {
+            let failed = failed.clone();
+            let permits = permits.clone();
+            tokio::spawn(async move { failed.gzip(permits).await })
+        };
+        failure_started.recv().await.unwrap();
+        release_gzip_probe(&failure_probe);
+        assert!(waiter_a.await.unwrap().is_err());
+        assert!(waiter_b.await.unwrap().is_err());
+        assert_eq!(failed.gzip_build_count(), 1);
+        assert!(failed.gzip(permits).await.is_err());
+        assert_eq!(failed.gzip_build_count(), 1, "failure retried internally");
+    }
+
+    #[tokio::test]
+    async fn retired_gzip_finishes_for_its_waiter_without_reentering_the_current_cache() {
+        let taken = Arc::new(AtomicU64::new(0));
+        let runner = Arc::new(ProjectionRunner::new(CountingProjection { taken }));
+        let permits = Arc::new(Semaphore::new(2));
+
+        let old = runner
+            .snapshot_bin_shared()
+            .expect("the projection has a binary form");
+        assert_eq!(old.revision(), 0);
+        let old_weak = Arc::downgrade(&old);
+        let (probe, mut started) = gzip_probe(false);
+        let _release_on_drop = GzipProbeRelease(probe.clone());
+        old.install_gzip_probe(probe.clone());
+        let old_waiter = {
+            let old = old.clone();
+            let permits = permits.clone();
+            tokio::spawn(async move { old.gzip(permits).await })
+        };
+        started.recv().await.expect("the old gzip build started");
+
+        runner.apply(&RevisionedMutation {
+            revision: 1,
+            mutation: Mutation::ChainReorganized { from_block: 1 },
+        });
+        let current = runner
+            .snapshot_bin_shared()
+            .expect("the new generation has a binary form");
+        assert_eq!(current.revision(), 1);
+        assert!(!Arc::ptr_eq(&old, &current));
+        current
+            .gzip(permits.clone())
+            .await
+            .expect("the new generation compresses while the old one is parked");
+
+        release_gzip_probe(&probe);
+        old_waiter
+            .await
+            .expect("the old waiter task completed")
+            .expect("the retired gzip build still serves its waiter");
+        let cached = runner
+            .snapshot_bin_shared()
+            .expect("the current generation remains cached");
+        assert!(Arc::ptr_eq(&current, &cached));
+        assert_eq!(cached.revision(), 1);
+
+        drop(cached);
+        drop(current);
+        drop(old);
+        assert!(
+            old_weak.upgrade().is_none(),
+            "the retired generation stayed alive after its waiter and build ended"
+        );
+    }
+
     /// Same composed content at every block; only the freshness metadata
     /// (`as_of`, `updated_at_ms`) advances — the shape of a periodic
     /// revalidation of an unchanged Cell set.
@@ -995,6 +1393,151 @@ mod tests {
             landed,
             "the reducer waited on snapshot serialization — the read lock is being held too long"
         );
+    }
+
+    struct InterleavingProjection {
+        value: u64,
+        snapshots: Arc<AtomicU64>,
+        first_entered: Arc<std::sync::Barrier>,
+        first_release: Arc<std::sync::Barrier>,
+    }
+
+    struct InterleavingSnapshot {
+        value: u64,
+        park: bool,
+        first_entered: Arc<std::sync::Barrier>,
+        first_release: Arc<std::sync::Barrier>,
+    }
+
+    impl serde::Serialize for InterleavingSnapshot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            if self.park {
+                self.first_entered.wait();
+                self.first_release.wait();
+            }
+            serializer.serialize_u64(self.value)
+        }
+    }
+
+    impl Projection for InterleavingProjection {
+        type Snapshot = InterleavingSnapshot;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "interleaving"
+        }
+
+        fn snapshot(&self) -> Self::Snapshot {
+            let ordinal = self.snapshots.fetch_add(1, Ordering::Relaxed);
+            InterleavingSnapshot {
+                value: self.value,
+                park: ordinal == 0,
+                first_entered: self.first_entered.clone(),
+                first_release: self.first_release.clone(),
+            }
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<Self::Delta> {
+            self.value += 1;
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_late_old_serialization_cannot_replace_the_current_cache() {
+        let snapshots = Arc::new(AtomicU64::new(0));
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let mut registry = Registry::new();
+        registry.register(InterleavingProjection {
+            value: 0,
+            snapshots: snapshots.clone(),
+            first_entered: entered.clone(),
+            first_release: release.clone(),
+        });
+        let runtime = registry.lookup("interleaving").unwrap();
+        let writer = registry.writers().into_iter().next().unwrap();
+
+        let old_runtime = runtime.clone();
+        let old = std::thread::spawn(move || old_runtime.snapshot_envelope(SnapshotEnvelope::Bare));
+        entered.wait();
+        writer.apply(&RevisionedMutation {
+            revision: 1,
+            mutation: Mutation::ChainReorganized { from_block: 1 },
+        });
+        let current = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!(current.0, 1);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&current.1).unwrap()["snapshot"],
+            1
+        );
+
+        release.wait();
+        assert_eq!(old.join().unwrap().0, 0);
+        let cached = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!(cached, current);
+        assert_eq!(snapshots.load(Ordering::Relaxed), 2);
+    }
+
+    struct BlockingApplyProjection {
+        value: u64,
+    }
+
+    impl Projection for BlockingApplyProjection {
+        type Snapshot = u64;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "blocking-apply"
+        }
+
+        fn snapshot(&self) -> u64 {
+            self.value
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<u64> {
+            self.value += 1;
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn state_and_revision_are_published_as_one_generation() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let runner = Arc::new(ProjectionRunner::new(BlockingApplyProjection { value: 0 }));
+        *past_poison(runner.commit_pause.lock()) = Some((entered.clone(), release.clone()));
+        let runtime: Arc<dyn ProjectionRuntime> = runner.clone();
+        let writer: Arc<dyn ApplyMutation> = runner;
+        let applier = std::thread::spawn(move || {
+            writer.apply(&RevisionedMutation {
+                revision: 9,
+                mutation: Mutation::ChainReorganized { from_block: 1 },
+            });
+        });
+        entered.wait();
+
+        let (tx, rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let result = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+            let _ = tx.send(result);
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "a reader entered after state mutation but before revision/cache commit"
+        );
+        release.wait();
+        let (revision, bytes) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(revision, 9);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["snapshot"],
+            1
+        );
+        reader.join().unwrap();
+        applier.join().unwrap();
     }
 
     /// The envelope is hand-rolled now — one serde pass straight to text,

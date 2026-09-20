@@ -47,6 +47,8 @@ export interface BootSequenceSnapshot {
   phases: readonly BootPhaseSnapshot[];
   /** Every required bootstrap request is observed per actual attempt. */
   requests?: readonly BootRequestSnapshot[];
+  /** Independently loaded code needed before React can mount. */
+  modules?: readonly BootModuleSnapshot[];
   /** The module has taken ownership from index.html's pre-bundle timer. */
   moduleStartedAtMs?: number | null;
   /** The React tree has the snapshots and is waiting for its first real draw. */
@@ -54,6 +56,17 @@ export interface BootSequenceSnapshot {
   /** Independent of diagnostic phase completion and frame-rate quality. */
   viewPresented?: boolean;
   viewKind?: 'populated' | 'empty' | null;
+}
+
+export type BootModuleId = 'view' | 'react-dom' | 'cell-field' | 'diagnostics';
+export type BootModuleState = 'loading' | 'ready' | 'failed';
+
+export interface BootModuleSnapshot {
+  id: BootModuleId;
+  state: BootModuleState;
+  startedAtMs: number;
+  settledAtMs: number | null;
+  detail?: string;
 }
 
 export type BootRequestKind = 'chain' | 'cells';
@@ -104,6 +117,7 @@ let snapshot: BootSequenceSnapshot = {
   complete: false,
   phases: initialPhases(),
   requests: [],
+  modules: [],
   moduleStartedAtMs: null,
   viewPreparingAtMs: null,
   viewPresented: false,
@@ -143,6 +157,47 @@ function monotonicTime(value: number): number {
 export function markBootModuleStarted(atMs: number): void {
   if (typeof snapshot.moduleStartedAtMs === 'number') return;
   publishSnapshot({ ...snapshot, moduleStartedAtMs: monotonicTime(atMs) });
+}
+
+export function beginBootModule(id: BootModuleId, atMs: number): void {
+  const modules = snapshot.modules ?? [];
+  if (modules.some((module) => module.id === id)) return;
+  publishSnapshot({
+    ...snapshot,
+    modules: [...modules, {
+      id,
+      state: 'loading',
+      startedAtMs: monotonicTime(atMs),
+      settledAtMs: null,
+    }],
+  });
+}
+
+function settleBootModule(
+  id: BootModuleId,
+  state: Exclude<BootModuleState, 'loading'>,
+  atMs: number,
+  detail?: string,
+): void {
+  const modules = snapshot.modules ?? [];
+  const index = modules.findIndex((module) => module.id === id);
+  if (index < 0 || modules[index].state !== 'loading') return;
+  const next = modules.slice();
+  next[index] = {
+    ...modules[index],
+    state,
+    settledAtMs: Math.max(modules[index].startedAtMs, monotonicTime(atMs)),
+    ...(detail === undefined ? {} : { detail }),
+  };
+  publishSnapshot({ ...snapshot, modules: next });
+}
+
+export function completeBootModule(id: BootModuleId, atMs: number): void {
+  settleBootModule(id, 'ready', atMs);
+}
+
+export function failBootModule(id: BootModuleId, atMs: number, detail: string): void {
+  settleBootModule(id, 'failed', atMs, detail);
 }
 
 export function beginBootRequest(
@@ -372,6 +427,7 @@ export function resetBootSequenceForTest(): void {
     complete: false,
     phases: initialPhases(),
     requests: [],
+    modules: [],
     moduleStartedAtMs: null,
     viewPreparingAtMs: null,
     viewPresented: false,

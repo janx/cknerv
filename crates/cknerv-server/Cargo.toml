@@ -10,6 +10,7 @@ cknerv-core = { path = "../cknerv-core" }
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
+flate2 = "1"
 serde.workspace = true
 # `raw_value` is what lets the delta rings hold already-serialized text and
 # embed it verbatim in a frame — one serialization per delta instead of one

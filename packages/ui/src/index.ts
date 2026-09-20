@@ -77,10 +77,13 @@ export {
 // ── Boot sequence (page-boot progress, written from the entry point) ─
 export {
   beginBootPhase,
+  beginBootModule,
   beginBootRequest,
   completeBootPhase,
+  completeBootModule,
   completeBootRequest,
   failBootPhase,
+  failBootModule,
   failBootRequest,
   markBootModuleStarted,
   markBootViewPreparing,
@@ -94,6 +97,9 @@ export {
   useBootSequence,
   resetBootSequenceForTest,
   type BootPhaseId,
+  type BootModuleId,
+  type BootModuleState,
+  type BootModuleSnapshot,
   type BootPhaseState,
   type BootPhaseSnapshot,
   type BootSequenceSnapshot,

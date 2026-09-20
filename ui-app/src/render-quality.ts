@@ -1,4 +1,4 @@
-import type { QualityPreset } from '@cknerv/ui';
+import type { QualityPreset } from '@cknerv/ui/quality';
 
 /** Query switches used by deterministic review/performance routes. Only an
  * explicit `=1` enables a switch so copied URLs cannot turn features on via an
