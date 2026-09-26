@@ -164,7 +164,15 @@ pub fn classify_asset(type_: Option<&packed::Script>) -> AssetKind {
         | ("9e537bf5b8ec044ca3f53355e879f3fd8832217e4a9b41d9994cf0c547241a79", TYPE)
         | ("3a468d53352eb855521dabed0dc7036929bfe72766ad58f801edfbae564f7b43", TYPE)
         // did:ckb.
-        | ("4a06164dc34dccade5afe3e847a97b6db743e79f5477fa3295acf02849c5984a", TYPE) => {
+        | ("4a06164dc34dccade5afe3e847a97b6db743e79f5477fa3295acf02849c5984a", TYPE)
+        // .cell — the name cell (Cells Account, a type-id upgraded in place,
+        // so one hash per network covers both deployed binaries) and the
+        // shared price cell the protocol reads, as the .bit arm keeps its
+        // oracle cells. Mainnet, then testnet.
+        | ("d96cee56727a2bb9a21408c154d278df5095fb4b4dcfd50516156424479bfe54", TYPE)
+        | ("e0706b176678181d982290d93dfcd82098e60cceaa4a87f10f32dcbcc91df1d9", TYPE)
+        | ("97bf5f760cf72f918f13704d7184933b79d4ddc1fd85075762373e531152d4f9", TYPE)
+        | ("e1057caf161b3c720fcdb80190e89c6efc36b6b4256b3c99635fda63a9dd4294", TYPE) => {
             AssetKind::Identity
         }
         _ => AssetKind::Other,
@@ -384,6 +392,30 @@ mod tests {
             ))),
             AssetKind::Identity
         ); // did:ckb
+        for (code_hash, name) in [
+            (
+                "d96cee56727a2bb9a21408c154d278df5095fb4b4dcfd50516156424479bfe54",
+                "Cells Account",
+            ),
+            (
+                "e0706b176678181d982290d93dfcd82098e60cceaa4a87f10f32dcbcc91df1d9",
+                "Cells Account testnet",
+            ),
+            (
+                "97bf5f760cf72f918f13704d7184933b79d4ddc1fd85075762373e531152d4f9",
+                "Cells Price",
+            ),
+            (
+                "e1057caf161b3c720fcdb80190e89c6efc36b6b4256b3c99635fda63a9dd4294",
+                "Cells Price testnet",
+            ),
+        ] {
+            assert_eq!(
+                classify_asset(Some(&script(code_hash, TYPE))),
+                AssetKind::Identity,
+                "{name}"
+            );
+        }
     }
 
     /// The hash_type half of the pair guards the new arms too — a Spore
@@ -400,6 +432,13 @@ mod tests {
         assert_eq!(
             classify_asset(Some(&script(
                 "4f170a048198408f4f4d36bdbcddcebe7a0ae85244d3ab08fd40a80cbfc70918",
+                DATA1
+            ))),
+            AssetKind::Other
+        );
+        assert_eq!(
+            classify_asset(Some(&script(
+                "d96cee56727a2bb9a21408c154d278df5095fb4b4dcfd50516156424479bfe54",
                 DATA1
             ))),
             AssetKind::Other

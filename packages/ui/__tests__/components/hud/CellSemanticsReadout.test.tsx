@@ -136,6 +136,44 @@ describe('CellSemanticsReadout — inventory object', () => {
     }))).toBe('#42');
   });
 
+  it('names a .cell by its label, without the id ckbadger appends', () => {
+    // Spellings as ckbadger v0.8.2 serves them, read live on 2026-09-26.
+    const dotcell = (label: string) => recordWithDecode({
+      kind: 'dotcell_name',
+      summary: 'verification.cell name cell (layout v3)',
+      segments: [
+        {
+          label: 'label',
+          start_byte: 98,
+          end_byte: 110,
+          meaning: 'Name label, UTF-8 (empty only on the ring root)',
+          value: label,
+        },
+      ],
+    });
+    expect(semanticObjectReadout(dotcell(
+      'verification.cell · id 0x0b340d49874bf09f050bf079b862d61a3e485ce4',
+    ))).toBe('verification.cell');
+    expect(semanticObjectReadout(dotcell(
+      'shop.support.cell · id 0x' + 'ab'.repeat(20) + ' · sub-name of support.cell',
+    ))).toBe('shop.support.cell');
+    // The ring root carries the same layout and an empty label; it holds no
+    // name, so it holds no object.
+    expect(semanticObjectReadout(recordWithDecode({
+      kind: 'dotcell_ring_root',
+      summary: '.cell ring root of namespace 0xb4f4…',
+      segments: [
+        {
+          label: 'label',
+          start_byte: 98,
+          end_byte: 98,
+          meaning: 'Name label, UTF-8 (empty only on the ring root)',
+          value: '(empty)',
+        },
+      ],
+    }))).toBeNull();
+  });
+
   it('falls back to the decode\'s own summary when the labels are unknown', () => {
     // ckbadger owns the segment vocabulary. A spelling we have never seen is
     // a reason to quote the source, not to invent a reading of its bytes.

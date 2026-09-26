@@ -322,9 +322,10 @@ export function compositionTierDescription(tier: string): string {
 }
 
 /** One line naming WHAT an inventory Cell holds — `image/png · 6,878 B`, a
- *  cluster's name, a .bit account, an mNFT's token index. Only the kinds that
- *  actually carry an object answer; a DAO deposit or a plain transfer has no
- *  object and says nothing here rather than restating its decode. */
+ *  cluster's name, a .bit account, a .cell name, an mNFT's token index. Only
+ *  the kinds that actually carry an object answer; a DAO deposit or a plain
+ *  transfer has no object and says nothing here rather than restating its
+ *  decode. */
 export function semanticObjectReadout(
   record: CellSemanticRecord | null | undefined,
 ): string | null {
@@ -349,6 +350,13 @@ export function semanticObjectReadout(
   }
   if (kind.includes('dotbit') || kind.includes('bit_account')) {
     return decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.account) ?? summary;
+  }
+  if (kind === 'dotcell_name') {
+    // ckbadger spells the label `alice.cell · id 0x…`, and a sub-name adds
+    // `· sub-name of …`. The name is the first clause. The ring root is its
+    // own kind and names nobody, so it stays silent below.
+    const label = decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.dotcellName);
+    return label?.split(' · ')[0]?.trim() || summary;
   }
   if (kind.includes('nft')) {
     const token = decodeSegmentValue(decode, OBJECT_SEGMENT_LABELS.token);

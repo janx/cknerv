@@ -8946,6 +8946,26 @@ mod tests {
         server.abort();
     }
 
+    /// The census files a family under the inventory ckbadger lists its
+    /// cells under. `.cell` names are the fourth identity standard, and the
+    /// catalogue spells their family `Cells Account`; the protocol's price
+    /// cell and its two locks are not inventory and stay scripts.
+    #[test]
+    fn the_inventory_roster_files_every_identity_family() {
+        let roster = InventoryRoster {
+            token_families: HashSet::from(["xUDT".to_string()]),
+            fetched_at_ms: 0,
+        };
+        for family in [".bit Account", ".bit Cell", "did:ckb", "Cells Account"] {
+            assert_eq!(roster.inventory_for(family), Some("identity"), "{family}");
+        }
+        for family in ["Cells Price", "Cells Account Lock", "Cells Sale Lock"] {
+            assert_eq!(roster.inventory_for(family), None, "{family}");
+        }
+        assert_eq!(roster.inventory_for("Spore"), Some("object"));
+        assert_eq!(roster.inventory_for("xUDT"), Some("token"));
+    }
+
     #[tokio::test]
     async fn script_family_census_tolerates_a_block_of_skew_and_refuses_more() {
         // The families were counted a block after the summary: one Cell past

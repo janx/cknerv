@@ -950,9 +950,11 @@ asset ecosystem splits capacity by: the token registry (`tokens`, paged at
 UDT the index knows, and the script lookup turns the distinct hashes into the
 catalogue's family names — on mainnet `xUDT`, `Simple UDT`, `wCKB Asset`,
 `Stable++ Asset`, `ccBTC Asset`; objects and identities are the index's two
-closed standard sets (`spore`/`m-nft`, `dotbit`/`bit_cell`/`did_ckb`),
-matched by the catalogue's own spellings of their families, `Spore`, `M-NFT`,
-`.bit Account`, `.bit Cell`, `did:ckb`. Nothing is added to ckbadger for it.
+closed standard sets (`spore`/`m-nft`,
+`dotbit`/`bit_cell`/`did_ckb`/`dotcell`), matched by the catalogue's own
+spellings of their families, `Spore`, `M-NFT`, `.bit Account`, `.bit Cell`,
+`did:ckb`, `Cells Account`. The `.cell` price cell and its two locks are not
+inventory and stay scripts. Nothing is added to ckbadger for it.
 
 A family the index places on neither slot is skipped; a catalogue that names
 families without counting them withholds the record rather than counting

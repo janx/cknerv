@@ -304,6 +304,7 @@ export const OBJECT_SEGMENT_LABELS = {
   contentType: ['content_type', 'contenttype', 'content-type', 'mime_type', 'mime'],
   clusterName: ['cluster_name', 'name', 'cluster'],
   account: ['account', 'account_name', 'domain', 'name'],
+  dotcellName: ['label'],
   token: ['token_index', 'token_id', 'index', 'token'],
   collection: ['cluster_name', 'cluster', 'collection'],
 } as const;

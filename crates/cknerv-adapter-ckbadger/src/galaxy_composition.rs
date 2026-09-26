@@ -1106,19 +1106,21 @@ enum AssetStandard {
     Identity(IdentityStandard),
 }
 
-/// The three identity collections ckbadger publishes, each 1:1 with one
+/// The four identity collections ckbadger publishes, each 1:1 with one
 /// script family.
 ///
 /// Spellings are ckbadger's own, probed live on 2026-08-23: `dotbit`,
 /// `bit_cell`, `did_ckb`. `did_ckb` is only visible through
 /// `/assets?type=identity` — it holds zero capacity, so it never reaches the
 /// top-64 page — and its underscore spelling is not the `did` an earlier
-/// draft assumed.
+/// draft assumed. `dotcell` (`.cell` names, ckbadger v0.8.0 onwards) was
+/// probed live on 2026-09-26.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum IdentityStandard {
     DotBit,
     BitCell,
     DidCkb,
+    DotCell,
 }
 
 impl AssetStandard {
@@ -1138,6 +1140,7 @@ impl AssetStandard {
             ("identity", "dotbit") => Self::Identity(IdentityStandard::DotBit),
             ("identity", "bit_cell") => Self::Identity(IdentityStandard::BitCell),
             ("identity", "did_ckb") => Self::Identity(IdentityStandard::DidCkb),
+            ("identity", "dotcell") => Self::Identity(IdentityStandard::DotCell),
             _ => return None,
         })
     }
@@ -1917,12 +1920,14 @@ fn report_collection_walk(path: &str, listed: usize, resolved_from: usize, walk:
 /// 404, `/cells/by-script?family_id=` 400), and the collection ids are
 /// synthetic ASCII. What does know the pair is the census: cknerv has already
 /// observed these scripts on stage, and the registry can name them. Names are
-/// ckbadger's catalogue spellings, read live on 2026-08-23.
+/// ckbadger's catalogue spellings, read live on 2026-08-23; `.cell` names
+/// live under the family the catalogue calls `Cells Account` (2026-09-26).
 pub(crate) fn identity_standard_for_name(name: &str) -> Option<IdentityStandard> {
     match name {
         ".bit Account" => Some(IdentityStandard::DotBit),
         ".bit Cell" => Some(IdentityStandard::BitCell),
         "did:ckb" => Some(IdentityStandard::DidCkb),
+        "Cells Account" => Some(IdentityStandard::DotCell),
         _ => None,
     }
 }
@@ -1935,6 +1940,7 @@ fn identity_standard_name(standard: IdentityStandard) -> &'static str {
         IdentityStandard::DotBit => ".bit Account",
         IdentityStandard::BitCell => ".bit Cell",
         IdentityStandard::DidCkb => "did:ckb",
+        IdentityStandard::DotCell => "Cells Account",
     }
 }
 
@@ -3118,6 +3124,8 @@ pub(crate) mod tests {
     const CLUSTER_ID: &str = "0xb09a7b74f08afe5246b415f134fcda946207d761ef92f315ca563cc9dd22c315";
     const MNFT_ID: &str = "0x8f67efedd50c61c9dd332defd4051f08a02d797700000014";
     const DOTBIT_ID: &str = "0x646f746269745f636f6c6c656374696f6e5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
+    /// `"dotcell_collection"` padded with `_`, the sentinel ckbadger serves.
+    const DOTCELL_ID: &str = "0x646f7463656c6c5f636f6c6c656374696f6e5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
 
     /// The roster is the inventory page: every family it can reach, in
     /// ckbadger's rank order, carrying the weight that will divide the typed
@@ -3169,9 +3177,9 @@ pub(crate) mod tests {
         server.abort();
     }
 
-    /// Both `.bit` collections and `did:ckb` route, under ckbadger's own
-    /// spellings. `did_ckb` is the one an earlier draft got wrong — probed
-    /// live, the standard carries the underscore.
+    /// Both `.bit` collections, `did:ckb` and `.cell` route, under
+    /// ckbadger's own spellings. `did_ckb` is the one an earlier draft got
+    /// wrong — probed live, the standard carries the underscore.
     #[tokio::test]
     async fn every_identity_collection_routes_to_its_family() {
         let (api, server) = spawn_roster(serde_json::json!({
@@ -3179,6 +3187,7 @@ pub(crate) mod tests {
                 asset_row(DOTBIT_ID, "identity", "dotbit", "138989821996213"),
                 asset_row(&format!("0x{:064x}", 0xb1), "identity", "bit_cell", "13932991471586"),
                 asset_row(&format!("0x{:064x}", 0xd1), "identity", "did_ckb", "0"),
+                asset_row(DOTCELL_ID, "identity", "dotcell", "1507200000000"),
             ],
             "hasMore": false,
             "nextCursor": None::<String>,
@@ -3199,6 +3208,7 @@ pub(crate) mod tests {
                 AssetStandard::Identity(IdentityStandard::DotBit),
                 AssetStandard::Identity(IdentityStandard::BitCell),
                 AssetStandard::Identity(IdentityStandard::DidCkb),
+                AssetStandard::Identity(IdentityStandard::DotCell),
             ]
         );
         server.abort();
@@ -3731,28 +3741,32 @@ pub(crate) mod tests {
         let dotbit = script(0xa1, "type");
         let bit_cell = script(0xa2, "type");
         let did = script(0xa3, "type");
+        let dotcell = script(0xa4, "type");
         let observed = vec![
             script(0x00, "type"), // an unparsed script carries the unset id
             dotbit,
             script(0xa9, "data1"), // named, but not an identity family
             bit_cell,
             did,
+            dotcell,
         ];
         let families = identity_families(&observed, |code_hash| {
             match code_hash {
                 _ if code_hash == dotbit.code_hash_hex() => Some(".bit Account"),
                 _ if code_hash == bit_cell.code_hash_hex() => Some(".bit Cell"),
                 _ if code_hash == did.code_hash_hex() => Some("did:ckb"),
+                _ if code_hash == dotcell.code_hash_hex() => Some("Cells Account"),
                 _ if code_hash == script(0xa9, "data1").code_hash_hex() => Some("Simple UDT"),
                 // The census has seen scripts the registry cannot name.
                 _ => None,
             }
         });
 
-        assert_eq!(families.len(), 3);
+        assert_eq!(families.len(), 4);
         assert_eq!(families[&IdentityStandard::DotBit], dotbit);
         assert_eq!(families[&IdentityStandard::BitCell], bit_cell);
         assert_eq!(families[&IdentityStandard::DidCkb], did);
+        assert_eq!(families[&IdentityStandard::DotCell], dotcell);
     }
 
     /// Cold start (R1): a family the census has not observed yet is simply
@@ -3943,6 +3957,7 @@ pub(crate) mod tests {
             IdentityStandard::DotBit,
             IdentityStandard::BitCell,
             IdentityStandard::DidCkb,
+            IdentityStandard::DotCell,
         ] {
             let name = identity_standard_name(standard);
             assert_eq!(identity_standard_for_name(name), Some(standard), "{name}");
